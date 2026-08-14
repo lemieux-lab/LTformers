@@ -1,0 +1,11 @@
+results/
+out/
+data/
+deps/
+wandb/
+scripts/analyses/sandbox/
+aarch64/conda/
+x86_64/conda/
+.venv*
+*.sh
+*.log

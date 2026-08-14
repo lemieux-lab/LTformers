@@ -1,0 +1,245 @@
+-----------------------------------------------------------------------------------------------------------
+
+### aug 5 2026 ###
+
+-- for consolidation todos:
+    -- add git
+    -- make sure save/load directories are correct
+    -- verify single-cell implementation after 2ep in tahoe/ completed
+        -- check if julia-based or cxx-based loading is faster/better!
+    -- update bashrc presets for running (maybe remove run_pt, etc.)
+    -- update wandb implementation
+    -- log speeds!!!
+
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 6 2026 ###
+
+-- for consolidation todos:
+    -- add git
+        -- need to confirm everything working ok first
+    -- make sure save/load directories are correct DONE
+    -- verify single-cell implementation after 2ep in tahoe/ completed
+        -- check if julia-based or cxx-based loading is faster/better!
+    -- update bashrc presets for running (maybe remove run_pt, etc.) DONE
+    -- update wandb implementation DONE
+    -- log speeds!!!
+    -- run arrowwrap build on x86
+    -- finetune scripts
+    -- wandb sweeps
+
+-- pb pre-train
+    -- doing 1ep tests to see if its working
+        -- then can do git, speed tests
+
+-- sc pre-train
+    -- still not fully implemented/checked if working since still waiting on 2ep test in tahoe/ directory
+        -- then can do final checks, arrowwrap on x86
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 7 2026 ###
+
+-- consolidation
+    -- add git
+    -- run arrowwrap build on x86 = DONE
+    -- wandb sweeps
+    -- finetune scripts
+
+    -- for sc:
+        -- PB uses corruption, SC uses sentinel for masking
+        -- sc_masked_loss returns scalar only (no logits/preds)
+        -- sc n_total_epochs doesn't convert max_steps to epochs
+
+-- pb pre-train
+    -- finished mlm rtf, etf on lincs and tahoe
+        -- in both cases, rtf performed better
+        -- may be due to implementation of corruption for masking rather than mask_emb??
+            -- only thing elese that was changed: per-position loss calculation
+        -- what else had changed?
+        -- etf begins overfitting in both datasets
+        -- also there doesn't seem to be a middle-rank error issue w/ tahoe, only lincs...
+        -- would still need to do a wandb sweep just in case
+
+-- sc pre-train
+    -- to finish after 2ep test completed
+
+-- pb fine-tune
+    -- tbd after implemented
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 7 2026 ###
+
+-- consolidation
+    -- add git
+    -- to fix for sc after cxx vs non cxx decided on:
+        -- PB uses corruption, SC uses sentinel for masking
+        -- sc_masked_loss returns scalar only (no logits/preds)
+        -- sc n_total_epochs doesn't convert max_steps to epochs
+
+-- pb pre-train
+    -- RUNNING sweeps for lincs non-mlm
+        -- TODO tahoe after
+
+-- sc pre-train
+    -- TODO finish after 2ep test completed
+        -- why is it still running...
+    -- did cxx vs non cxx test on 3 shards; 
+        -- have about the same performance... (~30mins per shard)
+        -- RUNNING a test of 1 shard on cxx vs non-cxx for pre-training (mock train step, etc.)
+
+
+-- pb fine-tune
+    -- should i be splitting the fine-tuning the same as th pre-training for proper OOD?
+        -- on another note, if i want to do one drug held-out type testing, would this mean i have to redo the pre-training without it? or is it just in the fine-tuning?
+    -- RUNNING on MLM e2e rtf/etf for lincs/tahoe (1ep tests)
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 9 2026 ###
+
+-- pb fine-tune
+    -- need to re-pre-train tahoe ETF
+    -- running long lincs RTF and tahoe RTF fine-tune
+        -- 25mins/ep for lincs, 15mins/ep for tahoe
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 10 2026 ###
+
+-- consolidation
+    -- add git
+    -- to fix for sc after cxx vs non cxx decided on:
+        -- PB uses corruption, SC uses sentinel for masking - no need yet?
+        -- sc_masked_loss returns scalar only (no logits/preds) - FIXED
+        -- sc n_total_epochs doesn't convert max_steps to epochs - FIXED
+        -- convert to flat array approach rather than sparse matrix appraoch? - FIXED
+
+-- pb pre-train
+    -- done sweeps for lincs non-mlm
+        -- is it even valid to do a sweep on a 0.3 subset??
+        -- probably need to re-run with 1.0 set if we are continuing to use it
+    -- RUNNING sweeps for tahoe non-mlm
+
+-- sc pre-train
+    -- TODO finish after 2ep test completed
+        -- why is it still running...
+    -- did cxx vs non cxx test on 3 shards; 
+        -- have about the same performance... (~30mins per shard)
+        -- ran a test of 1 shard on cxx vs non-cxx for pre-training (mock train step, etc.)
+    -- converted everything into non cxx for pre-training scripts, to clean up later.
+    -- RUNNING 50step 1shard test rn
+
+-- pb fine-tune
+    -- need to re-pre-train tahoe ETF
+    -- finished MLM lincs RTF and tahoe RTF fine-tune
+        -- RUNNING long lincs ETF and tahoe ETF fine-tune
+        -- although still need to wandb sweep proper MLM then fine-tune again
+
+-- data comparison
+    -- re-RUNNING 300 shard test
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 10 2026 ###
+
+-- consolidation
+    -- add git
+    -- to fix for sc after cxx vs non cxx decided on:
+        -- PB uses corruption, SC uses sentinel for masking - no need yet?
+
+-- pb pre-train
+    -- RUNNING sweeps for tahoe non-mlm (4)
+    -- RUNNING sweeps for tahoe mlm (2)
+    -- need to do all sweeps for lincs as well!
+        -- also running sweep for lincs mlm etf (1)
+
+-- sc pre-train
+    -- 50step finished in 5mins!! ~ 4.5hrs/ep...
+    -- ran 50step on cxx for comparison, it was 1min slower than non-cxx
+    -- next: scale up batch_size and do sweep
+        -- to have the same number of training steps, we need about 2 epochs... going to run for 10 instead...?
+    -- first checking to see if it fits on batchsize 345
+        -- it does, but its taking quite a long time when i try testing it with 4 heads 4 layers for 10step only...
+
+-- pb fine-tune
+    -- finished lincs/tahoe ETF fine-tune
+    -- why is ETF all of a sudden doing way worse than RTF?
+    -- i think the issue was switching to corruption instead of using mask_emb() 
+        -- which replaces it with -1.0f0 token rather than a similar expression?
+    -- need to re-run pre-training MLM anyways so
+    -- switched only MLM ETF to mask_emb(), the other PB lrecon and erecon use the corruption   
+        -- we can see later if this will be an issue for the SC pre-training (see above consolidation)
+    -- do cell line classification first after tahoe pre-trainings have been completed!
+        -- we can see from kendall tau distance that cell line is not distinguishable from ranks
+            -- lets see if able to train a model to predict it then!
+
+
+-- data comparison
+    -- re-RUNNING 300 shard test (estimated done in like 10 days...)
+    -- also running a 5 shard version to look at:
+        -- why distances are much larger in SC than in PB vectors
+        -- sparsity matrix overlaid with entropy
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 10 2026 ###
+
+-- everything still running... why is sc taking so long?? fyi this was w 4heads 4layers
+-- double check what downstream tasks are using oversampling
+-- for lvl3 task:
+    -- regression (gene expression value -> MSE loss)
+    -- given a compounds expression profile in cell line A, predict expression of a target gene in cell line B
+    -- would need to filter to find compounds tested in both cell lines (MCF7 and PC3 in LINCS)
+    -- target label is a scalar (expression of target gene, IGFBP3 in LINCS)
+    -- upper bound of 0.69? pearson correlation from machaalani intern
+    -- how to pick which cell lines, compounds, and genes in tahoe??
+    -- for single-cell, would it be fine-tuned on pseudobulk data???
+        -- if not, would need to access metadata
+        -- instead would be: given a single cell from cell line A under drug X, predict mean exp or distribution of target
+        -- would this work? or would it be noisier??
+        -- probably best to pre-train on SC data then fine-tune on pseudobulk data
+
+-- for lincs, do MCF7, PC3, IGFBP3
+-- for tahoe, do ???
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 11 2026 ###
+
+-- everything still running
+-- re-running SC 10steps w/ 1head, 1layer (i think 4heads 4layers takes too long?? would need to omit fromm the sweep)
+    -- or would i need calcul quebec??
+-- also lowkey accidentally double log1p'd tahoe pb pre-train and fine-tune... 
+    -- not sure how this rly affects it but honestly the model params should still remain the same...? hopefully
+    -- because the wandb has been running for quite some time.
+    -- lrecon and erecon rtf are behaving quite weirdly tho
+
+-- to clean:
+    -- t_vec.jl
+    -- entvec.jl
+
+-- re: tahoe targets
+    -- 48 cell lines w/ 1329 samples each (ish)
+    -- all 379 drugs applied to all cell lines
+    -- could pick NCI-H460 to SW480 purely due to being well-studied CCLs?
+        -- or within same tissue? or within same organ? like NCI-H460 and A549
+    -- for genes, we want high variance, symmetric about 0, and normally distributed
+        -- based on this, the best gene is PSG9 or ATP6V0A1
+        -- but based on solely variance, the best is NEURL2
+        -- fyi IGFBP3 is also present in this dataset!
+    -- do i filter for same dose as well? 
+        -- we have a pretty equal split between 5.0 uM, 0.05 uM, and 0.5 uM
+    -- based on plotting results:
+        -- best gene is MAGOHB (highest cross-CL correlation, highest variance, normal-distr, dose-dep)
+        -- best cell lines is NCI-H460->SW480 (hihgest r value across genes)
+        -- double check w seb tho!
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 14 2026 ###
+
+-- re-running SC 10step wl less params, still taking too long...
+-- 

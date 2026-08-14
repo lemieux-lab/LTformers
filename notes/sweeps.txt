@@ -1,0 +1,39 @@
+lincs pb
+
+erecon etf
+- lr=0.002
+- drop_prob=0.15
+- embed_dim=128
+- hidden_dim=256
+- n_heads=2
+- n_layers=1
+- mask_ratio=0.25
+
+erecon rtf
+- lr=0.002
+- drop_prob=0.2
+- embed_dim=128
+- hidden_dim=256
+- n_heads=4
+- n_layers=1
+- mask_ratio=0.15
+
+lrecon etf
+- lr=0.001
+- drop_prob=0.125
+- embed_dim=64
+- hidden_dim=64
+- n_heads=1
+- n_layers=1-2
+- mask_ratio=0.25
+- ema_decay=0.9
+
+lrecon rtf
+- lr=0.003
+- drop_prob=0.125
+- embed_dim=128
+- hidden_dim=256
+- n_heads=1
+- n_layers=1-2
+- mask_ratio=0.25
+- ema_decay=0.9

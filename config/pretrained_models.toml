@@ -1,0 +1,43 @@
+# [dataset.task.modeltype] to the pre-trained model to use for fine-tuning
+
+# LINCS
+
+[lincs.mlm]
+rtf = "results/lincs/pretrain/mlm/rtf/2026-08-03_01-36/best"
+etf = "results/lincs/pretrain/mlm/etf/2026-08-03_01-36/best"
+
+[lincs.lrecon]
+rtf = ""
+etf = ""
+
+[lincs.erecon]
+rtf = ""
+etf = ""
+
+# tahoe pseudobulk
+
+[tahoe_pb.mlm]
+rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-02_16-54/best"
+etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-02_16-54/best"
+
+[tahoe_pb.lrecon]
+rtf = ""
+etf = ""
+
+[tahoe_pb.erecon]
+rtf = ""
+etf = ""
+
+# tahoe single-cell
+
+# [tahoe_sc.mlm]
+# rtf = ""
+# etf = ""
+
+# [tahoe_sc.lrecon]
+# rtf = ""
+# etf = ""
+
+# [tahoe_sc.erecon]
+# rtf = ""
+# etf = ""

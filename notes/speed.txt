@@ -1,0 +1,23 @@
+PRE-TRAIN
+
+lincs pseudo-bulk
+
+    0.1: 4mins/ep, MiG
+    0.75: 3hrs/ep, MiG (embed=128, drop=0.1, lr=0.0005, hidden=256, heads=1, layers=2)
+
+tahoe pseudo-bulk
+
+    0.1: 10mins/ep, MiG
+    1.0: 15mins/ep, MiG (embed=128, drop=0.1, lr=0.0005, hidden=256, heads=1, layers=2, hvg=1024)
+
+tahoe single-cell
+
+FINE-TUNE
+
+lincs pseudo-bulk
+
+    1.0: 25mins/ep, MiG
+
+lincs pseudo-bulk
+
+    1.0: 15mins/ep, MiG

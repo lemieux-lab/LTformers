@@ -1,0 +1,45 @@
+# default config
+
+data_path = "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2"
+data_format = "tahoe"
+modeltype = "rtf"
+
+batch_size = 128
+n_epochs  = 75
+embed_dim = 128
+drop_prob = 0.1
+lr = 0.0005
+hidden_dim = 256
+n_heads = 1
+n_layers = 2
+
+wandb_mode = "online"
+additional_notes = ""
+
+# single-cell pretrain
+data_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/data"
+meta_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/metadata"
+coding_gene_path = "/home/muninn/scratch/kaufmanl/CAP/data/protein-coding_gene.txt"
+top_k = 1024
+n_eval_shards = 10
+
+# pretrain-specific
+sorted_gene_path = ""
+n_hvg = 1024
+mask_ratio = 0.15
+subset_ratio = 1.0
+max_steps = 0
+ema_decay = 0.99
+
+# finetune-specific
+model_dir = ""
+mode = ""
+task = "mlm"
+level = "lvl2"
+max_ft_steps = 0
+label_path = ""
+
+# lvl3 regression defaults
+source_cell = "MCF7"
+target_cell = "PC3"
+target_gene = "IGFBP3"
