@@ -29,6 +29,14 @@ function log_model(model, save_dir::String)
     jldsave("$save_dir/model_state.jld2"; model_state=Flux.state(model_cpu))
 end
 
+# overload: also save architecture config alongside model state
+function log_model(model, save_dir::String, config::Dict)
+    log_model(model, save_dir)
+    arch_keys = ["embed_dim", "hidden_dim", "n_heads", "n_layers", "drop_prob", "modeltype"]
+    arch_config = Dict{String,Any}(k => config[k] for k in arch_keys if haskey(config, k))
+    jldsave("$save_dir/model_config.jld2"; arch_config=arch_config)
+end
+
 function log_info(; train_indices,
                     test_indices,
                     n_epochs::Int,

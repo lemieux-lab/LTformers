@@ -2,18 +2,41 @@ module Preprocess
 
 using Statistics, Random
 
-export select_hvg, rank_genes, ttsplit, log1p_normalize
+export select_hvg, rank_genes, inverse_ranks, reindex_to_rank_order, ttsplit
 
-
-function log1p_normalize(data_expr::Matrix)
-    return Float32.(log1p.(data_expr))
-end
+# function log1p_normalize(data_expr::Matrix)
+#     return Float32.(log1p.(data_expr))
+# end
 
 function select_hvg(data_expr::Matrix, n_hvg::Int)
     gene_vars = vec(var(data_expr, dims=2))
     hvg_idx = sortperm(gene_vars, rev=true)[1:n_hvg]
     sort!(hvg_idx)
     return data_expr[hvg_idx, :], hvg_idx
+end
+
+# inverse permutation of rank_genes output
+# inv[gene_id, sample] = rank of that gene (1 = highest expression)
+function inverse_ranks(X_ranks::Matrix{Int32})
+    inv = similar(X_ranks)
+    for j in axes(X_ranks, 2)
+        for i in axes(X_ranks, 1)
+            inv[X_ranks[i, j], j] = Int32(i)
+        end
+    end
+    return inv
+end
+
+# reorder expression into rank order so position i = expression of gene at rank i
+# matches what SC pipeline does via sortperm in build_batch_etf
+function reindex_to_rank_order(X_expr::Matrix{Float32}, X_ranks::Matrix{Int32})
+    X_ranked = similar(X_expr)
+    for j in axes(X_expr, 2)
+        for i in axes(X_ranks, 1)
+            X_ranked[i, j] = X_expr[X_ranks[i, j], j]
+        end
+    end
+    return X_ranked
 end
 
 function rank_genes(expr::Matrix, medians::Vector)

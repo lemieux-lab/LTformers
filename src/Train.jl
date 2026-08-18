@@ -57,7 +57,8 @@ function mask_input_erecon!(X_masked, expr_labels, X_ranks::Matrix, X_expr::Matr
     for j in 1:n_samples
         mask_pos = sample(1:n_rows, num_masked, replace=false)
         for pos in mask_pos
-            expr_labels[pos, j] = X_expr[pos, j]
+            # look up expression of the gene actually at rank pos (not gene pos)
+            expr_labels[pos, j] = X_expr[X_ranks[pos, j], j]
             X_masked[pos, j] = mask_id
         end
     end
