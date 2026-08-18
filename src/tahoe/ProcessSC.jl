@@ -2,7 +2,7 @@ module ProcessSC
 
 using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays
 
-export log_normalize_col!, process_cell_topk
+export log_normalize_col!, process_cell_topk_flat
 export build_batch_rtf, build_batch_etf, batches_from_shard
 export sc_mask_input!, sc_mask_input_exp!, sc_mask_input_erecon!, sc_masked_loss
 export cell_to_dense_flat!, process_cell_topk_flat
@@ -90,29 +90,32 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     return batch_ids, batch_expr
 end
 
+# yields one batch at a time via Channel so first step starts immediately
 function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::Int,
                             top_k::Int, batch_size::Int;
                             modeltype::String = "rtf",
                             token_to_idx::Dict{Int,Int} = error("token_to_idx required"),
                             load_shard_fn = error("load_shard_fn required"))
+    println("  loading shard: $(basename(path))")
     shard = load_shard_fn(path)
+    println("  loaded $(shard.n_cells) cells, building batches...")
     cell_order = shuffle(1:shard.n_cells)
 
-    batches = []
-    for start_idx in 1:batch_size:shard.n_cells
-        end_idx = min(start_idx + batch_size - 1, shard.n_cells)
-        ci = cell_order[start_idx:end_idx]
-        if modeltype == "etf"
-            ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
+    return Channel{Any}(1) do ch
+        for start_idx in 1:batch_size:shard.n_cells
+            end_idx = min(start_idx + batch_size - 1, shard.n_cells)
+            ci = cell_order[start_idx:end_idx]
+            if modeltype == "etf"
+                ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
+                                            ci, token_to_idx, n_coding, top_k)
+                put!(ch, (ids, vals))
+            else
+                batch = build_batch_rtf(shard.genes_flat, shard.offsets, shard.expr_flat,
                                         ci, token_to_idx, n_coding, top_k)
-            push!(batches, (ids, vals))
-        else
-            batch = build_batch_rtf(shard.genes_flat, shard.offsets, shard.expr_flat,
-                                    ci, token_to_idx, n_coding, top_k)
-            push!(batches, batch)
+                put!(ch, batch)
+            end
         end
     end
-    return batches
 end
 
 

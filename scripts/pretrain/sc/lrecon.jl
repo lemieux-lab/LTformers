@@ -53,11 +53,13 @@ else
                     dropout_prob=config["drop_prob"])
 end
 model = cu(model)
+model = fix_gpu_dropout(model)
 
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
 
-opt = Flux.setup(Adam(config["lr"]), model)
+# opt = Flux.setup(Adam(config["lr"]), model)
+opt = Flux.setup(AdamW(config["lr"]), model)
 
 # mask
 X_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
@@ -79,11 +81,13 @@ test_losses = Float32[]
 target_variances = Float32[]
 saved_preds = Vector{Float32}[]
 saved_targets = Vector{Float32}[]
-saved_positions = Vector{Int}[]
-gene_error_sums = zeros(Float32, n_coding)
+# saved_positions = Vector{Int}[]  # BUG: creates Vector{Vector{Int}}, push!(_, Int32) errors
+saved_positions = Int32[]
+gene_error_sums = zeros(Float32, n_coding)  # indexed by gene_id (1..n_coding)
 gene_error_counts = zeros(Int, n_coding)
-rank_error_sums = zeros(Float32, n_coding)
-rank_error_counts = zeros(Int, n_coding)
+# rank_error_sums = zeros(Float32, n_coding)
+rank_error_sums = zeros(Float32, top_k)   # indexed by rank position (1..top_k)
+rank_error_counts = zeros(Int, top_k)
 
 global_step = 0
 use_max_steps = config["max_steps"] > 0
@@ -92,17 +96,23 @@ best_test_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
-    n_sample = min(5, length(train_shards))
+    # sample 1 shard instead of 5 to avoid slow PyArrow startup overhead
+    # n_sample = min(5, length(train_shards))
+    n_sample = 1
     sample_shards = train_shards[1:n_sample]
     local total_cells = 0
     for sp in sample_shards
+        println("  estimating epoch size from shard: $(basename(sp))")
         shard = load_shard_pyarrow(sp)
         total_cells += shard.n_cells
+        println("  shard has $(shard.n_cells) cells")
     end
     avg_cells_per_shard = total_cells / n_sample
     est_cells_per_epoch = avg_cells_per_shard * length(train_shards)
     bpe = cld(Int(round(est_cells_per_epoch)), config["batch_size"])
-    cld(config["max_steps"], bpe)
+    n_ep = cld(config["max_steps"], bpe)
+    println("  estimated: $(Int(round(avg_cells_per_shard))) cells/shard, $bpe batches/epoch, $n_ep epochs for $(config["max_steps"]) steps")
+    n_ep
 else
     config["n_epochs"]
 end
@@ -153,7 +163,9 @@ for epoch in 1:n_total_epochs
             l_val, grads = Flux.withgradient(model) do m
                 masked_lrecon_loss(m, x_gpu, target_embeds, mask_2d)[1]
             end
-            Flux.update!(opt, model, grads[1])
+            # Flux.update!(opt, model, grads[1])
+            grads_clipped = Flux.clipnorm(grads[1], 1.0)
+            Flux.update!(opt, model, grads_clipped)
             ema_update!(ema_model, model, Float32(config["ema_decay"]))
             push!(epoch_losses, l_val)
 
@@ -189,8 +201,8 @@ for epoch in 1:n_total_epochs
         end
     end
 
-    # eval
-    Flux.testmode!(model)
+    # eval — use ema_model (the saved checkpoint) for eval loss
+    # Flux.testmode!(model)
     eval_losses = Float32[]
     is_last = (epoch == n_total_epochs) || done
     # eval all test shards on last epoch, subset otherwise
@@ -226,7 +238,8 @@ for epoch in 1:n_total_epochs
                 mask_2d = Float32.(CuArray(ym) .!= -100)
             end
             target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-            loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
+            # loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
+            loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
             push!(eval_losses, cpu(loss_val))
 
             if is_last && !isnothing(preds_embed)
@@ -235,7 +248,8 @@ for epoch in 1:n_total_epochs
                 if use_exp
                     mask_cpu_bool = cpu(mask_2d) .> 0f0
                 else
-                    mask_cpu_bool = cpu(CuArray(ym) .!= -100)
+                    # mask_cpu_bool = cpu(CuArray(ym) .!= -100)  # wasteful GPU round-trip, ym is already CPU
+                    mask_cpu_bool = ym .!= -100
                 end
                 embed_dim_local = size(dec_cpu, 1)
 
@@ -248,10 +262,12 @@ for epoch in 1:n_total_epochs
                             push!(saved_targets, tgt_cpu[:, masked_idx])
                             push!(saved_positions, Int32(pos))
                             emb_mse = sum((dec_cpu[:, masked_idx] .- tgt_cpu[:, masked_idx]) .^ 2) / embed_dim_local
-                            gene_error_sums[pos] += emb_mse
-                            gene_error_counts[pos] += 1
+                            # pos = rank position (SC data is sorted by expression)
                             rank_error_sums[pos] += emb_mse
                             rank_error_counts[pos] += 1
+                            gene_id = use_exp ? batch_ids[pos, j] : batch[pos, j]
+                            gene_error_sums[gene_id] += emb_mse
+                            gene_error_counts[gene_id] += 1
                         end
                     end
                 end
@@ -273,7 +289,7 @@ for epoch in 1:n_total_epochs
         global best_test_loss = test_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
-        log_model(ema_model, joinpath(save_dir, "best"))
+        log_model(ema_model, joinpath(save_dir, "best"), config)
     end
 end
 
@@ -291,10 +307,11 @@ end
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
                     "mean embedding MSE", "per_gene_error";
                     sorted_gene_path=get(config, "sorted_gene_path", ""))
-plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_coding, save_dir,
+plot_per_sample_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir,
                            "mean embedding MSE", "per_rank_error")
 
-log_model(ema_model, save_dir)
+# log_model(ema_model, save_dir)
+log_model(ema_model, save_dir, config)
 
 # save shard split for finetune reuse
 jldsave(joinpath(save_dir, "shard_split.jld2");
