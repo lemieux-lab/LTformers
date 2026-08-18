@@ -57,7 +57,7 @@ if n_hvg > 0 && n_hvg < size(data_expr, 1)
     println("HVG filter: $(n_orig) → $(n_hvg) genes")
 end
 
-gene_medians = vec(median(data_expr, dims=2)) .+ 1e-10
+gene_medians = vec(median(data_expr, dims=2)) .+ 1f-10
 X_ranks = rank_genes(data_expr, gene_medians)
 
 n_genes = size(X_ranks, 1)
@@ -77,6 +77,9 @@ else
     X_test = X_ranks[:, test_indices]
 end
 X_ranks_test = X_ranks[:, test_indices]
+if use_exp
+    inv_ranks_test = inverse_ranks(X_ranks_test)
+end
 
 # model
 model = if use_exp
@@ -94,7 +97,8 @@ model = fix_gpu_dropout(model)
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
 
-opt = Flux.setup(Adam(config["lr"]), model)
+# opt = Flux.setup(Adam(config["lr"]), model)
+opt = Flux.setup(AdamW(config["lr"]), model)
 
 # mask
 X_test_masked = similar(X_test)
@@ -113,6 +117,9 @@ dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
+if n_hvg > 0
+    jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
+end
 
 wandb = init_wandb(config, "PB-PT-Aug", "lrecon_$(fmt)_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
@@ -182,7 +189,9 @@ for epoch in ProgressBar(1:n_total_epochs)
         l_val, grads = Flux.withgradient(model) do m
             masked_lrecon_loss(m, x_batch, target_embeds, mask_2d)[1]
         end
-        Flux.update!(opt, model, grads[1])
+        # Flux.update!(opt, model, grads[1])
+        grads_clipped = Flux.clipnorm(grads[1], 1.0)
+        Flux.update!(opt, model, grads_clipped)
         ema_update!(ema_model, model, Float32(config["ema_decay"]))
         push!(epoch_losses, l_val)
         global global_step += 1
@@ -201,8 +210,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         println("UH OH epoch $epoch: target embedding variance = $tgt_var")
     end
 
-    # eval epoch
-    Flux.testmode!(model)
+    # eval epoch — use ema_model (the saved checkpoint) for eval loss
+    # Flux.testmode!(model)
     eval_losses = Float32[]
 
     for start_idx in 1:config["batch_size"]:size(X_test_masked, 2)
@@ -223,13 +232,15 @@ for epoch in ProgressBar(1:n_total_epochs)
             mask_cpu = cpu(mask_bool)
         end
 
-        loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
+        # loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
+        loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
         push!(eval_losses, cpu(loss_val))
 
         if (is_last || done) && !isnothing(decoded_masked)
             dec_cpu = cpu(decoded_masked)
             tgt_cpu = cpu(tgt_masked)
             ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
+            inv_ranks_batch = use_exp ? inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))] : nothing
             embed_dim_local = size(dec_cpu, 1)
             masked_idx = 0
             for j in 1:size(mask_cpu, 2)
@@ -240,11 +251,21 @@ for epoch in ProgressBar(1:n_total_epochs)
                         push!(saved_targets, tgt_cpu[:, masked_idx])
                         push!(saved_positions, Int32(pos))
                         emb_mse = sum((dec_cpu[:, masked_idx] .- tgt_cpu[:, masked_idx]) .^ 2) / embed_dim_local
-                        gene_error_sums[pos] += emb_mse
-                        gene_error_counts[pos] += 1
-                        r = ranks_batch[pos, j]
-                        rank_error_sums[r] += emb_mse
-                        rank_error_counts[r] += 1
+                        if use_exp
+                            # ETF: pos = gene index
+                            gene_error_sums[pos] += emb_mse
+                            gene_error_counts[pos] += 1
+                            r = inv_ranks_batch[pos, j]  # rank of gene pos
+                            rank_error_sums[r] += emb_mse
+                            rank_error_counts[r] += 1
+                        else
+                            # RTF: pos = rank position, ranks_batch[pos,j] = gene_id
+                            rank_error_sums[pos] += emb_mse
+                            rank_error_counts[pos] += 1
+                            gene_id = ranks_batch[pos, j]
+                            gene_error_sums[gene_id] += emb_mse
+                            gene_error_counts[gene_id] += 1
+                        end
                     end
                 end
             end
@@ -263,7 +284,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         global best_test_loss = test_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
-        log_model(ema_model, joinpath(save_dir, "best"))
+        log_model(ema_model, joinpath(save_dir, "best"), config)
     end
 end
 
@@ -282,7 +303,8 @@ plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
 plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir,
                            "mean embedding MSE", "per_rank_error")
 
-log_model(ema_model, save_dir)
+# log_model(ema_model, save_dir)
+log_model(ema_model, save_dir, config)
 log_info(; save_dir=save_dir, train_indices=train_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
            test_losses=test_losses, target_variances=target_variances,
