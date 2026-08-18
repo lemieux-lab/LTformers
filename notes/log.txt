@@ -242,4 +242,87 @@
 ### aug 14 2026 ###
 
 -- re-running SC 10step wl less params, still taking too long...
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 17 2026 ###
+
+-- pb pre-train sweeps
+    -- ended sweeps for tahoe (6)
+        -- would still need to re-run w/o double normalization
+        -- re: erecon rtf issue
+            -- do i even need erecon at this point? verify with fine-tuning results
+                -- ran ft lvl2 erecon etf vs. lrecon etf
+                    -- updated models.toml temporarily
+                    -- wait why is erecon etf only 13 steps???
+                    -- erecon etf outperformed lrecon etf a little (24.6% vs. 23%)
+                        -- probably will keep it? or run a bit longer just to see (only did 10eps)
+            -- erecon and mlm use gradient clipping, lrecon does not. 
+            -- bug in masking for erecon rtf and mlm etf; gene 1 != rank 1, fixed!
+            -- added HVG indices saving
+        -- for now, cancel all sweeps + do big runs w/ mlm and lrecon, as these are working fine. 
+            -- literature suggests that its best to do same architecture + hyperparam tune 
+                -- wherein hyperparams to be tuned are: LR, mask_ratio, etc. (see althea for literature justification)
+            -- held constant:
+                embed_dim: 128
+                hidden_dim: 128
+                n_heads: 2
+                n_layers: 2
+                epochs/steps: 160k
+                seq_len: 1024/978
+                optimizer: adamW
+            -- sweep:
+                lr: 
+                mask_ratio:
+                dropout:
+            -- updated default config
+        -- RUNNING long mlm runs, lrecon runs
+    -- lincs?
+        -- accidentaly was running tahoe instead of lincs for mlm etf.
+        -- need rest of sweeps? 
+        -- honestly dw about lincs re-running stuff for now, i already have the results technically.
+
+-- sc pre-train
+    -- can't run anymore??? nothing even 1step is finishing.
+        -- debug! added iterator that builds one batch at a time, rather than all batches at once
+            -- realistically building all batches into shard and doing ranking on that wouldn't take that long, right?
+            -- for reference, entropy code takes about 1.5hrs to calculate entropies for each position. 
+        -- RUNNING 10step
+    -- pb uses corruption (in lrecon and erecon etf only), sc uses sentinel for masking for all etf
+    -- added gpu dropout rng fix
+
+-- pb fine-tune
+    -- need to re-run all pre-trainings to get good embeddings? i think mlm RTF is done for both tahoe and lincs tho
+    -- do cell line classification first for tahoe
+
+-- data comparison
+    -- re-RUNNING 300 shard test (estimated done on the 20th?)
+    -- why distances are much larger in pb compared to sc vectors:
+        -- when comparing two random cells, expressed genes have little overlap in sc 
+        -- as shown by results/tahoe/pb/figures/vectors vs. results/tahoe/sc/figures/vectors
+            -- specifically jaccard cosine, library complexity, cosken jaccard, euclid decomp?
+            -- see sparsity v entropy for both as well
+
+*currently there is a super weird worksaround fix for expression to rank and vice versa for MLM etf and ERECON RTF
+- rather than reordering expression so its from highest to lowest so that the indices match with RTF
+- i want to instead just compute inverse premutation lookups
+- although this is different from SC wherein this is actually ranked from highest to lowest for both ETF and RTF
+    - SC requires the rank ordering
+    - each cell has different genes expressed, so there's no consistent "gene order" across cells
+    - The top-k selection + sort is what gives SC a fixed-length, consistently-ordered sequence. So SC stays as-is.
+
+-- ^re-implemented the workaround, this is lowwkey needed because otherwise model predicts the rank @ gene i if
+    -- as opposed to the gene ID @ rank i (which is what RTF, SC ETF etc do)
+    -- try this, see how it goes compared to the previous MLM ETF
+
+- after that, perform sweep on tahoe all configs for sweeps. this might take a while... but would need at some point for finetuning
+- after this, need to finetune on these models while doing SC runs 
+- lincs stuff can remain on the back burner for now, re-running is not a huge priority rn
+
+***
+-- for now, going to compare mlm etf versions from the old vs. new (2) tbd tmo
+    -- mlm.jl ordered by rank, mlm_inv.jl ordered by genes
+-- while that runs, doing big tahoe MLM RTF, LRECON RTF + ETF; sweeps (3)
+-- also run tahoe e2e ETF er/lr for a bit longer to see which does better (2)
+-- sc 300 ev + sc mlm rtf 10step still running [2]
 -- 

@@ -22,11 +22,11 @@ etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-02_16-54/best"
 
 [tahoe_pb.lrecon]
 rtf = ""
-etf = ""
+etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-12_06-19/best"
 
 [tahoe_pb.erecon]
 rtf = ""
-etf = ""
+etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-17_08-32/best"
 
 # tahoe single-cell
 

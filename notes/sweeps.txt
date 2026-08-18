@@ -37,3 +37,57 @@ lrecon rtf
 - n_layers=1-2
 - mask_ratio=0.25
 - ema_decay=0.9
+
+###
+
+tahoe pb
+
+mlm etf
+- lr=0.003*
+- drop_prob=0.175
+- embed_dim=128*
+- hidden_dim=128
+- n_heads=2
+- n_layers=2*
+- mask_ratio=0.1
+
+mlm rtf
+- lr=0.003
+- drop_prob=0.1
+- embed_dim=128
+- hidden_dim=128
+- n_heads=2
+- n_layers=2
+- mask_ratio=0.1
+
+erecon etf
+- lr=0.003
+- drop_prob=0.125
+- embed_dim=128
+- hidden_dim=128
+- n_heads=1
+- n_layers=2
+- mask_ratio=0.275
+
+erecon rtf
+- TBD
+
+lrecon etf
+- lr=0.003
+- drop_prob=0.1 or 0.15
+- embed_dim=64
+- hidden_dim=128
+- n_heads=2 or 1
+- n_layers=1*
+- mask_ratio=0.25 or 0.1
+- ema_decay=0.9
+
+lrecon rtf
+- lr=0.005
+- drop_prob=0.1
+- embed_dim=128
+- hidden_dim=256*
+- n_heads=1
+- n_layers=1*
+- mask_ratio=0.25
+- ema_decay=0.925
