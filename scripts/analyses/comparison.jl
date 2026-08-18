@@ -183,3 +183,56 @@ begin
     save("$fig_ent_dir/lt_entropy_ranked.png", fig_rank)
     display(fig_rank)
 end
+
+#######################################################################################################################################
+
+# entropy/sparsity comparison
+
+tahoe_spar = load("results/tahoe/pb/data/entropies/pb_ranked_sparsities.jld2")
+sc_ent = load("results/tahoe/sc/data/entropies/ranked_sc_entropies.jld2")
+sc_spar = load("results/tahoe/sc/data/entropies/ranked_sc_sparsities.jld2")
+
+pb_S = tahoe_spar["sparsities"]
+sc_H = sc_ent["entropies"]
+sc_S = sc_spar["sparsities"]
+
+n_genes = length(tahoe_H)  # 19020, same for all
+
+begin
+    fig_overlay = Figure(size=(700, 500))
+
+    ax_ent = Axis(fig_overlay[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Shannon entropy (bits)",
+        yaxisposition=:left,
+        xtickformat=values -> [string(Int(round(v))) for v in values],
+        title="Tahoe entropy & sparsity per rank position (5 parquets sampled for SC)")
+    ax_spar = Axis(fig_overlay[1, 1],
+        ylabel="Sparsity (1 = always 0)",
+        yaxisposition=:right)
+    hidespines!(ax_spar)
+    hidexdecorations!(ax_spar)
+
+    # entropy: solid lines
+    scatter!(ax_ent, 1:n_genes, Float64.(tahoe_H),
+        markersize=4, alpha=0.5, color=Makie.wong_colors()[1], label="PB entropy")
+    scatter!(ax_ent, 1:n_genes, Float64.(sc_H),
+        markersize=4, alpha=0.5, color=Makie.wong_colors()[2], label="SC entropy")
+
+    # sparsity: dotted lines (using lines! with linestyle)
+    lines!(ax_spar, 1:n_genes, Float64.(pb_S),
+        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[1], label="PB sparsity")
+    lines!(ax_spar, 1:n_genes, Float64.(sc_S),
+        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[2], label="SC sparsity")
+
+    Legend(fig_overlay[0, 1],
+        [MarkerElement(color=Makie.wong_colors()[1], marker=:circle, markersize=8),
+         MarkerElement(color=Makie.wong_colors()[2], marker=:circle, markersize=8),
+         LineElement(color=Makie.wong_colors()[1], linestyle=:dash, linewidth=2),
+         LineElement(color=Makie.wong_colors()[2], linestyle=:dash, linewidth=2)],
+        ["PB entropy", "SC entropy", "PB sparsity", "SC sparsity"],
+        orientation=:horizontal, tellwidth=false, tellheight=true)
+
+        display(fig_overlay)
+    end
+    save("$fig_ent_dir/pb_vs_sc_entropy_sparsity.png", fig_overlay)
