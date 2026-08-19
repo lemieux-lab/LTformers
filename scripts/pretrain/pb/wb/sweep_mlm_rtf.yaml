@@ -28,6 +28,8 @@ parameters:
     value: 2
   n_layers:
     value: 2
+  batch_size:
+    value: 100
   # sweep params
   lr:
     min: 0.0005
