@@ -1,0 +1,140 @@
+### jul 27 2026 ###
+
+Tahoe-100M dataset: /home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M
+Preprocessing code: /home/muninn/scratch/kaufmanl/CAP/scripts/tahoe/03_preprocess.jl 
+Preprocessed dataset: /home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2
+
+-- do i need a different set of scripts for pseudobulked vs. single cell??? going to try pseudobulked first since i already have the scripts for it.
+
+-- testing pseudobulk for mlm rtf:
+    -- took 3hrs for 10ep, 30 mins per ep on 0.1 subset for MiG
+    -- result located at save dir: out/pretrain/rtf/mlm/2026-07-27_17-32, about the same performance as lincs!
+
+-- run the etf version now (and i guess longer version of both so i can show at lab?)
+    -- located at out/pretrain/etf/mlm/2026-07-27_23-57
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 28 2026 ##
+
+-- i think the above results were accidentally done on lincs (w/o subset) instead of tahoe, re-running now w/ 0.1 subset
+-- tahoe pseudobulk won't run because it's too large!!! - need to filter to top x HVGs
+    -- running now on top 1024 HVGs 0.1 subset for ETF and RTF
+
+-- i don't really want to truncate because i want to look at different truncation lengths in case that is a factor
+-- first, do entropy/vector graphs on tahoe pseudobulk and tahoe single-cell at full # genes, then top x HVGs
+-- later need to also ensure sequencing depth of pseudobulk and single-cell are the same for comparison???
+
+-- need to consolidate files b/n lincs and tahoe so they have same architecutre!
+    -- done
+
+-- currently running entropy/vectors eval on sc tahoe
+-- re-running 1024 HVGs 0.1 subset for ETF and RTF on all pt tasks
+    -- debug, then compare w/ LINCS
+    -- then try w/ larger subset/#HVGs
+
+https://claude.ai/code/artifact/3b0a1016-2306-49bf-8797-ba9d57ec7c4d
+
+-- re-runnign w/ subset=0.3, embed_dim=64 to compare w/ lincs runs
+
+-- re-running with larger n_hvg to see how much longr it takes
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 28 2026 ##
+
+-- for sc:
+    -- need to consider how to re-weight loss and masking w/ all the 0s present as well
+    -- doing mini runs of entropy and vectors, sampling only from 10 and 50 shards
+    -- wherein each shard has 28k cells, all 50 cell lines, grouped by plate (ex. shards 1-50 are all plate 4)
+    -- sample n shards, sample n cells from each shard, then sample n pairs
+
+-- for pb: 
+    -- running mlm and lrecon on rtf and etf for comparison with lincs, using 0.3 subset and 25 epochs (1024 hvg)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 30 2026 ##
+
+-- re-running 100K vectors and entropy plots w/ saving the sampled vectors and random shuffling and keeping all genes in single-cell
+-- also doing longer runs on Tahoe PB
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 3 2026 ###
+
+-- tahoe PB MLM;
+    -- ARGS='-e 400 -t rtf --subset_ratio 1.0 --embed_dim 128 --hidden_dim 256 --n_heads 1 --n_layers 2 --wandb_mode online' (1024 HVGs)
+        -- for comparison against LINCS;
+            -- ARGS='-e 25 -t rtf --subset_ratio 0.75 --embed_dim 128 --hidden_dim 256 --n_heads 1 --n_layers 2 --wandb_mode online'
+            -- since LINCS has way more samples!
+        -- RTF still running (15min/ep)
+        -- ETF still running (?/ep)
+    -- TBD on wednesday?
+
+-- tahoe SC data analysis;
+    -- re-running 100 shard + 100k vector sampling on gh200
+    -- also 300 shard + 100k vector sampling on gh18 been running
+
+-- tahoe SC data loading;
+    -- opt1: shuffle parquet order per epoch, use lea's code to read one at a time, preprocess then shuffle within parquet, then feed to grouped
+    -- opt2: mimic DataLoader, wherein loading and training happen in parallel using Channels/Tasks/workers?
+    -- doing opt1:
+        1. Load gene vocab → token_to_idx, n_coding
+        2. List shard files, split into train/test shards (80/20 by shard index)
+        3. Build model (same RankModel / ExpModel constructors, but with n_genes=n_coding ~19K and n_classes=n_coding)
+        4. Training loop:
+        for epoch in 1:n_epochs
+            shuffle train shard order
+            for shard_path in train_shards
+                read shard, shuffle cells within shard
+                for batch in shard_batches
+                    mask batch (same mask_input! / mask_input_exp! logic)
+                    forward, loss, backward
+                end
+            end
+    -- implemented mlm, testing rtf on MiG currently
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 4 2026 ###
+
+-- tahoe SC pre-training;
+    -- OOM issue: pseudo-bulk: n_classes = n_hvg (1024) BUT single-cell: n_classes = n_coding (19,020)  
+        -- tried: run classifier only on masked position embeddings
+        -- tried: lower batch_size=64
+            -- working! trying 2ep run for test
+
+-- tahoe SC data analysis;
+    -- 99hrs (entropy) + 2hrs (vectors) for 300/3388 shards on MiG
+    -- also running a version using the cxx loading that Lea uses for comparison (testing 100/3388 shards tho)
+
+-- tahoe PB pre-training;
+    -- still running (for compare w/ lincs)
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 5 2026 ###
+
+-- tahoe PB pre-training;
+    -- still running (for compare w/ lincs)
+
+-- tahoe SC pre-training;
+    -- still running (2ep test) on batch_size=64
+
+-- tahoe SC data analysis;
+    -- still running both regular loading and cxx loading
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 7 2026 ###
+
+-- tahoe PB pre-training;
+    -- finished 
+
+-- tahoe SC pre-training;
+    -- still running (2ep test) on batch_size=64
+
+-- tahoe SC data analysis;
+    -- still running both regular loading and cxx loading
+    -- retesting again on a CPU only sbatch; 3shards for comparison

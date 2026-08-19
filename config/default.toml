@@ -21,6 +21,7 @@ n_layers = 2
 n_hvg = 1024 # bulk sequence length
 top_k = 1024 # single-cell sequence length
 n_eval_shards = 10
+subset_shards = 0
 subset_ratio = 1.0
 max_steps = 160000 # pre-train
 

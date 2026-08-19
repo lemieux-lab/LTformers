@@ -257,7 +257,7 @@
                     -- wait why is erecon etf only 13 steps???
                     -- erecon etf outperformed lrecon etf a little (24.6% vs. 23%)
                         -- probably will keep it? or run a bit longer just to see (only did 10eps)
-            -- erecon and mlm use gradient clipping, lrecon does not. 
+            -- all scripts updated to use gradient clipping via OptimiserChain(ClipNorm(1.0), AdamW(lr))
             -- bug in masking for erecon rtf and mlm etf; gene 1 != rank 1, fixed!
             -- added HVG indices saving
         -- for now, cancel all sweeps + do big runs w/ mlm and lrecon, as these are working fine. 
@@ -323,6 +323,101 @@
 -- for now, going to compare mlm etf versions from the old vs. new (2) tbd tmo
     -- mlm.jl ordered by rank, mlm_inv.jl ordered by genes
 -- while that runs, doing big tahoe MLM RTF, LRECON RTF + ETF; sweeps (3)
+    -- running on decr batch size idk why
 -- also run tahoe e2e ETF er/lr for a bit longer to see which does better (2)
 -- sc 300 ev + sc mlm rtf 10step still running [2]
--- 
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 18 2026 ###
+
+-- from above, completed:
+    -- tahoe e2e ETF er/lr
+    -- sc 300 ev!
+-- waiting on:
+    -- tahoe mlm ETF old vs. new
+    -- sc mlm rtf 10step
+
+-- pb pre-train
+    -- RUNNING tahoe sweeps for MLM RTF, LRECON ETF, LRECON RTF
+        -- also RUNNING tahoe sweeps for ERECON ETF, ERECON RTF (all batchsize 100 but same 160k steps)
+    -- re: keeping erecon:
+        -- tahoe e2e ETF erecon vs. lrecon: erecon outperformed by like 20%
+        -- so keep i guess!
+    -- re: mlm ETF old vs. new:
+        -- RUNNING 50ep comparison
+        -- fackkkk was supposed to do etf not rtf. re-running comparison again. 
+
+-- sc pre-train
+    -- RUNNING tests
+        -- 8mins for 10steps, 1 shard
+        -- not sure what variations cause it to be more than 8mins...
+        -- breakdown:
+            -- 5mins per test (eval) shard
+            -- 2s per step
+        -- changes that can be made:
+            -- parallelize cell processing (@threads on sortperm for build_batch())
+            -- partialsortperm instead of sortperm since only using top 1024?
+        -- main bottleneck is n_eval_shards!
+        -- going to try slightly larger, full 3388 shards for training set w/ less n_eval_shards?
+        -- RUNNING 10k 10 n_eval_shards 
+            -- gpu is good but see if can incr
+            -- would need to do full test set (full n_eval_shards) later to ensure not taken from same plate
+    -- FYI: pb uses corruption (in lrecon and erecon etf only), sc uses sentinel for masking for all etf
+
+-- pb fine-tune
+    -- waiting on pre-training finishes
+    -- do cell line classification first for tahoe
+
+-- data comparison
+    -- sc 300 ev failed after entropies/sparsities D: 
+    -- ran a recovery script for the rest of the vectors, etc
+    -- 
+
+-- pb variations: https://claude.ai/code/artifact/617846b7-7510-48f7-9a62-2afb9926fc37
+    -- discrepancies:
+        -- mlm etf maybe better as gene order?
+            -- but then label is rank of gene rather than gene at rank
+        -- mlm etf is MASK=-1.0, lrecon/erecon etf use corruption (swap from other values)
+            -- can remove mask_emb() from those other two files if not used?
+            -- different encode() functions used
+        -- lrecon and erecon use MSE loss (should be ok)
+        -- 
+    -- 
+
+-- sc variations: https://claude.ai/code/artifact/43720403-28d2-449f-b675-933108124127
+    -- discrepancies:
+        -- mlm etf encode issue
+        -- get_target_embeds()
+        -- shard loading modeltype
+        -- can remove mask_emb()?
+        -- channel() continues running in background
+
+-- cq setup:
+
+    tmux new -s transfer
+
+    rsync -azh --partial --info=progress2 \
+    /home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/data/ \
+    rorqual:/home/chans/links/scratch/transformers/data/tahoe/data/ && \
+    
+    rsync -azh --partial --progress \
+    /home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/metadata/ \
+    rorqual:/home/chans/links/scratch/transformers/data/tahoe/metadata/ && \
+    
+    rsync -azh \
+    /home/muninn/scratch/kaufmanl/CAP/data/protein-coding_gene.txt \
+    rorqual:/home/chans/links/scratch/transformers/data/tahoe/ && \
+    
+    rsync -azh --partial --progress \
+    /home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2 \
+    rorqual:/home/chans/links/scratch/transformers/data/tahoe/
+
+    Detach with Ctrl+b then d, come back anytime with tmux attach -t transfer.
+
+    -- currently running tahoe file transfers! 
+
+*** running: ***
+-- tahoe mlm etf inv vs. non inv
+-- tahoe mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf sweeps
+-- sc 10k steps, 10 eval_shards mlm rtf

@@ -75,18 +75,71 @@ function log_info(; train_indices,
     end
 end
 
+## old log_params -- alphabetical order
+# function log_params(config::Dict, gpu_info::String, run_hours, run_minutes, save_dir::String;
+#                     skip::Set{String} = Set{String}(), metrics...)
+#     open(joinpath(save_dir, "params.txt"), "w") do io
+#         println(io, "PARAMETERS:\n###########\n$(gpu_info)")
+#         # for (k, v) in sort(collect(config))
+#         for (k, v) in sort(collect(config), by=first)
+#             k in skip && continue
+#             println(io, "$k = $v")
+#         end
+#         println(io, "run_time = $(run_hours) hours and $(run_minutes) minutes")
+#         if !isempty(metrics)
+#             println(io, "\nMETRICS:\n###########")
+#             for (k, v) in metrics
+#                 println(io, "$k = $v")
+#             end
+#         end
+#     end
+# end
+
+const _param_groups = [
+    "# data paths" => ["data_path", "data_format", "modeltype", "sorted_gene_path"],
+    "# single-cell data paths" => ["data_dir", "meta_dir", "coding_gene_path"],
+    "# parameters" => [
+        "batch_size", "n_epochs", "embed_dim", "hidden_dim", "n_heads", "n_layers",
+        "n_hvg", "top_k", "n_eval_shards", "subset_shards", "subset_ratio", "max_steps",
+        "lr", "drop_prob", "mask_ratio", "ema_decay",
+    ],
+    "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "label_path"],
+    "# lvl3 references/targets" => ["source_cell", "target_cell", "target_gene"],
+    "# misc" => ["wandb_mode", "additional_notes"],
+]
+
 function log_params(config::Dict, gpu_info::String, run_hours, run_minutes, save_dir::String;
                     skip::Set{String} = Set{String}(), metrics...)
     open(joinpath(save_dir, "params.txt"), "w") do io
-        println(io, "PARAMETERS:\n###########\n$(gpu_info)")
-        # for (k, v) in sort(collect(config))
-        for (k, v) in sort(collect(config), by=first)
-            k in skip && continue
-            println(io, "$k = $v")
+        println(io, "$(gpu_info)\n")
+        logged = Set{String}()
+        for (header, keys) in _param_groups
+            printed_header = false
+            for k in keys
+                k in skip && continue
+                !haskey(config, k) && continue
+                if !printed_header
+                    println(io, header)
+                    printed_header = true
+                end
+                println(io, "$k = $(config[k])")
+                push!(logged, k)
+            end
+            printed_header && println(io)
         end
+        # any remaining config keys not in the groups above
+        remaining = sort(collect(k for k in keys(config) if !(k in logged) && !(k in skip)))
+        if !isempty(remaining)
+            println(io, "# other")
+            for k in remaining
+                println(io, "$k = $(config[k])")
+            end
+            println(io)
+        end
+        println(io, "# runtime")
         println(io, "run_time = $(run_hours) hours and $(run_minutes) minutes")
         if !isempty(metrics)
-            println(io, "\nMETRICS:\n###########")
+            println(io, "\n# metrics")
             for (k, v) in metrics
                 println(io, "$k = $v")
             end

@@ -85,6 +85,9 @@ function load_pretrain_args()
         "--n_eval_shards"
             help = "number of test shards to evaluate per epoch"
             arg_type = Int
+        "--subset_shards"
+            help = "max number of shards to use (0 = all); applied after train/test split"
+            arg_type = Int
     end
     return parse_args(s)
 end

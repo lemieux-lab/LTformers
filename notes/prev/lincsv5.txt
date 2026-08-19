@@ -1,0 +1,1132 @@
+-----------------------------------------------------------------------------------------------------------
+
+### may 25 2026 ###
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7752631    chans      lemieux        v5_2_v2   R   20:58:21     1   32 gres:gpu:1    200G majsrv6 (None)
+7752632    chans      lemieux       v5_2_rtf   R   20:58:26     1   32 gres:gpu:1    200G smaug (None)
+7752670    chans      lemieux       pt_1_rtf   R    1:36:52     1   10 gres:gpu:1     80G balrog (None)
+7752671    chans      lemieux       pt_2_rtf   R    1:37:30     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### may 27 2026 ###
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7753393    chans      lemieux v5pe_lvl2_5_rt  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Resources)    (rtf 5ep posenc)
+7753416    chans      lemieux       pt_recon  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)     (rtf 5ep pt on exp recon)
+7753390    chans      lemieux ft_nopt_lvl2_5   R   23:53:37     1   32 gres:gpu:1    200G smisrv1 (None)  (rtf 5ep posemb)
+7753391    chans      lemieux ft_nopt_lvl2_5   R   23:55:07     1   32 gres:gpu:1    200G majsrv6 (None)  (etf 5ep posemb)
+7753392    chans      lemieux v5pe_lvl2_5_et   R   23:59:32     1   32 gres:gpu:1    200G oni (None)      (etf 5ep posenc)
+
+7752901    chans      lemieux       pt_30_v2  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)    (v2 30ep pt on mlm)
+7752900    chans      lemieux      pt_30_rtf   R 2-03:10:32     1   64 gres:gpu:G    500G balrog (None)   (rtf 30ep pt on mlm)
+
+-----------------------------------------------------------------------------------------------------------
+
+### may 28 2026 ###
+
+comparison between posenc vs posemb on rtf and etf seem about the same. slightly better posenc on rtf but not by much, would likely need to do further testing (longer run).
+emb reconstruction looks promising! (on rtf), would need to also run longer.
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7753771    chans      lemieux posenc_lvl2_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Resources)
+7753772    chans      lemieux posenc_lvl2_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Priority)
+7753773    chans      lemieux posenc_lvl1_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Priority)
+7753774    chans      lemieux posenc_lvl1_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Priority)
+
+7753775    chans      lemieux posemb_lvl1_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Priority)
+7753777    chans      lemieux posemb_lvl1_1_  PD    3:00:00     1   32 gres:gpu:1    200G  (Priority)
+7753769    chans      lemieux posemb_lvl2_1_   R    2:55:57     1   32 gres:gpu:1    200G majsrv6 (None)
+7753770    chans      lemieux posemb_lvl2_1_   R    2:56:06     1   32 gres:gpu:1    200G smisrv1 (None)
+
+7752901    chans      lemieux       pt_30_v2  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+7752900    chans      lemieux      pt_30_rtf   R 1-08:52:27     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 1 2026 ###
+
+doing longer runs on posemb vs posenc on rtf and etf (lvl2 since this is the more important one)
+also finishing up the time estimates for the 3 crashed/failed runs from last time (to log in speed.txt)
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7754560    chans      lemieux posenc_lvl2_30  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Resources)
+7754561    chans      lemieux posemb_lvl2_30  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+7754562    chans      lemieux posenc_lvl2_30  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+7754559    chans      lemieux posemb_lvl2_30   R   23:59:04     1   32 gres:gpu:1    200G smaug (None)
+
+7754365    chans      lemieux posenc_lvl1_1_   R   22:54:20     1   32 gres:gpu:1    200G smisrv1 (None)
+7754554    chans      lemieux posemb_lvl1_1_   R   23:49:30     1   32 gres:gpu:1    200G majsrv6 (None)
+
+7754659    chans      lemieux       pt_recon   R 1-23:59:59     1   64 gres:gpu:G    500G balrog (None)
+
+also running pt_recon for comparison with mlm pt for 30eps
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 2 2026 ###
+
+WRT FT no PT: need to re-run this to see if posenc or posemb is better; although right now they look about the same...
+could just run both but this is a bit of a pain.
+
+WRT PT: mlm vs recon: loss is way lower in recon. not sure if this translates to better embeddngs, but we will see!
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7755532    chans      lemieux pemb_lvl2_100_  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+7755523    chans      lemieux posemb_lvl2_30   R   22:51:52     1   50 gres:gpu:1    350G oni (None)
+7755531    chans      lemieux pemb_lvl1_30_m   R   23:59:46     1   32 gres:gpu:1    200G majsrv6 (None)
+
+switching to posemb instead of posenc due to posemb being what geneformer uses!
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7755546    chans      lemieux pemb_lvl1_30_e  PD 2-00:00:00     1   50 gres:gpu:1    350G  (Resources) (these are for no-pretrain final results)
+7755547    chans      lemieux pemb_lvl2_150_  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7755548    chans      lemieux pemb_lvl2_150_  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7755545    chans      lemieux pemb_lvl1_30_r   R 1-22:32:47     1   50 gres:gpu:1    350G oni (None)
+
+7755553    chans      lemieux pt_recon_1_rtf  PD 1-00:00:00     1   64 gres:gpu:G    500G  (Resources) (these are for time testing for pretraining)
+7755554    chans      lemieux   pt_mlm_1_etf  PD 1-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7755555    chans      lemieux pt_recon_1_rtf  PD 1-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7755551    chans      lemieux   pt_mlm_1_rtf   R   23:59:36     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 3 2026 ###
+
+almost finished 1ep tests, everything takes about 1hr
+starting to do big pt runs! starting off with 50ep first, seeing how it goes.
+
+also for the ft (no pt) runs below (rtf, etf x lvl1, lvl2) there is an issue with gradient explosion after 10ep?
+re-running below with decreased LR (from 0.005 to 0.001 in lvl2 and 0.0005 in lvl1)
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7756199    chans      lemieux ft_lvl2_150_et  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources)
+7756200    chans      lemieux ft_lvl2_150_rt  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7756197    chans      lemieux ft_lvl1_30_etf   R 2-23:25:01     1   50 gres:gpu:1    350G oni (None)
+7756198    chans      lemieux ft_lvl1_30_rtf   R 2-23:25:04     1   50 gres:gpu:1    350G oni (None)
+
+7756253    chans      lemieux  pt_mlm_50_etf  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+7756254    chans      lemieux pt_recon_50_rt  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756255    chans      lemieux pt_recon_50_et  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756252    chans      lemieux  pt_mlm_50_rtf   R 2-23:46:41     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 4 2026 ###
+
+re-running with decreased LR is good! ft no pt for rtf lvl1 is proper.
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7756200    chans      lemieux ft_lvl2_150_rt  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources)
+7756197    chans      lemieux ft_lvl1_30_etf   R 2-05:10:27     1   50 gres:gpu:1    350G oni (None)
+7756199    chans      lemieux ft_lvl2_150_et   R 2-23:22:28     1   50 gres:gpu:1    350G oni (None)
+
+7756253    chans      lemieux  pt_mlm_50_etf  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+7756254    chans      lemieux pt_recon_50_rt  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756255    chans      lemieux pt_recon_50_et  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756252    chans      lemieux  pt_mlm_50_rtf   R 2-05:32:07     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 5 2026 ###
+
+issue w/ ft lvl2 -- etf is overfitting, rtf is unstable loss. re-running with lower LR (same as lvl1 LR)!
+
+also rtf pt on MLM finished so runnning the ft for e2e adn emb for lvl1 and lvl2 on those now
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7756974    chans      lemieux ft_e2e_lvl1_30  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources) **these are all pt on rtf!
+7756975    chans      lemieux ft_emb_lvl1_30  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7756976    chans      lemieux ft_e2e_lvl2_10  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7756977    chans      lemieux ft_emb_lvl2_10  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+7756822    chans      lemieux ft_lvl2_150_rt   R 1-21:53:06     1   50 gres:gpu:1    350G oni (None) **these are no pt!
+7756823    chans      lemieux ft_lvl2_150_et   R 1-23:42:27     1   50 gres:gpu:1    350G oni (None)
+
+7756254    chans      lemieux pt_recon_50_rt  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+7756255    chans      lemieux pt_recon_50_et  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756253    chans      lemieux  pt_mlm_50_etf   R 2-13:03:47     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 6 2026 ###
+
+ft e2e and ft emb (with pt) couldn't access indices of completed pre-train, fixed and re-run.
+
+ft (no pt) completed, both are overfitting (rtf severely overfitting) - re-run w/ 100 epochs & reduced hidden dim 
+(could also reduce embed dim? ,aybe later tho) and increased dropout!
+
+the pts on balrog are still running
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7757055    chans      lemieux ft_e2e_lvl1_30  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources) ** w/ pt on rtf fixed dir
+7757056    chans      lemieux ft_emb_lvl1_30  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7757057    chans      lemieux ft_e2e_lvl2_10  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7757058    chans      lemieux ft_emb_lvl2_10  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+7757053    chans      lemieux ft_lvl2_100_rt   R 1-23:57:44     1   50 gres:gpu:1    350G oni (None) ** no pt re-run lower params
+7757054    chans      lemieux ft_lvl2_100_et   R 1-23:57:56     1   50 gres:gpu:1    350G oni (None)
+
+7756254    chans      lemieux pt_recon_50_rt  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+7756255    chans      lemieux pt_recon_50_et  PD 3-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7756253    chans      lemieux  pt_mlm_50_etf   R 1-15:34:56     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 8 2026 ###
+
+re: ft no pt runs (*)
+-- review 100ep of lvl2 etf and rtf
+---- is it not oversampling? why is it still overfitting super hard on rtf? and ustable loss on etf
+---- ^w/ decr LR, incr dropout, decr hidden dim, decr epochs.
+---- might just be an issue with lacking pre-training in general?
+---- previously 54% acc in e2e pt w/ 300ep, 128 embed_dim, 0.1 drop_prob, 0.001 LR, 256 hidden_dim, 2/4 heads/layers
+---- previously 33% acc in emb pt w/ 300 ep, etc...
+
+---- best for etf is 150ep, 128 embed, 0.01 drop, 0.0005 lr, 128 hidden, 2h2l
+---- best for rtf is 100ep, 128 embed, 0.02 drop, 0.0005 lr, 64 hidden, 2h2l
+
+------ just run with the overfitted result for now (100ep, 128 embed, 0.01 drop, 0.0005 lr, 128 hidden, 2h2l)
+------ CURR. WAITING FOR IT TO FINISH! (EOD)
+
+re: ft w/ pt runs (**)
+-- MLM RTF
+---- GPU not detected when running on smaug? on oni might be ok tho
+---- stil runnning on ft e2e lvl1 30ep (w/ incr dropout, cannot decr hidden_dim to 64 because pt hidden_dim is 128)
+------ CURR. WAITING FOR MLM RTF TO FINISH!(EOD? OR TMO) (run all 4 configs once debugged)
+-- MLM ETF
+---- TRYING E2E AND EMB ON LVL1 FOR NOW! (run all 4 configs once debugged)
+
+re: pt (***)
+-- review results for mlm etf, recon rtf
+---- looks ok? maybe double-check recon rtf, not sure what cosine similarity is supposed to be?
+---- CURR. WAITING FOR RECON ETF TO FINSIH! (TMO?)
+
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7757158    chans      lemieux ft_e2e_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Resources) **
+7757159    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+7757078    chans      lemieux ft_e2e_lvl1_30   R   13:58:14     1   50 gres:gpu:1    350G oni (None) **
+
+7757109    chans      lemieux ft_lvl2_100_rt   R   23:59:36     1   32 gres:gpu:1    200G majsrv6 (None) *
+7757110    chans      lemieux ft_lvl2_100_et   R   23:59:41     1   32 gres:gpu:1    200G smaug (None)
+
+7756255    chans      lemieux pt_recon_50_et   R 2-15:45:48     1   64 gres:gpu:G    500G balrog (None) ***
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 9 2026 ###
+
+re: ft no pt runs (*)
+-- both lvl2 etf/rtf hit time limit? not sure why.
+---- CURR. RUNNING LVL2 ETF/RTF
+
+re: ft w/ pt runs (**)
+-- MLM RTF time limit hit for 30ep lvl1 (was set to 1d?) ; no pt took 1h/ep anyways...
+-- MLM ETF still running! (will likely hit time limit too tho)
+---- RUN 1-2EP OF EVERYTHING FOR SPEED TESTING FIRST!!!
+---- CURR. RUNNING RTF MLM --> EMB/E2E, LVL1/LVL2
+
+re: pt 
+-- recon etf complete!
+---- not really sure why it looks like that tho.. (pretrain/etf/recon/2026-06-08_02-15)
+---- but its probably fine???
+
+          JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+        7757348    chans      lemieux ft_lvl2_100_et  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources) *
+
+        7757354    chans      lemieux ft_e2e_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) **
+        7757355    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+        7757356    chans      lemieux ft_e2e_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+        7757357    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+        7757347    chans      lemieux ft_lvl2_100_rt   R 2-23:57:25     1   50 gres:gpu:1    350G oni (None) *
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 10 2026 ###
+
+re: ft no pt runs
+-- lvl2 rtf and etf finally completed!!!
+-- rtf is overfitting still (not sure if this should be re-run with lower embed_dim or hidden_dim? 
+----but then idk if thats comparable to pretrain which has 128 for both?)
+
+re: ft w/ pt runs
+-- e2e mlm rtf for lvl1 and lvl2 is ok! runs fine, speed noted.
+==== CURR. RUNNING BIG EPOCHS FOR E2E MLM RTF LVL1/LVL2! (*)
+-- emb mlm rtf for lvl1 and lvl2 is broken. no gpu detected?
+---- accidentally used |> gpu instead of to_gpu()
+==== CURR. RUNNING SPEED TESTS AGAIN FOR EMB MLM RTF LVL1/LVL2 (**)
+
+-- next: mlm etf speed testing!
+---- debug emb first, 
+==== CURR. RUNNING SPEED TEST FOR E2E/EMB MLM ETF LVL1/LVL2 (***)
+
+  JOBID     USER      ACCOUNT           NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7757498    chans      lemieux ft_e2e_mlm_lvl  PD 3-00:00:00     1   50 gres:gpu:1    350G  (Resources) *
+
+7757499    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) **
+7757500    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+7757501    chans      lemieux ft_e2e_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) ***
+7757502    chans      lemieux ft_e2e_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) 
+7757503    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7757504    chans      lemieux ft_emb_mlm_lvl  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+7757497    chans      lemieux ft_e2e_mlm_lvl   R 2-23:49:32     1   50 gres:gpu:1    350G oni (None) *
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 11 2026 ###
+
+squeue -u chans -o "%.8i %.8u %.10a %.30j %.2t %.10L %.5D %.4C %.12b %.8m %N (%r)"
+
+-- still running... going to re-run with 250G instead becasue this is lw taking too long
+-- run all lvl1s on giga_sbatch, run all lvl2s on mega_sbatch (since lvl2 takes less time?)
+
+re: ft w/ pt runs
+==== running: MLM RTF - e2e lvl1/lvl2 BIG EPOCHS (*)
+==== running: MLM RTF - emb lvl1/lvl2 SPEED TESTS (**)
+==== running: MLM ETF - e2e/emb lvl1/lvl2 SPEED TESTS (***)
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757500    chans    lemieux          ft_emb_mlm_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) **
+
+7757501    chans    lemieux          ft_e2e_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+7757504    chans    lemieux          ft_emb_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+7757724    chans    lemieux          ft_emb_mlm_lvl2_2_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) ***
+7757725    chans    lemieux          ft_e2e_mlm_lvl2_2_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) ***
+
+7757497    chans    lemieux         ft_e2e_mlm_lvl1_30_rtf  R 1-21:25:13     1   50   gres:gpu:1     350G oni (None) *
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-23:56:11     1   32   gres:gpu:1     200G majsrv6 (None) *
+
+7757723    chans    lemieux          ft_emb_mlm_lvl2_2_rtf  R   23:58:11     1   32   gres:gpu:1     200G smaug (None) **
+
+debugged:
+-- mlm rtf - emb lvl2
+---- issue in build_embm(), changed to to_gpu() (RE_RUN)
+-- mlm etf - emb lvl2
+---- issue in build_embm(), changed to to_gpu() (RE_RUN)
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757500    chans    lemieux          ft_emb_mlm_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) **
+
+7757501    chans    lemieux          ft_e2e_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+7757504    chans    lemieux          ft_emb_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+
+7757755    chans    lemieux          ft_emb_mlm_lvl2_2_rtf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) **
+
+7757756    chans    lemieux          ft_emb_mlm_lvl2_2_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) ***
+
+7757497    chans    lemieux         ft_e2e_mlm_lvl1_30_rtf  R 1-19:18:41     1   50   gres:gpu:1     350G oni (None) *
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-21:49:39     1   32   gres:gpu:1     200G majsrv6 (None) *
+
+7757725    chans    lemieux          ft_e2e_mlm_lvl2_2_etf  R   22:17:20     1   32   gres:gpu:1     200G smaug (None) ***
+
+finished:
+-- mlm etf - e2e lvl2
+---- speed noted
+
+   JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+ 7757500    chans    lemieux          ft_emb_mlm_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) **
+
+ 7757501    chans    lemieux          ft_e2e_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+ 7757504    chans    lemieux          ft_emb_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+ 7757756    chans    lemieux          ft_emb_mlm_lvl2_2_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) ***
+
+ 7757497    chans    lemieux         ft_e2e_mlm_lvl1_30_rtf  R 1-19:12:49     1   50   gres:gpu:1     350G oni (None) *
+ 7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-21:43:47     1   32   gres:gpu:1     200G majsrv6 (None) *
+
+ 7757755    chans    lemieux          ft_emb_mlm_lvl2_2_rtf  R   23:55:18     1   32   gres:gpu:1     200G smaug (None) **
+
+ finished:
+ -- mlm rtf - emb lvl2
+ ---- speed noted (why is it so fast???)
+ -- mlm etf - emb lvl2
+ ---- bug (re-run!)
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757500    chans    lemieux          ft_emb_mlm_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) **
+
+7757501    chans    lemieux          ft_e2e_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+7757504    chans    lemieux          ft_emb_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+
+7757497    chans    lemieux         ft_e2e_mlm_lvl1_30_rtf  R 1-18:49:27     1   50   gres:gpu:1     350G oni (None) *
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-21:20:25     1   32   gres:gpu:1     200G majsrv6 (None) *
+
+re: ft w/ pt runs 
+==== running: MLM RTF - e2e     lvl1/lvl2 BIG EPOCHS (*)
+==== running: MLM RTF - emb     lvl1 SPEED TEST (**)
+==== running: MLM ETF - e2e/emb lvl1 SPEED TESTS (***)
+
+==== running: MLM RTF - emb     lvl2 BIG EPOCHS (****)
+==== running: MLM ETF - e2e/emb lvl2 BIG EPOCHS (*****)
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757500    chans    lemieux          ft_emb_mlm_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) **
+
+7757501    chans    lemieux          ft_e2e_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+7757504    chans    lemieux          ft_emb_mlm_lvl1_2_etf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ***
+
+7757765    chans    lemieux        ft_emb_mlm_lvl2_100_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) *****
+7757766    chans    lemieux        ft_e2e_mlm_lvl2_100_etf PD 3-00:00:00     1   32   gres:gpu:1     200G  (Priority) *****
+
+7757497    chans    lemieux         ft_e2e_mlm_lvl1_30_rtf  R 1-17:57:36     1   50   gres:gpu:1     350G oni (None) *
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-20:28:34     1   32   gres:gpu:1     200G majsrv6 (None) *
+
+7757764    chans    lemieux        ft_emb_mlm_lvl2_100_rtf  R   23:59:05     1   32   gres:gpu:1     200G smaug (None) ****
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 12 2026 ###
+
+completed:
+-- MLM RTF
+---- e2e
+------ lvl1: good, noted.
+------ lvl2: --
+---- emb
+------ lvl1: (test), noted.
+------ lvl2: good, noted.
+-- MLM ETF
+---- e2e
+------ lvl1: (test), noted.
+------ lvl2: --
+---- emb
+------ lvl1: (test), noted.
+------ lvl2: good, noted.
+
+re: ft w/ pt runs 
+==== running: MLM RTF - e2e lvl2 BIG EPOCHS (*)
+==== running: MLM ETF - e2e lvl2 BIG EPOCHS (**)
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-04:52:30     1   32   gres:gpu:1     200G majsrv6 (None) *
+7757766    chans    lemieux        ft_e2e_mlm_lvl2_100_etf  R 2-08:44:03     1   32   gres:gpu:1     200G smaug (None) **
+
+re: ft w/ pt runs (all big runs, speeds done)
+-- MLM RTF
+---- e2e
+------ lvl1: done
+====== lvl2: *
+---- emb
+====== lvl1: done
+------ lvl2: done
+-- MLM ETF
+---- e2e
+====== lvl1: ****
+====== lvl2: **
+---- emb
+====== lvl1: 
+------ lvl2: done
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757802    chans    lemieux         ft_e2e_mlm_lvl1_30_etf PD 3-00:00:00     1   50   gres:gpu:1     350G  (Resources) ****
+7757803    chans    lemieux        ft_emb_mlm_lvl2_100_etf PD 1-00:00:00     1   32   gres:gpu:1     200G  (Priority) ***
+
+7757722    chans    lemieux        ft_e2e_mlm_lvl2_100_rtf  R 4-04:16:52     1   32   gres:gpu:1     200G majsrv6 (None) *
+7757766    chans    lemieux        ft_e2e_mlm_lvl2_100_etf  R 2-08:08:25     1   32   gres:gpu:1     200G smaug (None) **\
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 14 2026 ###
+
+re: ft w/ pt runs (all big runs, speeds done)
+-- MLM RTF
+---- e2e
+------ lvl1: done
+====== lvl2: overfitting... noted.
+---- emb
+====== lvl1: done
+------ lvl2: done
+-- MLM ETF
+---- e2e
+====== lvl1: good! noted.
+====== lvl2: *
+---- emb
+====== lvl1: **
+------ lvl2: done
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757766    chans    lemieux        ft_e2e_mlm_lvl2_100_etf  R    8:00:02     1   32   gres:gpu:1     200G smaug (None) *
+7757970    chans    lemieux         ft_emb_mlm_lvl1_30_etf  R 2-23:59:47     1   50   gres:gpu:1     350G oni (None) **
+
+re: ft w/ pt runs (speed tests for recon?)
+-- RECON RTF
+---- e2e
+------ lvl1: ^
+====== lvl2: ^^
+---- emb
+====== lvl1: ^^^
+------ lvl2: ^^^^
+-- RECON ETF
+---- e2e
+====== lvl1: 
+====== lvl2: 
+---- emb
+====== lvl1: 
+------ lvl2: 
+
+  JOBID     USER    ACCOUNT                           NAME ST  TIME_LEFT NODES CPUS TRES_PER_NOD MIN_MEMO NODELIST (REASON)
+7757974    chans    lemieux        ft_e2e_recon_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Resources) ^
+7757975    chans    lemieux        ft_emb_recon_lvl1_2_rtf PD 1-00:00:00     1   50   gres:gpu:1     350G  (Priority) ^^^
+
+7757766    chans    lemieux        ft_e2e_mlm_lvl2_100_etf  R    7:53:46     1   32   gres:gpu:1     200G smaug (None) *
+7757970    chans    lemieux         ft_emb_mlm_lvl1_30_etf  R 2-23:53:31     1   50   gres:gpu:1     350G oni (None) **
+
+7757972    chans    lemieux        ft_e2e_recon_lvl2_2_rtf  R   23:59:33     1   32   gres:gpu:1     200G majsrv6 (None) ^^
+7757973    chans    lemieux        ft_emb_recon_lvl2_2_rtf  R   23:59:37     1   32   gres:gpu:1     200G oni (None) ^^^^
+
+re: ft w/ pt runs (all big runs, speeds done)
+-- MLM RTF
+---- e2e
+------ lvl1: done
+====== lvl2: done
+---- emb
+====== lvl1: done
+------ lvl2: done
+-- MLM ETF
+---- e2e
+====== lvl1: done
+====== lvl2: *
+---- emb
+====== lvl1: good, noted
+------ lvl2: done
+
+lowkey dw abt recon for now, figure out graphs for mlm first for seb meeting!
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 15 2026 ###
+
+all mlm complete!!!
+all recon have bug - no indices.jld2 file 
+  (forgot to add the directory in the finetuning jl files and a recon branch in build_e2em() and )
+*still doing mega for all lvl2, giga for all lvl1
+
+for some reason, rtf was pretrained with hidden_dim=64 while etf was pretrained with hidden_dim=128...
+
+re: ft w/ pt runs (speed tests for recon, no more lvl1 needed!!!)
+-- RECON RTF
+---- e2e: *
+---- emb: **
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7758220   ft_emb_recon_lvl2_2_rtf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) *
+7758219   ft_e2e_recon_lvl2_2_rtf   R   23:59:54     1   50 gres:gpu:1    350G oni (None) **
+
+do etf speed tests after ^ are finished b/c have to change hidden_dim in the config...
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 15 2026 ###
+
+re: ft w/ recon pt:
+-- RECON ETF
+---- e2e: *
+---- emb: **
+-- RECON RTF
+---- re-running pre-training due to messed up hidden_dim (does not match ETF): ***
+
+run big recon runs after etf tests complete!
+-- some things that can be considered if big recon runs are doing badly are:
+---- EMA, a proper stop-gradient function (not sure if needed), or using L1/L2 loss in conjunction? 
+
+also, subsetting for MCF7 etc. and running no-pretrain! to see if we get similar results?
+-- lvl 2 only!!! (EDITED NO_PRETRAIN FILES FOR DATA SOURCE, CHANGE BACK IF NOT USING SUBSET)
+---- MLP: ^
+---- RTF: ^^
+---- ETF: ^^^
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7758640   ft_e2e_recon_lvl2_2_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Resources) *
+7758641   ft_emb_recon_lvl2_2_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority) **
+
+7758877           ft_lvl2_100_mlp  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority) ^
+7758878           ft_lvl2_100_rtf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority) ^^
+7758879           ft_lvl2_100_etf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority) ^^^
+
+7758718           pt_recon_50_rtf   R 2-19:50:42     1   64 gres:gpu:G    500G balrog (None) ***
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 16 2026 ###
+
+re: subset
+-- (EDITED NO_PRETRAIN FILES FOR DATA SOURCE, CHANGE BACK IF NOT USING SUBSET)
+-- complete! severe overfitting on all 3 models...
+---- running again with minimum # training examples = 10 instead of 3?
+---- still only gets about 33% accuracy... (for mlp)
+---- running for rtf, etf
+
+re: ft w/ recon pt
+-- still running ETF e2e/emb speed tests
+  -- re-run using mega_sbatch instead of giga_sbatch since its taking so long!!
+-- still running RTF recon
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7758640   ft_e2e_recon_lvl2_2_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Resources)
+7758641   ft_emb_recon_lvl2_2_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7758932   ft_e2e_recon_lvl2_2_etf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+7758933   ft_emb_recon_lvl2_2_etf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+
+7759046            ft_lvl2_10_rtf  PD 1-00:00:00     1   10 gres:gpu:1     50G  (Priority)
+7759047            ft_lvl2_10_etf  PD 1-00:00:00     1   10 gres:gpu:1     50G  (Priority)
+
+7758718           pt_recon_50_rtf   R 2-00:03:06     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 17 2026 ###
+
+re: pt recon RTF
+-- complete!
+
+re: ft w/ recon pt
+-- ETF speed tests noted!
+-- running big runs of e2e/emb lvl2 ETF
+-- running big runs of e2e/emb lvl2 RTF
+
+re: subset
+-- STILL TO CHECK****
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7759120 ft_emb_recon_lvl2_100_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Resources)
+7759121 ft_e2e_recon_lvl2_100_etf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7759122 ft_e2e_recon_lvl2_100_rtf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+7759123 ft_emb_recon_lvl2_100_rtf  PD 1-00:00:00     1   50 gres:gpu:1    350G  (Priority)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 19 2026 ###
+
+re: ft w/ recon pt
+-- completed all etf and rtf!
+  -- error in emb lvl2 rtf
+    -- forgot to update emb.jl to use the new pre-trained rtf, updated!
+    -- re-running emb lvl2 rtf now
+  -- etf is good! noted.
+
+re: subset
+-- running no-pretrain rtf and etf for longer! *
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7760830            ft_lvl2_50_rtf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Resources) *
+7760831            ft_lvl2_50_etf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority) *
+
+7760842 ft_emb_recon_lvl2_100_rtf  PD 1-00:00:00     1   32 gres:gpu:1    200G  (Priority)
+7759122 ft_e2e_recon_lvl2_100_rtf   R   12:21:37     1   50 gres:gpu:1    350G oni (None)
+
+re: ft w/ recon pt
+-- done, not bad + noted.
+
+re: subset
+-- rtf results are REALLY BAD. not sure what to do to fix this...
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7760831            ft_lvl2_50_etf   R   23:40:29     1   32 gres:gpu:1    200G smaug (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 22 2026 ###
+
+re: subset
+-- not even sure what to do w this info
+
+re: pt
+-- run mrm for comparison against mlm
+  -- running speed tests on rtf/etf now!
+-- re-run recon w/ EMA
+
+re: ft
+-- run after pt w/ mrm and recon completed
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7763519            pt_recon_2_etf  PD 1-00:00:00     1   64 gres:gpu:G    500G  (Resources)
+
+7763526             pt_mrm_25_etf  PD 2-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7763527             pt_mrm_25_rtf  PD 2-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+
+7763528           pt_recon_25_rtf  PD 2-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+7763529           pt_recon_25_etf  PD 2-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+
+7763516            pt_recon_2_etf   R   23:46:46     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 23 2026 ###
+
+-- re: pt
+  -- mrm rtf speed test done, running big run!
+  -- everything else needs debug
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 24 2026 ###
+
+-- re: pt
+  -- mrm big runs: running 1ep rtf test
+    -- etf 50ep running on balrog
+  -- mlm big runs: TBD
+  -- recon big runs: running 1ep tests
+
+  -- note: GH200 == 2261 steps/epoch; so 50ep == 113k steps
+      -- batchsize 128 == 8829 steps/epoch
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 25 2026 ###
+
+-- re: pt 
+  -- running big 50ep runs for mrm rtf
+  -- testing 18g MiG 2260 gradient updates to see if its same speed as GH200 in same # steps!
+    -- currently its 1h for 2260 steps (1ep) for the full GH200 gpu
+    -- OH??? its also 1h for 2260 steps on the mig!!!
+    -- running all on migs
+      -- steps calculated by doing division of samples /div batch_size = batches/ep, then max_steps /div batches/ep
+      -- ex. 100k samples / 500 batch_size = 200 batches/ep, then 10k max_steps / 200 = 50 epochs then run for that # eps
+  -- only issue i see is that with the EMA, the teacher targets are not "learned", 
+  -- they are just embeddings of the original input but with the new student's learned wieght/bias values
+      -- what JEPA does is that the teacher encodes embeddings learned via transformer and this is what the targets are
+      -- this would take 2x the compute it does right now... (cuz double transformer...)
+      -- going to try what i have now and see hwo it works, this is similar to what data2vec does.
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7764734             pt_mrm_50_rtf   R   13:02:24     1   64 gres:gpu:G    500G balrog (None)
+7766618             pt_mlm_50_rtf   R 2-21:23:27     1   10 gres:gpu:1     80G balrog (None)
+7766619             pt_mlm_50_etf   R 2-21:25:07     1   10 gres:gpu:1     80G balrog (None)
+7766620             pt_mrm_50_etf   R 2-21:25:31     1   10 gres:gpu:1     80G balrog (None)
+7766621           pt_recon_50_etf   R 2-21:25:39     1   10 gres:gpu:1     80G balrog (None)
+7766622           pt_recon_50_rtf   R 2-21:25:47     1   10 gres:gpu:1     80G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 26 2026 ###
+
+-- re: ft
+  -- for lvl1, we do about 30eps = 264_840 ft steps (batch_size 128)
+  -- for lvl2, we do about 50eps = 45_450 ft steps (batch_size 128)
+
+-- re: pt
+  -- running all big runs: (113_000 steps)
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7766618             pt_mlm_50_rtf   R 2-07:26:53     1   10 gres:gpu:1     80G balrog (None)
+7766619             pt_mlm_50_etf   R 2-07:28:33     1   10 gres:gpu:1     80G balrog (None)
+7766620             pt_mrm_50_etf   R 2-07:28:57     1   10 gres:gpu:1     80G balrog (None)
+7766621           pt_recon_50_etf   R 2-07:29:05     1   10 gres:gpu:1     80G balrog (None)
+7766622           pt_recon_50_rtf   R 2-07:29:13     1   10 gres:gpu:1     80G balrog (None)
+7767766             pt_mrm_50_rtf   R 2-23:34:47     1   64 gres:gpu:G    500G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 27 2026 ###
+
+-- re: pt
+  -- completed all except mrm rtf, looks good
+
+-- re: ft
+  -- trying 45450 steps on MiG (lvl2~50eps)
+  -- currently running e2e for mlm and recon (both rtf/etf)
+  -- emb and mrm to be tested after!
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7767766             pt_mrm_50_rtf   R 2-00:56:41     1   64 gres:gpu:G    500G balrog (None)
+7768146    ft_e2e_mlm_lvl2_50_rtf   R 2-23:59:40     1   10 gres:gpu:1     80G balrog (None)
+7768147    ft_e2e_mlm_lvl2_50_etf   R 2-23:59:51     1   10 gres:gpu:1     80G balrog (None)
+7768148  ft_e2e_recon_lvl2_50_rtf   R 2-23:59:55     1   10 gres:gpu:1     80G balrog (None)
+7768149  ft_e2e_recon_lvl2_50_etf   R 2-23:59:59     1   10 gres:gpu:1     80G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 28 2026 ###
+
+-- re: pt
+  -- all completed! altho mrm rtf looks a little susciptious
+
+-- re: ft e2e
+  -- could use a little longer for etf?? but rtf is overfitting soon
+  -- re-run all with more steps! instead of 45450 steps on MiG (lvl2~50eps) (took 12hrs)
+  -- maybe do 68175 (equiv. to about 75 epochs on the gh200)
+
+-- re: ft emb
+  -- testing on rtf, etf for emb ?? on mlm
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7768196    ft_emb_mlm_lvl2_75_etf  PD 2-00:00:00     1   10 gres:gpu:1     80G  (Resources)
+
+7768189    ft_e2e_mlm_lvl2_75_rtf   R 1-23:49:05     1   10 gres:gpu:1     80G balrog (None)
+7768190    ft_e2e_mlm_lvl2_75_etf   R 1-23:49:12     1   10 gres:gpu:1     80G balrog (None)
+7768191  ft_e2e_recon_lvl2_75_rtf   R 1-23:49:25     1   10 gres:gpu:1     80G balrog (None)
+7768192  ft_e2e_recon_lvl2_75_etf   R 1-23:49:31     1   10 gres:gpu:1     80G balrog (None)
+7768193    ft_e2e_mrm_lvl2_75_rtf   R 1-23:49:43     1   10 gres:gpu:1     80G balrog (None)
+7768194    ft_e2e_mrm_lvl2_75_etf   R 1-23:49:54     1   10 gres:gpu:1     80G balrog (None)
+
+7768195    ft_emb_mlm_lvl2_75_rtf   R 1-23:59:44     1   10 gres:gpu:1     80G balrog (None)
+
+-- re: ft emb
+  -- tested on rtf, etf for emb on mlm: running quite well, could use some more epochs tho.  (took 2mins)
+  -- ran for 68175, going to re-run with all configs under 90900 steps (~100eps)
+
+-- re: ft e2e
+  -- would need to re-run with 90900 steps as well! (TODO later)
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7768200   ft_emb_mlm_lvl2_100_etf  PD   12:00:00     1   10 gres:gpu:1     80G  (Resources)
+7768201   ft_emb_mrm_lvl2_100_rtf  PD   12:00:00     1   10 gres:gpu:1     80G  (Priority)
+7768202   ft_emb_mrm_lvl2_100_etf  PD   12:00:00     1   10 gres:gpu:1     80G  (Priority)
+7768203 ft_emb_recon_lvl2_100_rtf  PD   12:00:00     1   10 gres:gpu:1     80G  (Priority)
+7768204 ft_emb_recon_lvl2_100_etf  PD   12:00:00     1   10 gres:gpu:1     80G  (Priority)
+
+7768189    ft_e2e_mlm_lvl2_75_rtf   R 1-19:07:41     1   10 gres:gpu:1     80G balrog (None)
+7768190    ft_e2e_mlm_lvl2_75_etf   R 1-19:07:48     1   10 gres:gpu:1     80G balrog (None)
+7768191  ft_e2e_recon_lvl2_75_rtf   R 1-19:08:01     1   10 gres:gpu:1     80G balrog (None)
+7768192  ft_e2e_recon_lvl2_75_etf   R 1-19:08:07     1   10 gres:gpu:1     80G balrog (None)
+7768193    ft_e2e_mrm_lvl2_75_rtf   R 1-19:08:19     1   10 gres:gpu:1     80G balrog (None)
+7768194    ft_e2e_mrm_lvl2_75_etf   R 1-19:08:30     1   10 gres:gpu:1     80G balrog (None)
+
+7768199   ft_emb_mlm_lvl2_100_rtf   R   11:56:30     1   10 gres:gpu:1     80G balrog (None)
+
+-- re: ft emb
+  -- all complete!
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 29 2026 ###
+
+-- re: pt
+  -- should re-run with lr=0.0005 OR just do wandb sweep
+  -- best run was mlm etf... but marginally
+
+-- re: ft w/ pt
+  -- all emb, e2e complete!
+  -- not sure why there is now a discrepancy between the etf and rtf in mlm downstream performance?
+  -- going to verify again with repetition runs of mlm rtf and etf e2e and emb
+  -- currently testing different LRs, if batch_size=128 results in better performance,
+    -- then need to make a compromise between speed and performance!
+
+-- re: ft w/o pt
+  -- running wandb sweep on mlp right now! to be run on all.
+
+    JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7768943                       vec   R 364-22:56:40     1   10 gres:gpu:1     50G smaug (None)
+7768944              pt_mlm_1_rtf   R   23:19:21     1   10 gres:gpu:1     80G balrog (None)
+7769008             pt_mlm_10_rtf   R 1-23:49:21     1   10 gres:gpu:1     80G balrog (None)
+7769010              pt_mlm_1_rtf   R   23:57:05     1   10 gres:gpu:1     80G balrog (None)
+7769011              pt_mlm_1_rtf   R   23:57:35     1   10 gres:gpu:1     80G balrog (None)
+7769012              pt_mlm_1_rtf   R   23:58:05     1   10 gres:gpu:1     80G balrog (None)
+7769013              pt_mlm_1_rtf   R   23:58:21     1   10 gres:gpu:1     80G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jun 30 2026 ###
+
+-- re: pt
+  -- re-running everything w/ 226k steps instead + lr=0.001!
+    -- lr=0.001 is best for pretraining
+  -- need to re-run multiple times maybes for proper verification... although this is eta 2.5days...
+
+-- re: ft w/o pt
+  -- curr. running wandb sweep on mlp
+  -- TO BE RUN: RTF, ETF
+
+-- re: ft w/ pt
+  -- to be run following pt complete!
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7769033               wb_ir6p43d4   R 6-12:40:43     1   10 gres:gpu:1     80G balrog (None)
+7769045            pt_mlm_226_rtf   R 3-20:56:58     1   10 gres:gpu:1     80G balrog (None)
+7769046            pt_mlm_226_etf   R 3-20:57:07     1   10 gres:gpu:1     80G balrog (None)
+7769047            pt_mrm_226_rtf   R 3-20:57:17     1   10 gres:gpu:1     80G balrog (None)
+7769048            pt_mrm_226_etf   R 3-20:57:22     1   10 gres:gpu:1     80G balrog (None)
+7769049          pt_recon_226_rtf   R 3-21:05:30     1   10 gres:gpu:1     80G balrog (None)
+7769050          pt_recon_226_etf   R 3-22:14:35     1   10 gres:gpu:1     80G balrog (None)
+
+** if everything is taking too long, consider instead doing the sweep on the full gh200
+then batch_size would need to still be normalized to 128 i think?
+also would want a bit wider of a sweep than the default params it is right now...
+
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 2 2026 ###
+
+-- re: ft no pt
+  -- mlp sweep still running
+  -- rtf running on gh200, batchsize 128, 226k + 90.9k steps, lr is still set to 0.001 but hopefully thats fine
+  -- could run the sweep for rtf or etf on oni or smaug? at the same time?
+    -- severely overfitting, needs the sweep
+    -- doing now!
+
+-- re: ft w/ pt
+  -- still waiting on pt...
+
+-- re: pt
+  -- still running... tbd tomorrow?
+
+    0    9    0          1299439      C   ...0.aarch64.linux.gnu/bin/julia      13278MiB | this on balrog is not saturating gpu memory
+    
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 4 2026 ###
+
+-- re: pt
+  -- don't haev the eval results from pretrainings... just best model_state... so here
+        mlm rtf: /home/golem/scratch/chans/lincsv5/out/pretrain/rtf/mlm/2026-06-30_05-56/best
+        mlm etf: /home/golem/scratch/chans/lincsv5/out/pretrain/etf/mlm/2026-06-30_05-56/best
+        mrm rtf: /home/golem/scratch/chans/lincsv5/out/pretrain/rtf/mrm/2026-06-30_05-56/best
+        mrm etf: /home/golem/scratch/chans/lincsv5/out/pretrain/etf/mrm/2026-06-30_05-56/best
+        recon rtf: /home/golem/scratch/chans/lincsv5/out/pretrain/rtf/recon/2026-06-30_06-05/best
+        recon etf: /home/golem/scratch/chans/lincsv5/out/pretrain/etf/recon/2026-06-30_07-14/best
+  -- only have the best model_state so going to run ft with this, 
+  -- should be ok to do no-pt as long as it also has early stopping implemented 
+  -- so then they technically haven't run for all the same # of epochs but achieving the best they can in x amount of epochs
+  -- ONLY ISSUE: didn't save pt indices because we only have model_state, thus soem of the pre-training data is goign to be seen in the ft test set as well
+    -- which is pretty much data leakage... ig we can try it for now and fix again later
+
+-- re: ft no pt
+  -- running mlp longer run
+  -- running rtf, etf w/ 181800 steps
+  -- after, run rtf, etf w/ ^ steps but with wandb parameters
+
+-- re: ft w/ pt
+  -- ran emb, completed
+  -- running e2e now
+
+  JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+7771474           ft_lvl2_181_rtf  PD 3-00:00:00     1   10 gres:gpu:1     80G  (Resources)
+
+7771453   ft_e2e_mlm_lvl2_181_rtf   R 1-16:07:07     1   10 gres:gpu:1     80G balrog (None)
+7771454   ft_e2e_mlm_lvl2_181_etf   R 1-16:07:11     1   10 gres:gpu:1     80G balrog (None)
+7771455   ft_e2e_mrm_lvl2_181_rtf   R 1-16:07:24     1   10 gres:gpu:1     80G balrog (None)
+7771456   ft_e2e_mrm_lvl2_181_etf   R 1-16:07:28     1   10 gres:gpu:1     80G balrog (None)
+7771457 ft_e2e_recon_lvl2_181_rtf   R 1-16:07:42     1   10 gres:gpu:1     80G balrog (None)
+7771458 ft_e2e_recon_lvl2_181_etf   R 1-16:07:46     1   10 gres:gpu:1     80G balrog (None)
+7771460           ft_lvl2_181_etf   R   16:33:09     1   10 gres:gpu:1     80G balrog (None)
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 7 2026 ###
+
+-- re: pt
+  -- for mlm vs mrm, it seems that mrm is not actually predicting anything helpful, just leaerning thte mapping of ranks back to expression value. 
+  -- can keep mlm as-is, then
+  -- for recon, the representations end up encoding positions instead of meaningful expression
+    -- for rtf, near random (cos=0.09)
+    -- for etf, masking sets exp to 0.0 --> proj Dense() = bias vec --> + pos_emb()
+      -- since both student and teacher share pos_emb, the model just outputs position vectors
+    -- does latent recon only work when input dimensionality and number of discrete categories is diff?? (ex. images, videos, etc.)
+    -- things missing that may help:
+      -- 1. target collapse prevention
+        -- in the others, they have:
+          -- data2vec: TF encoder + no decoder w/ target embs = avg of top-K layers
+          -- jepa: TF encoder + TF cross-attention decoder (Q=masked, K/V=encoder output)
+      -- 2. higher % masked
+        -- in the others, they use a higher masked ratio or completely drop masked positions from the sequence, thus building encoder reps without mask artifacts (ex. pos_emb or embedding the mask)
+      -- 3. targt normalization
+        -- in the others, they norm targets before computing the loss (only teacher or both student and teacher)
+    -- currently trying target l2 norm and incr masking to 30% on pretrain, 10eps only then trying on finetune?
+  
+-- re: ft w/ pt
+  -- FYI using best/ model_state from pre-training!!!
+
+-- re: ft no pt
+  -- mlp, etf done.
+  -- rtf running still
+
+-- re: plotting
+  -- 
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 9 2026 ###
+
+-- re: pt
+  -- completed recon kinda
+
+-- re: ft w/ pt
+  -- recon e2e,emb using norm_recon is still bad! around the same result as recon
+  -- running jepa version now, not going to prioritize tho.
+  -- re-running mlm/recon e2e rtf/etf right now on migs just to double check! (75ep)
+  -- also re-running mlm/recon emb rtf/etf as well ^ 
+  ***SO THIS IS SECOND RUN OF THEM ALL. no time to re-run pre-training i think...
+    -- i also think an issue of the recon is the pre-training runs... idt it ran by epochs on balrog like mlm did?
+  ***remove clean_state() after
+
+-- re: ft no pt
+  -- etf running right now, not relaly getting higher accuracies than what i have now.
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 23 2026 ###
+
+-- re: pt
+  -- all sweeps currently running!! on balrog
+  -- occasionally fails when model is too large, ex. embed_dim=256 and n_layers=4, etc. 
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 27 2026 ###
+
+-- re: pt
+  -- ok bun the wandb, going to try to test small versions of each to see how they do separately, then run wandb later.
+  -- optimal configs: --embed_dim 64 --hidden_dim 256 --n_heads 2 --n_layers 2
+  -- small configs: --embed_dim 32 --hidden_dim 128 --n_heads 1 --n_layers 1
+    -- i think they all need to be run for a little bit longer;
+
+-- re: position embeddings
+  -- instead of using learnable position embeddings for both, (which makes no sense in terms of ETF)
+  -- using RoPE for RTF and REE for ETF
+  -- try with and without RoPE/REE and see if theres actually a difference. 
+
+-- finished RoPE and REE on RTF and ETF for 10ep, 0.1 subset but they are all doing quite terribly. 
+  -- ~1h aka 6mins/ep for all configs
+  -- not sure if its due to RoPE/REE or the subset being like difficult to learn??? 
+  -- fixed: 
+    -- mask_emb is now learnable for mlm, erecon, and lrecon ETF versions
+      -- now it is -1f0 instead, having 0f0 was resulting in learning the same embedding for each masked pos_emb
+    -- running again w/ 0.1 subset
+      -- if still crappy results, then try with regular PE in RTF and no PE in ETF
+      -- also can try incr model size to n_layers=2?
+      -- also can try ema_decay=0.99 or temperature=0.2 (but this is more of a sweep thing to check)
+
+-- still not good, trying again with removed rope and REE
+  -- MLM: RTF good, ETF only pred. 2 vals 
+  -- ERECON: RTF pred. mean, ETF exploding negative
+  -- LRECON: RTF not learning, ETF collapse
+  -- CONTRAST: RTF not learning, ETF collapse
+-- to test: verify masked embedding is working, use ema_decay=0.99 or 0.95, use temperature=0.3, larger model?
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 28 2026 ###
+
+-- currently running w/ PE and no PE instead of RoPE and REE
+  -- PE on RTF is better for erecon and lrecon, worse in MLM and CONTRAST
+  -- no PE on ETF is mediocre overall
+    -- need position so that all mask_emb vectors are not the same!!
+  -- verify masked embedding working, figure out if issue in RoPE implementation?
+    -- RoPE is made for longer NLP sequences
+      -- also encodes relationship b/n adjacent genes, which is not important
+      -- thus BUN RoPE!!!
+    -- REE needs to be additive not rotary, try additive REE after vs. regular PE
+  -- verify lrecon, erecon, and contrast implementation
+  -- MLM ETF should be expression prediction i think? (later issue tho)
+
+-- currently running w/ PE on ETF
+  -- good!!! doing a lot better.
+  -- try: additive REE instead of PE
+    -- still doesn't work that well, REE is supposed to encode expression value not identity!
+    -- we want gene identity + expression
+      -- currently have gene identity = pos_emb, expression = Dense()
+      -- REE would be if we have gene_identity = Embedding(), expression = REE
+      -- whatever, not needed.
+  -- try: expression masking instead of rank for MLM ETF
+    -- currently running
+    -- lowkey messed up because the model is too large for the 0.1 subset?? can revisit later?
+    -- trying w/ larger subset=0.5
+
+-- running again with larger subset=0.3 and embed_dim=64 for some results!
+  -- need to run mlm etf afterwards tho!!!
+
+-- re-trying with erecon implemented as expression vec reonstruction rather than single expression value preedition
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 29 2026 ###
+
+-- erecon as full vec recon works much better, however not sure if artificially inflated because of unmasked portions
+  -- trying instead a corruption function rather than masking, then predicting per-position
+
+-- in the meantime, running lrecon and mlm biggr runs for comparison with tahoe
+
+-----------------------------------------------------------------------------------------------------------
+
+### jul 30 2026 ###
+
+-- doing longer mlm etf and rtf runs
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 3 2026 ###
+
+-- LINCS MLM;
+    -- ARGS='-e 25 -t rtf --subset_ratio 0.75 --embed_dim 128 --hidden_dim 256 --n_heads 1 --n_layers 2 --wandb_mode online'
+        -- for comparison against tahoe PB;
+            -- ARGS='-e 400 -t rtf --subset_ratio 1.0 --embed_dim 128 --hidden_dim 256 --n_heads 1 --n_layers 2 --wandb_mode online'
+            -- since LINCS has way more samples!
+        -- RTF still running
+        -- ETF still running
+    -- TBD on wednesday?
+
+-- LINCS other pt tasks;
+    -- MLM
+        -- updated to use corruption on ETF and MASK_ID on RTF, per-position loss calculation
+    -- LRECON
+        -- updated to use corruption on ETF and MASK_ID on RTF
+    -- ERECON
+        -- updated to use corruption on ETF and MASK_ID on RTF, per-position loss calculation
+    -- CONTRAST
+        -- should be ok?
+    -- currently running all on ARGS='-e 25 -t rtf --subset_ratio 0.3 --embed_dim 64 --hidden_dim 128 --n_heads 1 --n_layers 1 --wandb_mode online'
+    -- all updated to log per-gene-id, per-global-rank, and per-sample-rank error plots except contrast (since this is cell-level loss?)
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 4 2026 ###
+
+-- lincs MLM;
+    -- still running (for compare w/ tahoe)
+
+-- lincs pt tasks comparison;
+    -- finished!
+    -- ARGS='-e 25 -t rtf --subset_ratio 0.3 --embed_dim 64 --hidden_dim 128 --n_heads 1 --n_layers 1 --wandb_mode online'
+        -- 20mins/ep, 7hrs total
+    -- nothing did well except for ETF ERECON.
+    -- likely going to throw away contrastive, this is weird and i don't think its fully needed esp if it's not doing well
+    -- to check:
+        -- run erecon on a baseline; just outputting the input - if this is super high then the pearson corr. of the pre-training task on erecon is not as valid
+        -- evaluate the embeddings themselves via cosine on perturbation
+            --  Model          Within         Cross          Gap                                                                                                                                                                              
+                -------------------------------------------------------                                                                                                                                                                       
+                Raw ranks      0.7524         0.7518         0.0005                                                                                                                                                                           
+                Raw expr       0.9789         0.9766         0.0023                                                                                                                                                                           
+                RTF MLM        0.7705         0.6625         0.108                                                                                                                                                                            
+                ETF MLM        0.4467         0.318          0.1287                                                                                                                                                                           
+                RTF ERECON     1.0            1.0            0.0                                                                                                                                                                              
+                ETF ERECON     0.9076         0.8888         0.0188                                                                                                                                                                           
+                RTF LRECON     0.9828         0.9828         -0.0                                                                                                                                                                             
+                ETF LRECON     1.0            1.0            0.0   
+        -- demonstrates that rtf mlm > etf mlm > etf erecon > everything else
+    -- going to try wandb parameter sweep on them, maybe its a small hyperparameter issue? (ex. higher corruption, lower ema_decay, etc.)
+        -- potentially lrecon would need a predictor head on the student side to break symmetry?
+    -- also updated all files to have the MLP head only run on the masked positions instead of all seq_len, which saves memory!
+    -- currently running sweep on lrecon and erecon rtf and etf!
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 5 2026 ###
+
+-- lincs MLM;
+    -- still running (for compare w/ tahoe)
+
+-- lincs pt tasks comparison;
+    -- currently running sweep on lrecon and erecon rtf and etf!
+        -- subset=0.3
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 7 2026 ###
+
+-- lincs MLM; 
+    -- finally finished!!!
+    -- both did about 160k steps after accounting for diff in batchsize, subset, and n_samples
+    -- RTF better than ETF in both cases... 
+    -- tahoe did better in both cases, but still not finished training
+    -- lincs completed training after about 10eps
+
+-- lincs pt tasks comparison;
+    -- still running sweeps on lrecon and erecon rtf and etf, subset=0.3
