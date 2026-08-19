@@ -98,7 +98,8 @@ ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
 
 # opt = Flux.setup(Adam(config["lr"]), model)
-opt = Flux.setup(AdamW(config["lr"]), model)
+# opt = Flux.setup(AdamW(config["lr"]), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
 X_test_masked = similar(X_test)
@@ -189,9 +190,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         l_val, grads = Flux.withgradient(model) do m
             masked_lrecon_loss(m, x_batch, target_embeds, mask_2d)[1]
         end
-        # Flux.update!(opt, model, grads[1])
-        grads_clipped = Flux.clipnorm(grads[1], 1.0)
-        Flux.update!(opt, model, grads_clipped)
+        Flux.update!(opt, model, grads[1])
         ema_update!(ema_model, model, Float32(config["ema_decay"]))
         push!(epoch_losses, l_val)
         global global_step += 1

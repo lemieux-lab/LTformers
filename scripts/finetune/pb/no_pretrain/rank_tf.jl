@@ -61,7 +61,8 @@ model = RankClassifier(n_genes=n_genes, embed_dim=config["embed_dim"],
                        n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
                        dropout_prob=config["drop_prob"])
 model = fix_gpu_dropout(cu(model))
-opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
+# opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
+opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")

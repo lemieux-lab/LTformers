@@ -83,7 +83,8 @@ model = cu(model)
 model = fix_gpu_dropout(model)
 
 # opt = Flux.setup(Adam(config["lr"]), model)
-opt = Flux.setup(AdamW(config["lr"]), model)
+# opt = Flux.setup(AdamW(config["lr"]), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
 X_test_masked = similar(X_test)
@@ -173,9 +174,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                 masked_erecon_loss(m, x_batch, y_batch)[1]
             end
         end
-        # Flux.update!(opt, model, grads[1])
-        grads_clipped = Flux.clipnorm(grads[1], 1.0)
-        Flux.update!(opt, model, grads_clipped)
+        Flux.update!(opt, model, grads[1])
         push!(epoch_losses, l_val)
         global global_step += 1
         if use_max_steps && global_step >= config["max_steps"]

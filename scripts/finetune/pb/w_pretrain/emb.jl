@@ -52,7 +52,8 @@ d = dsplit(data_expr, config;
 # build embedding-only model
 ft_model, train_input, test_input = build_embm(config, d.X_train, d.X_test,
                                                 d.n_genes, d.n_classifications)
-opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
+# opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
+opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")

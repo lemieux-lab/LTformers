@@ -21,17 +21,27 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 use_exp = config["modeltype"] == "etf"
 
 start_time = now()
+_t0 = time()
+_elapsed() = round(time() - _t0, digits=1)
+_phase(name) = (println("[$(round(time() - _t0, digits=1))s] $name"); flush(stdout))
 
+_phase("load_gene_vocab()")
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 
+_phase("list_shards() + shard_train_test_split()")
 all_shards = list_shards(config["data_dir"])
 train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
+if config["subset_shards"] > 0
+    train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
+    test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 4)), length(test_shards))]
+end
 println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
 
 top_k = config["top_k"]
 n_classes = n_coding
 MASK_ID = Int32(n_coding + 1)
 
+_phase("$(use_exp ? "ExpModel" : "RankModel")()")
 model = if use_exp
     ExpModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
              n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
@@ -41,11 +51,13 @@ else
               n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
               dropout_prob=config["drop_prob"], seq_len=top_k)
 end
+_phase("cu() + fix_gpu_dropout()")
 model = cu(model)
 model = fix_gpu_dropout(model)
 
 # opt = Flux.setup(Adam(config["lr"]), model)
-opt = Flux.setup(AdamW(config["lr"]), model)
+# opt = Flux.setup(AdamW(config["lr"]), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # masking buffers
 X_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
@@ -59,6 +71,7 @@ save_dir = joinpath("results", "tahoe", "sc", "pretrain", "mlm", config["modelty
 mkpath(save_dir)
 println("save dir: $save_dir")
 
+_phase("init_wandb()")
 wandb = init_wandb(config, "SC-PT-Aug", "mlm_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
@@ -80,6 +93,7 @@ done = false
 best_test_loss = Inf32
 best_epoch = 0
 
+_phase("load_shard_pyarrow() — estimating epochs")
 n_total_epochs = if use_max_steps
     # sample 1 shard instead of 5 to avoid slow PyArrow startup overhead
     # n_sample = min(5, length(train_shards))
@@ -103,7 +117,9 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 
-for epoch in 1:n_total_epochs
+_phase("training loop — batches_from_shard() + sc_masked_loss() + Flux.withgradient()")
+# for epoch in 1:n_total_epochs
+for epoch in ProgressBar(1:n_total_epochs)
     done && break
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
     Optimisers.adjust!(opt, lr)
@@ -115,11 +131,13 @@ for epoch in 1:n_total_epochs
 
     for (si, shard_path) in enumerate(shuffled_train)
         done && break
+        shard_t0 = time()
         batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
                                      config["batch_size"]; modeltype=config["modeltype"],
                                      token_to_idx=token_to_idx,
                                      load_shard_fn=load_shard_pyarrow)
 
+        n_shard_steps = 0
         for batch in batches
             if use_exp
                 batch_ids, batch_expr = batch
@@ -141,31 +159,33 @@ for epoch in 1:n_total_epochs
             l_val, grads = Flux.withgradient(model) do m
                 sc_masked_loss(m, x_gpu, y_gpu, n_classes)[1]
             end
-            # Flux.update!(opt, model, grads[1])
-            grads_clipped = Flux.clipnorm(grads[1], 1.0)
-            Flux.update!(opt, model, grads_clipped)
+            Flux.update!(opt, model, grads[1])
             push!(epoch_losses, l_val)
+            n_shard_steps += 1
             global global_step += 1
             if use_max_steps && global_step >= config["max_steps"]
                 global done = true; break
             end
         end
 
-        if si % 50 == 0
-            println("  epoch $epoch shard $si/$(length(shuffled_train)) step=$global_step loss=$(round(mean(epoch_losses[max(1,end-49):end]), digits=4))")
+        shard_dt = round(time() - shard_t0, digits=1)
+        if si <= 3 || si % 50 == 0 || done
+            println("  [$(round(time() - _t0, digits=1))s] epoch $epoch shard $si/$(length(shuffled_train)) steps=$n_shard_steps ($(shard_dt)s) step=$global_step loss=$(round(mean(epoch_losses[max(1,end-49):end]), digits=4))")
         end
     end
     push!(train_losses, mean(epoch_losses))
 
     # eval
+    _phase("eval (epoch $epoch) — batches_from_shard() + sc_masked_loss()")
     Flux.testmode!(model)
     eval_losses = Float32[]
     epoch_rank_errors = Int[]
     epoch_preds = Int[]
     epoch_trues = Int[]
     is_last = (epoch == n_total_epochs) || done
-    # eval all test shards on last epoch, subset otherwise
-    eval_shards = if is_last
+    # eval all test shards on last epoch (unless using max_steps), subset otherwise
+    # eval_shards = if is_last
+    eval_shards = if is_last && !use_max_steps
         test_shards
     else
         shuffle(test_shards)[1:min(config["n_eval_shards"], length(test_shards))]
@@ -262,6 +282,7 @@ for epoch in 1:n_total_epochs
     end
 end
 
+_phase("plot_loss() + log_model() + log_params()")
 # save
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce")
 cs, cp = plot_ranked_heatmap(all_trues, all_preds, save_dir)
@@ -292,4 +313,5 @@ log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            best_test_loss=best_test_loss)
 
 wb !== nothing && wandb.finish()
+_phase("done.")
 println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")

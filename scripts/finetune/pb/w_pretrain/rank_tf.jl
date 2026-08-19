@@ -51,7 +51,8 @@ d = dsplit(data_expr, config;
 # build e2e model from pre-trained
 ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes)
 ft_model = fix_gpu_dropout(cu(ft_model))
-opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
+# opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
+opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")

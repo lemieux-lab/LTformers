@@ -25,6 +25,10 @@ coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], conf
 
 all_shards = list_shards(config["data_dir"])
 train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
+if config["subset_shards"] > 0
+    train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
+    test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 4)), length(test_shards))]
+end
 println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
 
 top_k = config["top_k"]
@@ -43,7 +47,8 @@ model = cu(model)
 model = fix_gpu_dropout(model)
 
 # opt = Flux.setup(Adam(config["lr"]), model)
-opt = Flux.setup(AdamW(config["lr"]), model)
+# opt = Flux.setup(AdamW(config["lr"]), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
 X_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
@@ -99,7 +104,8 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 
-for epoch in 1:n_total_epochs
+# for epoch in 1:n_total_epochs
+for epoch in ProgressBar(1:n_total_epochs)
     done && break
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
     Optimisers.adjust!(opt, lr)
@@ -143,9 +149,7 @@ for epoch in 1:n_total_epochs
                     masked_erecon_loss(m, x_gpu, y_gpu)[1]
                 end
             end
-            # Flux.update!(opt, model, grads[1])
-            grads_clipped = Flux.clipnorm(grads[1], 1.0)
-            Flux.update!(opt, model, grads_clipped)
+            Flux.update!(opt, model, grads[1])
             push!(epoch_losses, l_val)
             global global_step += 1
             if use_max_steps && global_step >= config["max_steps"]
@@ -163,8 +167,9 @@ for epoch in 1:n_total_epochs
     Flux.testmode!(model)
     eval_losses = Float32[]
     is_last = (epoch == n_total_epochs) || done
-    # eval all test shards on last epoch, subset otherwise
-    eval_shards = if is_last
+    # eval all test shards on last epoch (unless using max_steps), subset otherwise
+    # eval_shards = if is_last
+    eval_shards = if is_last && !use_max_steps
         test_shards
     else
         shuffle(test_shards)[1:min(config["n_eval_shards"], length(test_shards))]

@@ -60,7 +60,8 @@ for i in 1:length(sizes)-1
 end
 model = Flux.Chain(layers...)
 model = fix_gpu_dropout(cu(model))
-opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
+# opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
+opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
