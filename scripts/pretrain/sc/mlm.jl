@@ -87,6 +87,16 @@ rank_error_counts = zeros(Int, top_k)
 gene_error_sums = zeros(Float32, n_coding)  # indexed by gene_id (1..n_coding)
 gene_error_counts = zeros(Int, n_coding)
 
+# pre-allocate GPU buffers (#4) — reverted: copyto! from CPU SubArray to CuArray
+# triggers scalar indexing (CUDA.jl doesn't specialize for SubArray sources)
+# x_gpu_buf_rtf = CUDA.zeros(Int32, top_k, config["batch_size"])
+# y_gpu_buf_rtf = CUDA.zeros(Int32, top_k, config["batch_size"])
+# x_gpu_buf_etf = CUDA.zeros(Float32, top_k, config["batch_size"])
+# y_gpu_buf_etf = CUDA.zeros(Int32, top_k, config["batch_size"])
+
+# cap predstrues to avoid multi-GB files (#8)
+const MAX_PRED_SHARDS = 5
+
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
@@ -117,6 +127,34 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 
+# pre-cache eval batches with static masks (like PB's static test mask)
+_phase("pre-caching eval batches with static masks")
+eval_cache = NamedTuple[]
+_eval_shards = test_shards[1:min(config["n_eval_shards"], length(test_shards))]
+for sp in _eval_shards
+    batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
+                                 config["batch_size"]; modeltype=config["modeltype"],
+                                 token_to_idx=token_to_idx,
+                                 load_shard_fn=load_shard_pyarrow)
+    for batch in batches
+        if use_exp
+            batch_ids, batch_expr = batch
+            bs = size(batch_expr, 2)
+            xm = Matrix{Float32}(undef, top_k, bs)
+            ym = Matrix{Int32}(undef, top_k, bs)
+            sc_mask_input_exp!(xm, ym, batch_expr, batch_ids, config["mask_ratio"], -100)
+            push!(eval_cache, (x=copy(xm), y=copy(ym), ids=copy(batch_ids)))
+        else
+            bs = size(batch, 2)
+            xm = Matrix{Int32}(undef, top_k, bs)
+            ym = Matrix{Int32}(undef, top_k, bs)
+            sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
+            push!(eval_cache, (x=copy(xm), y=copy(ym), raw=copy(batch)))
+        end
+    end
+end
+println("  cached $(length(eval_cache)) eval batches from $(length(_eval_shards)) shards")
+
 _phase("training loop — batches_from_shard() + sc_masked_loss() + Flux.withgradient()")
 # for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
@@ -132,6 +170,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     for (si, shard_path) in enumerate(shuffled_train)
         done && break
         shard_t0 = time()
+
         batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
                                      config["batch_size"]; modeltype=config["modeltype"],
                                      token_to_idx=token_to_idx,
@@ -176,93 +215,113 @@ for epoch in ProgressBar(1:n_total_epochs)
     push!(train_losses, mean(epoch_losses))
 
     # eval
-    _phase("eval (epoch $epoch) — batches_from_shard() + sc_masked_loss()")
+    _phase("eval (epoch $epoch)")
     Flux.testmode!(model)
     eval_losses = Float32[]
     epoch_rank_errors = Int[]
     epoch_preds = Int[]
     epoch_trues = Int[]
     is_last = (epoch == n_total_epochs) || done
-    # eval all test shards on last epoch (unless using max_steps), subset otherwise
-    # eval_shards = if is_last
-    eval_shards = if is_last && !use_max_steps
-        test_shards
-    else
-        shuffle(test_shards)[1:min(config["n_eval_shards"], length(test_shards))]
-    end
+    full_eval = is_last && !use_max_steps
 
-    for shard_path in eval_shards
-        batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
-                                     config["batch_size"]; modeltype=config["modeltype"],
-                                     token_to_idx=token_to_idx,
-                                     load_shard_fn=load_shard_pyarrow)
-        for batch in batches
-            if use_exp
-                batch_ids, batch_expr = batch
-                bs = size(batch_expr, 2)
-                xm = Matrix{Float32}(undef, top_k, bs)
-                ym = Matrix{Int32}(undef, top_k, bs)
-                sc_mask_input_exp!(xm, ym, batch_expr, batch_ids, config["mask_ratio"], -100)
-                x_gpu = CuArray(xm)
-                y_gpu = CuArray(ym)
-            else
-                bs = size(batch, 2)
-                xm = Matrix{Int32}(undef, top_k, bs)
-                ym = Matrix{Int32}(undef, top_k, bs)
-                sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
-                x_gpu = CuArray(xm)
-                y_gpu = CuArray(ym)
-            end
-            loss_val, logits_masked, y_targets = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
-            push!(eval_losses, loss_val)
+    pred_shard_count = 0  # for capping predstrues (#8)
 
-            if !isnothing(y_targets)
-                logits_cpu = cpu(logits_masked)
-                y_targets_cpu = cpu(y_targets)
+    if full_eval
+        # full eval on last epoch: load all test shards dynamically
+        for shard_path in test_shards
+            batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
+                                         config["batch_size"]; modeltype=config["modeltype"],
+                                         token_to_idx=token_to_idx,
+                                         load_shard_fn=load_shard_pyarrow)
+            collect_preds = pred_shard_count < MAX_PRED_SHARDS
 
-                if is_last
-                    append!(epoch_preds, Flux.onecold(logits_cpu))
-                    append!(epoch_trues, y_targets_cpu)
+            for batch in batches
+                if use_exp
+                    batch_ids, batch_expr = batch
+                    bs = size(batch_expr, 2)
+                    xm = @view X_masked_etf[:, 1:bs]
+                    ym = @view y_masked_etf[:, 1:bs]
+                    sc_mask_input_exp!(xm, ym, batch_expr, batch_ids, config["mask_ratio"], -100)
+                    x_gpu = CuArray(xm)
+                    y_gpu = CuArray(ym)
+                else
+                    bs = size(batch, 2)
+                    xm = @view X_masked_rtf[:, 1:bs]
+                    ym = @view y_masked_rtf[:, 1:bs]
+                    sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
+                    x_gpu = CuArray(xm)
+                    y_gpu = CuArray(ym)
                 end
+                loss_val, logits_masked, y_targets = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
+                push!(eval_losses, loss_val)
 
-                for i in eachindex(y_targets_cpu)
-                    r = y_targets_cpu[i]  # r = gene_id (target class)
-                    col = @view logits_cpu[:, i]
-                    err = count(x -> x > col[r], col)
-                    push!(epoch_rank_errors, err)
-                    if is_last
-                        # r is gene_id → per-gene metric
-                        gene_error_sums[r] += err
-                        gene_error_counts[r] += 1
+                if !isnothing(y_targets)
+                    errs = gpu_rank_errors(logits_masked, y_targets)
+                    append!(epoch_rank_errors, errs)
+
+                    if collect_preds
+                        logits_cpu = cpu(logits_masked)
+                        append!(epoch_preds, Flux.onecold(logits_cpu))
+                        append!(epoch_trues, cpu(y_targets))
                     end
-                end
 
-                if is_last
                     y_labels_cpu = cpu(y_gpu)
                     batch_len = size(y_labels_cpu, 2)
                     masked_idx = 0
                     for j in 1:batch_len
-                        for pos in 1:top_k  # pos = rank position
+                        for pos in 1:top_k
                             r = y_labels_cpu[pos, j]
                             (r == -100 || r <= 0 || r > n_classes) && continue
                             masked_idx += 1
-                            col = @view logits_cpu[:, masked_idx]
-                            err = count(x -> x > col[r], col)
-                            # pos is rank position → per-rank metric
+                            err = errs[masked_idx]
+                            gene_error_sums[r] += err
+                            gene_error_counts[r] += 1
                             rank_error_sums[pos] += err
                             rank_error_counts[pos] += 1
                         end
                     end
                 end
             end
+            if collect_preds
+                pred_shard_count += 1
+            end
+        end
+    else
+        # cached eval: use pre-computed static masks
+        # collect preds from first MAX_PRED_SHARDS worth of cached batches on last epoch
+        n_cached_preds = 0
+        max_cached_preds = MAX_PRED_SHARDS * cld(28225, config["batch_size"])  # ~5 shards worth of batches
+        for cached in eval_cache
+            x_gpu = CuArray(cached.x)
+            y_gpu = CuArray(cached.y)
+            loss_val, logits_masked, y_targets = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
+            push!(eval_losses, loss_val)
+
+            if !isnothing(y_targets)
+                errs = gpu_rank_errors(logits_masked, y_targets)
+                append!(epoch_rank_errors, errs)
+
+                if is_last && n_cached_preds < max_cached_preds
+                    logits_cpu = cpu(logits_masked)
+                    append!(epoch_preds, Flux.onecold(logits_cpu))
+                    append!(epoch_trues, cpu(y_targets))
+                    n_cached_preds += 1
+                end
+            end
         end
     end
+
     push!(test_losses, mean(eval_losses))
     push!(test_rank_errors, isempty(epoch_rank_errors) ? NaN32 : mean(Float32.(epoch_rank_errors)))
 
-    if is_last
+    if full_eval
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
+        println("  predstrues: $(pred_shard_count) shards collected ($(length(all_preds)) predictions, capped at $MAX_PRED_SHARDS)")
+    elseif is_last && !isempty(epoch_preds)
+        append!(all_preds, epoch_preds)
+        append!(all_trues, epoch_trues)
+        println("  predstrues: $(n_cached_preds) cached batches collected ($(length(all_preds)) predictions)")
     end
 
     println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
@@ -285,7 +344,12 @@ end
 _phase("plot_loss() + log_model() + log_params()")
 # save
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce")
-cs, cp = plot_ranked_heatmap(all_trues, all_preds, save_dir)
+cs, cp = if !isempty(all_preds)
+    plot_ranked_heatmap(all_trues, all_preds, save_dir)
+else
+    println("  skipping heatmap: no predictions collected")
+    (NaN, NaN)
+end
 plot_per_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir)
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
                     "mean rank error", "per_gene_error";

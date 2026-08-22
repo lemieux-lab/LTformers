@@ -37,11 +37,11 @@ MASK_ID = Int32(n_coding + 1)
 model = if use_exp
     ExpEReconModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
                    n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                   dropout_prob=config["drop_prob"])
+                   dropout_prob=config["drop_prob"], seq_len=top_k)
 else
     RankEReconModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
                     n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                    dropout_prob=config["drop_prob"])
+                    dropout_prob=config["drop_prob"], seq_len=top_k)
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
@@ -103,6 +103,32 @@ else
     config["n_epochs"]
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
+
+# pre-cache eval batches with static masks (like PB's static test mask)
+eval_cache = NamedTuple[]
+_eval_shards = test_shards[1:min(config["n_eval_shards"], length(test_shards))]
+for sp in _eval_shards
+    batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
+                                 config["batch_size"]; modeltype="etf",
+                                 token_to_idx=token_to_idx,
+                                 load_shard_fn=load_shard_pyarrow)
+    for (batch_ids, batch_expr) in batches
+        bs = size(batch_expr, 2)
+        if use_exp
+            xm = Matrix{Float32}(undef, top_k, bs)
+            cm = falses(top_k, bs)
+            corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
+            push!(eval_cache, (x=copy(xm), cm=copy(cm), y=copy(batch_expr), ids=copy(batch_ids)))
+        else
+            xm = Matrix{Int32}(undef, top_k, bs)
+            ym = Matrix{Float32}(undef, top_k, bs)
+            sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
+                                 config["mask_ratio"], -100f0, MASK_ID)
+            push!(eval_cache, (x=copy(xm), y=copy(ym), ids=copy(batch_ids)))
+        end
+    end
+end
+println("  cached $(length(eval_cache)) eval batches from $(length(_eval_shards)) shards")
 
 # for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
@@ -167,52 +193,97 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.testmode!(model)
     eval_losses = Float32[]
     is_last = (epoch == n_total_epochs) || done
-    # eval all test shards on last epoch (unless using max_steps), subset otherwise
-    # eval_shards = if is_last
-    eval_shards = if is_last && !use_max_steps
-        test_shards
+    full_eval = is_last && !use_max_steps
+
+    if full_eval
+        # full eval on last epoch: load all test shards dynamically
+        for shard_path in test_shards
+            batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
+                                         config["batch_size"]; modeltype="etf",
+                                         token_to_idx=token_to_idx,
+                                         load_shard_fn=load_shard_pyarrow)
+            for (batch_ids, batch_expr) in batches
+                bs = size(batch_expr, 2)
+
+                if use_exp
+                    xm = Matrix{Float32}(undef, top_k, bs)
+                    cm = falses(top_k, bs)
+                    corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
+                    x_gpu = CuArray(xm)
+                    y_gpu = CuArray(batch_expr)
+                    m_gpu = CuArray(Float32.(cm))
+                    loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
+                else
+                    xm = Matrix{Int32}(undef, top_k, bs)
+                    ym = Matrix{Float32}(undef, top_k, bs)
+                    sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
+                                         config["mask_ratio"], -100f0, MASK_ID)
+                    x_gpu = CuArray(xm)
+                    y_gpu = CuArray(ym)
+                    loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu)
+                end
+                push!(eval_losses, cpu(loss_val))
+
+                if !isnothing(preds_masked)
+                    preds_cpu = vec(cpu(preds_masked))
+                    targets_cpu = vec(cpu(targets_masked))
+                    append!(all_preds, preds_cpu)
+                    append!(all_trues, targets_cpu)
+
+                    # per-gene and per-rank errors
+                    if use_exp
+                        mask_cpu_bool = cpu(m_gpu) .> 0f0
+                    else
+                        y_labels_cpu = cpu(y_gpu)
+                    end
+                    masked_idx = 0
+                    for j in 1:bs
+                        for pos in 1:top_k
+                            if use_exp
+                                mask_cpu_bool[pos, j] || continue
+                            else
+                                (y_labels_cpu[pos, j] == -100f0) && continue
+                            end
+                            masked_idx += 1
+                            err = (preds_cpu[masked_idx] - targets_cpu[masked_idx])^2
+                            # pos = rank position (SC data is sorted by expression)
+                            rank_error_sums[pos] += err
+                            rank_error_counts[pos] += 1
+                            gene_id = batch_ids[pos, j]  # gene at rank pos
+                            gene_error_sums[gene_id] += err
+                            gene_error_counts[gene_id] += 1
+                        end
+                    end
+                end
+            end
+        end
     else
-        shuffle(test_shards)[1:min(config["n_eval_shards"], length(test_shards))]
-    end
-
-    for shard_path in eval_shards
-        batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
-                                     config["batch_size"]; modeltype="etf",
-                                     token_to_idx=token_to_idx,
-                                     load_shard_fn=load_shard_pyarrow)
-        for (batch_ids, batch_expr) in batches
-            bs = size(batch_expr, 2)
-
+        # cached eval: use pre-computed static masks
+        MAX_PRED_BATCHES = 5 * cld(28225, config["batch_size"])
+        n_cached_preds = 0
+        for cached in eval_cache
             if use_exp
-                xm = Matrix{Float32}(undef, top_k, bs)
-                cm = falses(top_k, bs)
-                corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-                x_gpu = CuArray(xm)
-                y_gpu = CuArray(batch_expr)
-                m_gpu = CuArray(Float32.(cm))
+                x_gpu = CuArray(cached.x)
+                y_gpu = CuArray(cached.y)
+                m_gpu = CuArray(Float32.(cached.cm))
                 loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
             else
-                xm = Matrix{Int32}(undef, top_k, bs)
-                ym = Matrix{Float32}(undef, top_k, bs)
-                sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
-                                     config["mask_ratio"], -100f0, MASK_ID)
-                x_gpu = CuArray(xm)
-                y_gpu = CuArray(ym)
+                x_gpu = CuArray(cached.x)
+                y_gpu = CuArray(cached.y)
                 loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu)
             end
             push!(eval_losses, cpu(loss_val))
 
-            if is_last && !isnothing(preds_masked)
+            # collect preds/trues + per-gene/per-rank errors (capped)
+            if is_last && !isnothing(preds_masked) && n_cached_preds < MAX_PRED_BATCHES
                 preds_cpu = vec(cpu(preds_masked))
                 targets_cpu = vec(cpu(targets_masked))
                 append!(all_preds, preds_cpu)
                 append!(all_trues, targets_cpu)
 
-                # per-gene and per-rank errors
+                bs = size(cached.x, 2)
                 if use_exp
-                    mask_cpu_bool = cpu(m_gpu) .> 0f0
-                else
-                    y_labels_cpu = cpu(y_gpu)
+                    mask_cpu_bool = cached.cm
                 end
                 masked_idx = 0
                 for j in 1:bs
@@ -220,18 +291,18 @@ for epoch in ProgressBar(1:n_total_epochs)
                         if use_exp
                             mask_cpu_bool[pos, j] || continue
                         else
-                            (y_labels_cpu[pos, j] == -100f0) && continue
+                            (cached.y[pos, j] == -100f0) && continue
                         end
                         masked_idx += 1
                         err = (preds_cpu[masked_idx] - targets_cpu[masked_idx])^2
-                        # pos = rank position (SC data is sorted by expression)
                         rank_error_sums[pos] += err
                         rank_error_counts[pos] += 1
-                        gene_id = batch_ids[pos, j]  # gene at rank pos
+                        gene_id = cached.ids[pos, j]
                         gene_error_sums[gene_id] += err
                         gene_error_counts[gene_id] += 1
                     end
                 end
+                n_cached_preds += 1
             end
         end
     end
@@ -257,23 +328,29 @@ plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE")
 
 # correlation scatter
 using StatsBase: corspearman
-cs = corspearman(all_trues, all_preds)
-cp = cor(all_trues, all_preds)
+cs, cp = if !isempty(all_preds) && !isempty(all_trues)
+    _cs = corspearman(all_trues, all_preds)
+    _cp = cor(all_trues, all_preds)
 
-fig_scatter = Figure(size=(600, 400))
-ax_scatter = Axis(fig_scatter[1, 1], xlabel="True", ylabel="Predicted", title="erecon scatter")
-n_plot = min(50000, length(all_trues))
-plot_idx = sample(1:length(all_trues), n_plot, replace=false)
-scatter!(ax_scatter, all_trues[plot_idx], all_preds[plot_idx], markersize=1, alpha=0.3)
-text!(ax_scatter, 0.05, 0.95, space=:relative, align=(:left, :top),
-    text="Pearson: $(round(cp, digits=4))\nSpearman: $(round(cs, digits=4))")
-save(joinpath(save_dir, "scatter.png"), fig_scatter)
+    fig_scatter = Figure(size=(600, 400))
+    ax_scatter = Axis(fig_scatter[1, 1], xlabel="True", ylabel="Predicted", title="erecon scatter")
+    n_plot = min(50000, length(all_trues))
+    plot_idx = sample(1:length(all_trues), n_plot, replace=false)
+    scatter!(ax_scatter, all_trues[plot_idx], all_preds[plot_idx], markersize=1, alpha=0.3)
+    text!(ax_scatter, 0.05, 0.95, space=:relative, align=(:left, :top),
+        text="Pearson: $(round(_cp, digits=4))\nSpearman: $(round(_cs, digits=4))")
+    save(joinpath(save_dir, "scatter.png"), fig_scatter)
 
-plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
-                    "mean squared error", "per_gene_error";
-                    sorted_gene_path=get(config, "sorted_gene_path", ""))
-plot_per_sample_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir,
-                           "mean squared error", "per_rank_error")
+    plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
+                        "mean squared error", "per_gene_error";
+                        sorted_gene_path=get(config, "sorted_gene_path", ""))
+    plot_per_sample_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir,
+                               "mean squared error", "per_rank_error")
+    (_cs, _cp)
+else
+    println("  skipping scatter/per-gene/per-rank plots: no predictions collected")
+    (NaN, NaN)
+end
 
 # log_model(model, save_dir)
 log_model(model, save_dir, config)

@@ -1,11 +1,13 @@
 module ProcessSC
 
-using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays
+using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays, Base.Threads
 
 export log_normalize_col!, process_cell_topk_flat
 export build_batch_rtf, build_batch_etf, batches_from_shard
+export batches_from_shard_data
 export sc_mask_input!, sc_mask_input_exp!, sc_mask_input_erecon!, sc_masked_loss
 export cell_to_dense_flat!, process_cell_topk_flat
+export gpu_rank_errors
 
 
 # cell processing
@@ -50,10 +52,9 @@ function process_cell_topk_flat(dense::Vector{Float32},
     @inbounds for i in 1:n_coding
         dense[i] += randn(Float32) * 1f-10
     end
-
-    perm = sortperm(dense, rev=true)
-    top_gene_ids = Int32.(perm[1:top_k])
-    top_expr_vals = dense[perm[1:top_k]]
+    perm = partialsortperm(dense, 1:top_k, rev=true)  # O(n + k log k) vs O(n log n)
+    top_gene_ids = Int32.(perm)
+    top_expr_vals = dense[perm]
     return top_gene_ids, top_expr_vals
 end
 
@@ -65,11 +66,23 @@ function build_batch_rtf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
                          token_to_idx::Dict{Int,Int}, n_coding::Int, top_k::Int)
     bs = length(cell_indices)
     batch = Matrix{Int32}(undef, top_k, bs)
-    dense = Vector{Float32}(undef, n_coding)
-    for (j, ci) in enumerate(cell_indices)
-        gene_ids, _ = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
-                                             ci, token_to_idx, n_coding, top_k)
-        batch[:, j] = gene_ids
+    nt = nthreads()
+    if nt > 1 && bs >= 4
+        # dense_bufs = [Vector{Float32}(undef, n_coding) for _ in 1:nt]
+        @threads for j in 1:bs
+            # per-iteration dense buffer (76KB each, avoids threadid() issues in Channel tasks)
+            dense = Vector{Float32}(undef, n_coding)
+            gene_ids, _ = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
+                                                 cell_indices[j], token_to_idx, n_coding, top_k)
+            batch[:, j] = gene_ids
+        end
+    else
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            gene_ids, _ = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
+                                                 ci, token_to_idx, n_coding, top_k)
+            batch[:, j] = gene_ids
+        end
     end
     return batch
 end
@@ -80,12 +93,24 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     bs = length(cell_indices)
     batch_ids = Matrix{Int32}(undef, top_k, bs)
     batch_expr = Matrix{Float32}(undef, top_k, bs)
-    dense = Vector{Float32}(undef, n_coding)
-    for (j, ci) in enumerate(cell_indices)
-        gene_ids, expr_vals = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
-                                                     ci, token_to_idx, n_coding, top_k)
-        batch_ids[:, j] = gene_ids
-        batch_expr[:, j] = expr_vals
+    nt = nthreads()
+    if nt > 1 && bs >= 4
+        # dense_bufs = [Vector{Float32}(undef, n_coding) for _ in 1:nt]
+        @threads for j in 1:bs
+            dense = Vector{Float32}(undef, n_coding)
+            gene_ids, expr_vals = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
+                                                         cell_indices[j], token_to_idx, n_coding, top_k)
+            batch_ids[:, j] = gene_ids
+            batch_expr[:, j] = expr_vals
+        end
+    else
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            gene_ids, expr_vals = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
+                                                         ci, token_to_idx, n_coding, top_k)
+            batch_ids[:, j] = gene_ids
+            batch_expr[:, j] = expr_vals
+        end
     end
     return batch_ids, batch_expr
 end
@@ -206,6 +231,56 @@ function sc_masked_loss(model, x_gpu::CuArray{Float32}, y_gpu, n_classes)
     dropped = model.emb_dropout(combined)
     transformed = model.transformer(dropped)
     _sc_classify_masked(model.classifier, transformed, y_gpu, n_classes)
+end
+
+
+## async shard pre-loading: build batches from already-loaded shard data
+function batches_from_shard_data(shard, coding_tokens::Vector{Int}, n_coding::Int,
+                                 top_k::Int, batch_size::Int;
+                                 modeltype::String = "rtf",
+                                 token_to_idx::Dict{Int,Int} = error("token_to_idx required"))
+    cell_order = shuffle(1:shard.n_cells)
+    return Channel{Any}(1) do ch
+        for start_idx in 1:batch_size:shard.n_cells
+            end_idx = min(start_idx + batch_size - 1, shard.n_cells)
+            ci = cell_order[start_idx:end_idx]
+            if modeltype == "etf"
+                ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
+                                            ci, token_to_idx, n_coding, top_k)
+                put!(ch, (ids, vals))
+            else
+                batch = build_batch_rtf(shard.genes_flat, shard.offsets, shard.expr_flat,
+                                        ci, token_to_idx, n_coding, top_k)
+                put!(ch, batch)
+            end
+        end
+    end
+end
+
+
+## GPU rank errors — replaces O(n_classes) CPU loop per masked token
+## processes in chunks to limit GPU memory (19020 × chunk_size × 4 bytes per temp)
+function gpu_rank_errors(logits_masked::CuArray{Float32, 2}, y_targets::CuArray;
+                         chunk_size::Int = 2000)
+    n_classes, n_tokens = size(logits_masked)
+    errors = Vector{Int}(undef, n_tokens)
+    nc = Int32(n_classes)
+    for start in 1:chunk_size:n_tokens
+        stop = min(start + chunk_size - 1, n_tokens)
+        n_chunk = stop - start + 1
+        chunk_logits = logits_masked[:, start:stop]           # (n_classes, n_chunk) on GPU
+        chunk_targets = y_targets[start:stop]                  # (n_chunk,) on GPU
+        # gather logit at the true class for each masked token via linear indexing
+        offsets_gpu = cu(collect(Int32(0):Int32(n_chunk - 1))) .* nc
+        lin_idx = chunk_targets .+ offsets_gpu
+        logits_flat = reshape(chunk_logits, :)                 # flat view, no copy
+        true_vals = logits_flat[lin_idx]                       # (n_chunk,) on GPU
+        # count how many logits exceed the true-class logit per column
+        exceeds = chunk_logits .> reshape(true_vals, 1, :)     # (n_classes, n_chunk) Bool
+        chunk_errs = vec(sum(exceeds, dims=1))                 # (n_chunk,)
+        errors[start:stop] = Int.(cpu(chunk_errs))
+    end
+    return errors
 end
 
 

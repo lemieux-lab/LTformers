@@ -137,9 +137,11 @@ end
 Flux.@layer RankLReconModel
 
 function RankLReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
-                           n_heads::Int, hidden_dim::Int, dropout_prob::Float64)
+                           n_heads::Int, hidden_dim::Int, dropout_prob::Float64,
+                           seq_len::Int = n_genes)
     embedding = Flux.Embedding(n_genes + 1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    # pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     decoder = Flux.Chain(Flux.Dense(embed_dim => hidden_dim, gelu),
@@ -173,9 +175,11 @@ end
 Flux.@layer ExpLReconModel
 
 function ExpLReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
-                          n_heads::Int, hidden_dim::Int, dropout_prob::Float64)
+                          n_heads::Int, hidden_dim::Int, dropout_prob::Float64,
+                          seq_len::Int = n_genes)
     proj = Flux.Dense(1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    # pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     decoder = Flux.Chain(Flux.Dense(embed_dim => hidden_dim, gelu),
@@ -214,9 +218,11 @@ end
 Flux.@layer RankEReconModel
 
 function RankEReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
-                           n_heads::Int, hidden_dim::Int, dropout_prob::Float64)
+                           n_heads::Int, hidden_dim::Int, dropout_prob::Float64,
+                           seq_len::Int = n_genes)
     embedding = Flux.Embedding(n_genes + 1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    # pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     regressor = Flux.Chain(Flux.Dense(embed_dim => hidden_dim, gelu),
@@ -250,9 +256,11 @@ end
 Flux.@layer ExpEReconModel
 
 function ExpEReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
-                          n_heads::Int, hidden_dim::Int, dropout_prob::Float64)
+                          n_heads::Int, hidden_dim::Int, dropout_prob::Float64,
+                          seq_len::Int = n_genes)
     proj = Flux.Dense(1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    # pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     regressor = Flux.Chain(Flux.Dense(embed_dim => hidden_dim, gelu),
