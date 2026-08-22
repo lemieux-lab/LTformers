@@ -7,9 +7,9 @@ modeltype = "rtf"
 sorted_gene_path = ""
 
 # single-cell data paths
-data_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/data"
-meta_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/metadata"
-coding_gene_path = "/home/muninn/scratch/kaufmanl/CAP/data/protein-coding_gene.txt"
+data_dir = "/home/golem/scratch/chans/transformers/data/tahoe/data"
+meta_dir = "/home/golem/scratch/chans/transformers/data/tahoe/metadata"
+coding_gene_path = "/home/golem/scratch/chans/transformers/data/tahoe/protein-coding_gene.txt"
 
 # constant params
 batch_size = 128

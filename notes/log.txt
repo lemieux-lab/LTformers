@@ -421,3 +421,139 @@
 -- tahoe mlm etf inv vs. non inv
 -- tahoe mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf sweeps
 -- sc 10k steps, 10 eval_shards mlm rtf
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 19 2026 ###
+
+-- pb pre-train
+    -- RUNNING tahoe sweeps for MLM RTF, LRECON ETF, LRECON RTF, ERECON ETF, ERECON RTF
+    -- re: mlm ETF old vs. new:
+        -- RUNNING 50ep comparison
+            --
+
+-- sc pre-train
+    -- changes made:
+        -- partialsortperm instead of sortperm: instead of sorting the entire 19k genes, we only sort top k genes (1024)
+        -- reduced the pos_emb allocation size so that its just the size of whats needed (seq_len not n_genes)
+        -- parallelize batch building: @threads on build_batch()
+        -- static test masking (to match pb), dynamic train masking
+        -- vectorize logits comparison for rank errors via gpu_rank_errors() isntead of cpu transfer
+        -- is_last() eval loop deduplication
+        -- predstrues.jl only accumulates up to 5 shards (bc file gets too large)
+    -- maybe consider:
+        -- async shard pre-loading via batches_from_shard_data()
+            -- PyCall isn't thread-safe, can consider if loading uses a Julia parquet reader
+        -- remove repeated CuArray() allocs every step, instead do CUDA.zeros() and copyto!(@view) as gpu buffer pre-alloc
+    -- attempting:
+        -- batch_size 920 is max
+        -- n_threads=8 (batch_size / threads = n_cells) but we can check via testing JULIA_NUM_THREADS=4,8,16,32
+            -- i think 16 is best
+            -- currently testing on larger batch size! (diff n_threads)
+            -- 16 is best, and we can fit in 900 ish batch size
+    -- FYI: pb uses corruption (in lrecon and erecon etf only), sc uses sentinel for masking for all etf
+    -- testing other pretrain scripts! besides rtf mlm!
+
+-- pb fine-tune
+    -- waiting on pre-training finishes
+    -- do cell line classification first for tahoe
+
+-- data comparison
+    -- sc 300 ev failed after entropies/sparsities D: 
+    -- ran a recovery script for the rest of the vectors, etc
+    -- done! all good
+
+-- pb variations: https://claude.ai/code/artifact/617846b7-7510-48f7-9a62-2afb9926fc37
+    -- discrepancies:
+        -- mlm etf maybe better as gene order?
+            -- but then label is rank of gene rather than gene at rank
+        -- mlm etf is MASK=-1.0, lrecon/erecon etf use corruption (swap from other values)
+            -- can remove mask_emb() from those other two files if not used?
+            -- different encode() functions used
+        -- lrecon and erecon use MSE loss (should be ok)
+        -- 
+    -- 
+
+-- sc variations: https://claude.ai/code/artifact/43720403-28d2-449f-b675-933108124127
+    -- discrepancies:
+        -- mlm etf encode issue
+        -- get_target_embeds()
+        -- shard loading modeltype
+        -- can remove mask_emb()?
+        -- channel() continues running in background
+
+-- cq setup:
+    -- transferring files:
+    -- running: 
+        # salloc --account=def-lemieux1 --time=00:30:00 --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=120G --gpus-per-node=h100:1
+        # /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/julia/1.12.5/bin/julia
+    
+    tmux new -s transfer
+
+    rsync -azh --partial --info=progress2 \
+    /home/golem/scratch/chans/transformers/data/lincs/ \
+    rorqual:/home/chans/links/scratch/transformers/data/lincs/ && \
+
+    rsync -azh --partial --info=progress2 \
+    /home/golem/scratch/chans/transformers/scripts/ \
+    rorqual:/home/chans/links/scratch/transformers/scripts/ && \
+    
+    rsync -azh --partial --info=progress2 \
+    /home/golem/scratch/chans/transformers/src/ \
+    rorqual:/home/chans/links/scratch/transformers/src/ 
+
+    rsync -azh --partial --info=progress2 \
+    /home/golem/scratch/chans/transformers/config/ \
+    rorqual:/home/chans/links/scratch/transformers/config/ 
+    
+    Detach with Ctrl+b then d, come back anytime with tmux attach -t transfer.
+
+    -- gna finish cq setup after single-cell stuff is perfect, don't want to run into errors etc on that
+    -- will likely only use cq for single-cell stuff? since tahoe pb is currently running swees on balrog ngl
+
+    --
+
+    should try sc lrecon and erecon etf using -1f0 isntead of corrupt???
+    runnnign lrecon both rn
+
+
+files got moved, need to fix:
+
+tmux new -s transfer
+
+rsync -azh --partial --info=progress2 \
+/home/muninn/scratch/kaufmanl/datasets/Tahoe-100M/data/ \
+/home/golem/scratch/chans/transformers/data/tahoe/data/ && \
+
+rsync -azh --partial --progress \
+/home/muninn/scratch/kaufmanl/datasets/Tahoe-100M/data/ \
+/home/golem/scratch/chans/transformers/data/tahoe/metadata/
+
+if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokwey bare work mayeb to do at a later irme
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 22 2026 ###
+
+-- sc pre-training:
+    -- accidentally duplicated data/ instead of putting metadata/
+            tmux new -s transfer
+            rsync -azh --partial --progress \
+            /home/muninn/scratch/kaufmanl/datasets/Tahoe-100M/metadata/ \
+            /home/golem/scratch/chans/transformers/data/tahoe/metadata/
+
+-- pb pre-training:
+    -- should prolly start mlm etf as well?
+        -- need to see inverse vs non inverse results!
+        -- RUNNING (again) w/ lower eps, not sure what issue is.
+        -- tbd, should only be about a day or two?
+
+-- cq testing setup:
+    -- all sc should be ok i think? after lr done
+    --  # salloc --account=def-lemieux1 --time=00:30:00 --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=120G --gpus-per-node=h100:1
+        # /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/julia/1.12.5/bin/julia
+    -- currently testing 10steps via sbatch
+
+-- data comparison:
+    -- cl overlay for sc needs to be done via re-running sc_entvec later
+
