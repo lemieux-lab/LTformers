@@ -541,6 +541,9 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
             rsync -azh --partial --progress \
             /home/muninn/scratch/kaufmanl/datasets/Tahoe-100M/metadata/ \
             /home/golem/scratch/chans/transformers/data/tahoe/metadata/
+    -- todo: 
+        -- gpu_rank_errors vectorization in erecon
+        -- predstrues cap in lrecon and erecon (half impl in erecon, not impl in lrecon, its jsut turned off in lr)
 
 -- pb pre-training:
     -- should prolly start mlm etf as well?
@@ -557,3 +560,40 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 -- data comparison:
     -- cl overlay for sc needs to be done via re-running sc_entvec later
 
+-----------------------------------------------------------------------------------------------------------
+
+### aug 23 2026 ###
+
+-- pb pre-training: 
+    -- RUNNING mlm inv vs non inv
+
+-- sc pre-training:
+    -- should be ok to try calcul quebec now!!
+    -- todo later: 
+        -- gpu_rank_errors vectorization in erecon
+        -- predstrues cap in lrecon and erecon (half impl in erecon, not impl in lrecon, its jsut turned off in lr)
+    -- trying on cq mlm rtf testing 10step again
+    -- testing again 100step just in case
+    -- also testinng and debugged cq scipt i think
+    -- goign to begin mlm etf/rtf pretraining!
+
+-- data comparison:
+    -- todo later:
+        -- cl overlay for sc needs to be done via re-running sc_entvec later
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 25 2026 ###
+
+-- pb pre-training
+    -- mlm_inv is the correct way to do it, converted pb to mlm_inv usage
+        -- review process (this is predict rank at gene i rather than predict gene, this is not intuitive for ordering of rows)
+    -- check on wandb results
+    -- running mlm etf wandb
+
+-- sc pre-training
+    -- currently running mlm etf/rtf
+    -- currently testing cq
+
+-- pb fine-tuning
+    -- need to begin new sweeps on finished tahoe pb

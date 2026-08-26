@@ -17,16 +17,16 @@ etf = ""
 # tahoe pseudobulk
 
 [tahoe_pb.mlm]
-rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-02_16-54/best"
-etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-02_16-54/best"
+rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-21_22-50/best"
+etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-02_16-54/best" # NOT COMPLETE
 
 [tahoe_pb.lrecon]
-rtf = ""
-etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-12_06-19/best"
+rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-22_17-36/best"
+etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-17_22-12/best"
 
 [tahoe_pb.erecon]
-rtf = ""
-etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-17_08-32/best"
+rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-18_13-15/best"
+etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-22_07-50/best"
 
 # tahoe single-cell
 
