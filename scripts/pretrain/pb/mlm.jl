@@ -54,18 +54,18 @@ _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
 
 if use_exp
     X_expr = Float32.(data_expr)
-    # reindex expression into rank order so position = rank (matching SC pipeline)
-    # now position i holds the expression of the gene at rank i
-    X_expr_ranked = reindex_to_rank_order(X_expr, X_ranks)
-    X_train = X_expr_ranked[:, train_indices]
-    X_test = X_expr_ranked[:, test_indices]
-    # labels are gene IDs at each rank (same as RTF and SC MLM)
-    X_ranks_train = X_ranks[:, train_indices]
-    X_ranks_test = X_ranks[:, test_indices]
-    # # OLD: inverse permutation approach (predicts rank of gene, not gene at rank)
-    # inv_ranks = inverse_ranks(X_ranks)
-    # X_inv_ranks_train = inv_ranks[:, train_indices]
-    # X_inv_ranks_test = inv_ranks[:, test_indices]
+    # # OLD: reindex expression into rank order — predicts gene ID at rank (doesn't learn well)
+    # X_expr_ranked = reindex_to_rank_order(X_expr, X_ranks)
+    # X_train = X_expr_ranked[:, train_indices]
+    # X_test = X_expr_ranked[:, test_indices]
+    # X_ranks_train = X_ranks[:, train_indices]
+    # X_ranks_test = X_ranks[:, test_indices]
+    # gene-ordered expression: position i = gene i, labels = rank of each gene
+    X_train = X_expr[:, train_indices]
+    X_test = X_expr[:, test_indices]
+    inv_ranks = inverse_ranks(X_ranks)
+    X_inv_ranks_train = inv_ranks[:, train_indices]
+    X_inv_ranks_test = inv_ranks[:, test_indices]
 else
     X_train = X_ranks[:, train_indices]
     X_test = X_ranks[:, test_indices]
@@ -89,9 +89,11 @@ opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
 X_test_masked = similar(X_test)
-y_test_masked = use_exp ? similar(X_ranks_test) : similar(X_test)
+# y_test_masked = use_exp ? similar(X_ranks_test) : similar(X_test)
+y_test_masked = use_exp ? similar(X_inv_ranks_test) : similar(X_test)
 if use_exp
-    mask_input_exp!(X_test_masked, y_test_masked, X_test, X_ranks_test, config["mask_ratio"], -100)
+    # mask_input_exp!(X_test_masked, y_test_masked, X_test, X_ranks_test, config["mask_ratio"], -100)
+    mask_input_exp!(X_test_masked, y_test_masked, X_test, X_inv_ranks_test, config["mask_ratio"], -100)
 else
     mask_input!(X_test_masked, y_test_masked, X_test, config["mask_ratio"], -100, MASK_ID, false)
 end
@@ -135,7 +137,8 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 X_train_masked = similar(X_train)
-y_train_masked = use_exp ? similar(X_ranks_train) : similar(X_train)
+# y_train_masked = use_exp ? similar(X_ranks_train) : similar(X_train)
+y_train_masked = use_exp ? similar(X_inv_ranks_train) : similar(X_train)
 
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
@@ -143,7 +146,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     Optimisers.adjust!(opt, compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs))
 
     if use_exp
-        mask_input_exp!(X_train_masked, y_train_masked, X_train, X_ranks_train, config["mask_ratio"], -100)
+        # mask_input_exp!(X_train_masked, y_train_masked, X_train, X_ranks_train, config["mask_ratio"], -100)
+        mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
     else
         mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
     end
@@ -196,14 +200,20 @@ for epoch in ProgressBar(1:n_total_epochs)
             end
 
             for i in eachindex(y_targets_cpu)
-                r = y_targets_cpu[i]  # r = gene_id (target class)
+                r = y_targets_cpu[i]  # ETF: r = rank (target class in inverse_ranks mode); RTF: r = gene_id
                 col = @view logits_cpu[:, i]
                 err = count(x -> x > col[r], col)
                 push!(epoch_rank_errors, err)
                 if is_last || done
-                    # r is gene_id → per-gene metric
-                    gene_error_sums[r] += err
-                    gene_error_counts[r] += 1
+                    if use_exp
+                        # r is rank → per-rank metric
+                        rank_error_sums[r] += err
+                        rank_error_counts[r] += 1
+                    else
+                        # r is gene_id → per-gene metric
+                        gene_error_sums[r] += err
+                        gene_error_counts[r] += 1
+                    end
                 end
             end
 
@@ -212,15 +222,21 @@ for epoch in ProgressBar(1:n_total_epochs)
                 batch_len = size(y_labels_cpu, 2)
                 masked_idx = 0
                 for j in 1:batch_len
-                    for pos in 1:n_genes  # pos = rank position
+                    for pos in 1:n_genes  # ETF: pos = gene position; RTF: pos = rank position
                         r = y_labels_cpu[pos, j]
                         (r == -100 || r <= 0 || r > n_classes) && continue
                         masked_idx += 1
                         col = @view logits_cpu[:, masked_idx]
                         err = count(x -> x > col[r], col)
-                        # pos is rank position → per-rank metric
-                        rank_error_sums[pos] += err
-                        rank_error_counts[pos] += 1
+                        if use_exp
+                            # pos is gene position → per-gene metric
+                            gene_error_sums[pos] += err
+                            gene_error_counts[pos] += 1
+                        else
+                            # pos is rank position → per-rank metric
+                            rank_error_sums[pos] += err
+                            rank_error_counts[pos] += 1
+                        end
                     end
                 end
             end
@@ -266,7 +282,7 @@ log_info(; save_dir=save_dir, train_indices=train_indices, test_indices=test_ind
            n_epochs=length(train_losses), train_losses=train_losses,
            test_losses=test_losses, all_preds=all_preds, all_trues=all_trues,
            X_test_masked=X_test_masked, y_test_masked=y_test_masked,
-           X_test=use_exp ? X_expr_ranked[:, test_indices] : X_test)
+           X_test=use_exp ? X_expr[:, test_indices] : X_test)
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

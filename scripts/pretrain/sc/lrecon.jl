@@ -425,7 +425,9 @@ if !isempty(saved_mse)
         diag["sample_targets"] = reduce(hcat, sample_targets)
         diag["sample_positions"] = sample_positions
     end
-    jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag...)
+    # jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag...)
+    diag_sym = Dict(Symbol(k) => v for (k, v) in diag)
+    jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag_sym...)
 end
 
 if any(>(0), gene_error_counts)

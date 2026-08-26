@@ -7,7 +7,8 @@ pq = pyimport("pyarrow.parquet")
 np = pyimport("numpy")
 json_py = pyimport("json")
 
-save_dir = "results/tahoe/sc/figures/vectors/sc"
+# save_dir = "results/tahoe/sc/figures/vectors/sc"
+save_dir = "results/tahoe/sc/figures/vectors/$(n_parquets_to_use)_pqs"
 mkpath(save_dir)
 
 #######################################################################################################################################
@@ -93,7 +94,7 @@ end
 ### entropy per rank
 
 # n_parquets_to_use = n_parquets
-n_parquets_to_use = 5
+n_parquets_to_use = 300
 sampled_parquet_idx = sort(sample(1:n_parquets, min(n_parquets_to_use, n_parquets), replace=false))
 sampled_parquet_files = parquet_files[sampled_parquet_idx]
 
@@ -137,7 +138,7 @@ for r in 1:max_populated_rank
     end
 end
 
-sc_ent_dir = "results/tahoe/sc/data/entropies"
+sc_ent_dir = "results/tahoe/sc/data/entropies/$(n_parquets_to_use)_pqs"
 mkpath(sc_ent_dir)
 jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies)
 println("Saved SC entropies to $sc_ent_dir/ranked_sc_entropies.jld2 ($(length(sc_entropies)) ranks)")
@@ -366,7 +367,7 @@ for k in 1:sc_n_pairs
 end
 
 # save distance vectors
-data_vec_dir = "results/tahoe/sc/data/vectors"
+data_vec_dir = "results/tahoe/sc/data/vectors/$(n_parquets_to_use)_pqs"
 mkpath(data_vec_dir)
 jldsave("$data_vec_dir/sc_distances_$(sc_n_pairs).jld2";
     euclidean=sc_expr_euclidean, cosine=sc_expr_cosine, kendall=sc_rank_kendall,

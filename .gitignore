@@ -4,6 +4,8 @@ data/
 deps/
 wandb/
 scripts/analyses/sandbox/
+notes/prev/
+notes/wip/
 aarch64/conda/
 x86_64/conda/
 .venv*

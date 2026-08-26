@@ -180,7 +180,7 @@ begin
         markersize=3, alpha=0.5, color=:orange, label="LINCS ($(length(lincs_H)) genes)")
     axislegend(ax, position=:rb)
 
-    save("$fig_ent_dir/lt_entropy_ranked.png", fig_rank)
+    # save("$fig_ent_dir/lt_entropy_ranked.png", fig_rank)
     display(fig_rank)
 end
 
@@ -206,7 +206,7 @@ begin
         ylabel="Shannon entropy (bits)",
         yaxisposition=:left,
         xtickformat=values -> [string(Int(round(v))) for v in values],
-        title="Tahoe entropy & sparsity per rank position (5 parquets sampled for SC)")
+        title="Tahoe entropy & sparsity per rank position (300 parquets sampled for SC)")
     ax_spar = Axis(fig_overlay[1, 1],
         ylabel="Sparsity (1 = always 0)",
         yaxisposition=:right)
