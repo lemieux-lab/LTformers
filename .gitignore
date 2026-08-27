@@ -12,7 +12,8 @@ aarch64/
 x86_64/
 cq/
 .venv*
-*/local.toml
+config/local.toml
+config/LocalPreferences.toml
 
 *.sh
 *.log
