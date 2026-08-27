@@ -24,12 +24,15 @@ start_time = now()
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 
 all_shards = list_shards(config["data_dir"])
-train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
+# train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
+train_shards, val_shards, test_shards = shard_train_val_test_split(all_shards, 0.1, 0.1)
 if config["subset_shards"] > 0
     train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
-    test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 4)), length(test_shards))]
+    val_shards = val_shards[1:min(max(1, div(config["subset_shards"], 8)), length(val_shards))]
+    test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 8)), length(test_shards))]
 end
-println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
+# println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
+println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
 
 top_k = config["top_k"]
 MASK_ID = Int32(n_coding + 1)
@@ -66,6 +69,7 @@ wandb = init_wandb(config, "SC-PT-Aug", "erecon_$(config["modeltype"])_$(timesta
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
 train_losses = Float32[]
+val_losses = Float32[]
 test_losses = Float32[]
 all_preds = Float32[]
 all_trues = Float32[]
@@ -78,7 +82,8 @@ rank_error_counts = zeros(Int, top_k)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-best_test_loss = Inf32
+# best_test_loss = Inf32
+best_val_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
@@ -104,7 +109,33 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 
-# pre-cache eval batches with static masks (like PB's static test mask)
+# pre-cache val batches (used every epoch for checkpoint selection)
+val_cache = NamedTuple[]
+_val_shards = val_shards[1:min(config["n_eval_shards"], length(val_shards))]
+for sp in _val_shards
+    batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
+                                 config["batch_size"]; modeltype="etf",
+                                 token_to_idx=token_to_idx,
+                                 load_shard_fn=load_shard_pyarrow)
+    for (batch_ids, batch_expr) in batches
+        bs = size(batch_expr, 2)
+        if use_exp
+            xm = Matrix{Float32}(undef, top_k, bs)
+            cm = falses(top_k, bs)
+            corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
+            push!(val_cache, (x=copy(xm), cm=copy(cm), y=copy(batch_expr), ids=copy(batch_ids)))
+        else
+            xm = Matrix{Int32}(undef, top_k, bs)
+            ym = Matrix{Float32}(undef, top_k, bs)
+            sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
+                                 config["mask_ratio"], -100f0, MASK_ID)
+            push!(val_cache, (x=copy(xm), y=copy(ym), ids=copy(batch_ids)))
+        end
+    end
+end
+println("  cached $(length(val_cache)) val batches from $(length(_val_shards)) shards")
+
+# pre-cache test batches (used only on final epoch)
 eval_cache = NamedTuple[]
 _eval_shards = test_shards[1:min(config["n_eval_shards"], length(test_shards))]
 for sp in _eval_shards
@@ -128,7 +159,7 @@ for sp in _eval_shards
         end
     end
 end
-println("  cached $(length(eval_cache)) eval batches from $(length(_eval_shards)) shards")
+println("  cached $(length(eval_cache)) test batches from $(length(_eval_shards)) shards")
 
 # for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
@@ -189,52 +220,115 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # eval
+    # val eval (every epoch — used for checkpoint selection)
     Flux.testmode!(model)
-    eval_losses = Float32[]
+    val_eval_losses = Float32[]
+    for cached in val_cache
+        if use_exp
+            x_gpu = CuArray(cached.x)
+            y_gpu = CuArray(cached.y)
+            m_gpu = CuArray(Float32.(cached.cm))
+            loss_val, _, _ = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
+        else
+            x_gpu = CuArray(cached.x)
+            y_gpu = CuArray(cached.y)
+            loss_val, _, _ = masked_erecon_loss(model, x_gpu, y_gpu)
+        end
+        push!(val_eval_losses, cpu(loss_val))
+    end
+    push!(val_losses, mean(val_eval_losses))
+
+    # test eval (final epoch only — held out for reporting)
     is_last = (epoch == n_total_epochs) || done
-    full_eval = is_last && !use_max_steps
+    eval_losses = Float32[]
 
-    if full_eval
-        # full eval on last epoch: load all test shards dynamically
-        for shard_path in test_shards
-            batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
-                                         config["batch_size"]; modeltype="etf",
-                                         token_to_idx=token_to_idx,
-                                         load_shard_fn=load_shard_pyarrow)
-            for (batch_ids, batch_expr) in batches
-                bs = size(batch_expr, 2)
+    if is_last
+        full_eval = !use_max_steps
 
+        if full_eval
+            for shard_path in test_shards
+                batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
+                                             config["batch_size"]; modeltype="etf",
+                                             token_to_idx=token_to_idx,
+                                             load_shard_fn=load_shard_pyarrow)
+                for (batch_ids, batch_expr) in batches
+                    bs = size(batch_expr, 2)
+
+                    if use_exp
+                        xm = Matrix{Float32}(undef, top_k, bs)
+                        cm = falses(top_k, bs)
+                        corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
+                        x_gpu = CuArray(xm)
+                        y_gpu = CuArray(batch_expr)
+                        m_gpu = CuArray(Float32.(cm))
+                        loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
+                    else
+                        xm = Matrix{Int32}(undef, top_k, bs)
+                        ym = Matrix{Float32}(undef, top_k, bs)
+                        sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
+                                             config["mask_ratio"], -100f0, MASK_ID)
+                        x_gpu = CuArray(xm)
+                        y_gpu = CuArray(ym)
+                        loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu)
+                    end
+                    push!(eval_losses, cpu(loss_val))
+
+                    if !isnothing(preds_masked)
+                        preds_cpu = vec(cpu(preds_masked))
+                        targets_cpu = vec(cpu(targets_masked))
+                        append!(all_preds, preds_cpu)
+                        append!(all_trues, targets_cpu)
+
+                        if use_exp
+                            mask_cpu_bool = cpu(m_gpu) .> 0f0
+                        else
+                            y_labels_cpu = cpu(y_gpu)
+                        end
+                        masked_idx = 0
+                        for j in 1:bs
+                            for pos in 1:top_k
+                                if use_exp
+                                    mask_cpu_bool[pos, j] || continue
+                                else
+                                    (y_labels_cpu[pos, j] == -100f0) && continue
+                                end
+                                masked_idx += 1
+                                err = (preds_cpu[masked_idx] - targets_cpu[masked_idx])^2
+                                rank_error_sums[pos] += err
+                                rank_error_counts[pos] += 1
+                                gene_id = batch_ids[pos, j]
+                                gene_error_sums[gene_id] += err
+                                gene_error_counts[gene_id] += 1
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            MAX_PRED_BATCHES = 5 * cld(28225, config["batch_size"])
+            n_cached_preds = 0
+            for cached in eval_cache
                 if use_exp
-                    xm = Matrix{Float32}(undef, top_k, bs)
-                    cm = falses(top_k, bs)
-                    corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-                    x_gpu = CuArray(xm)
-                    y_gpu = CuArray(batch_expr)
-                    m_gpu = CuArray(Float32.(cm))
+                    x_gpu = CuArray(cached.x)
+                    y_gpu = CuArray(cached.y)
+                    m_gpu = CuArray(Float32.(cached.cm))
                     loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
                 else
-                    xm = Matrix{Int32}(undef, top_k, bs)
-                    ym = Matrix{Float32}(undef, top_k, bs)
-                    sc_mask_input_erecon!(xm, ym, batch_ids, batch_expr,
-                                         config["mask_ratio"], -100f0, MASK_ID)
-                    x_gpu = CuArray(xm)
-                    y_gpu = CuArray(ym)
+                    x_gpu = CuArray(cached.x)
+                    y_gpu = CuArray(cached.y)
                     loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu)
                 end
                 push!(eval_losses, cpu(loss_val))
 
-                if !isnothing(preds_masked)
+                if !isnothing(preds_masked) && n_cached_preds < MAX_PRED_BATCHES
                     preds_cpu = vec(cpu(preds_masked))
                     targets_cpu = vec(cpu(targets_masked))
                     append!(all_preds, preds_cpu)
                     append!(all_trues, targets_cpu)
 
-                    # per-gene and per-rank errors
+                    bs = size(cached.x, 2)
                     if use_exp
-                        mask_cpu_bool = cpu(m_gpu) .> 0f0
-                    else
-                        y_labels_cpu = cpu(y_gpu)
+                        mask_cpu_bool = cached.cm
                     end
                     masked_idx = 0
                     for j in 1:bs
@@ -242,81 +336,43 @@ for epoch in ProgressBar(1:n_total_epochs)
                             if use_exp
                                 mask_cpu_bool[pos, j] || continue
                             else
-                                (y_labels_cpu[pos, j] == -100f0) && continue
+                                (cached.y[pos, j] == -100f0) && continue
                             end
                             masked_idx += 1
                             err = (preds_cpu[masked_idx] - targets_cpu[masked_idx])^2
-                            # pos = rank position (SC data is sorted by expression)
                             rank_error_sums[pos] += err
                             rank_error_counts[pos] += 1
-                            gene_id = batch_ids[pos, j]  # gene at rank pos
+                            gene_id = cached.ids[pos, j]
                             gene_error_sums[gene_id] += err
                             gene_error_counts[gene_id] += 1
                         end
                     end
+                    n_cached_preds += 1
                 end
             end
         end
-    else
-        # cached eval: use pre-computed static masks
-        MAX_PRED_BATCHES = 5 * cld(28225, config["batch_size"])
-        n_cached_preds = 0
-        for cached in eval_cache
-            if use_exp
-                x_gpu = CuArray(cached.x)
-                y_gpu = CuArray(cached.y)
-                m_gpu = CuArray(Float32.(cached.cm))
-                loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu, m_gpu)
-            else
-                x_gpu = CuArray(cached.x)
-                y_gpu = CuArray(cached.y)
-                loss_val, preds_masked, targets_masked = masked_erecon_loss(model, x_gpu, y_gpu)
-            end
-            push!(eval_losses, cpu(loss_val))
 
-            # collect preds/trues + per-gene/per-rank errors (capped)
-            if is_last && !isnothing(preds_masked) && n_cached_preds < MAX_PRED_BATCHES
-                preds_cpu = vec(cpu(preds_masked))
-                targets_cpu = vec(cpu(targets_masked))
-                append!(all_preds, preds_cpu)
-                append!(all_trues, targets_cpu)
-
-                bs = size(cached.x, 2)
-                if use_exp
-                    mask_cpu_bool = cached.cm
-                end
-                masked_idx = 0
-                for j in 1:bs
-                    for pos in 1:top_k
-                        if use_exp
-                            mask_cpu_bool[pos, j] || continue
-                        else
-                            (cached.y[pos, j] == -100f0) && continue
-                        end
-                        masked_idx += 1
-                        err = (preds_cpu[masked_idx] - targets_cpu[masked_idx])^2
-                        rank_error_sums[pos] += err
-                        rank_error_counts[pos] += 1
-                        gene_id = cached.ids[pos, j]
-                        gene_error_sums[gene_id] += err
-                        gene_error_counts[gene_id] += 1
-                    end
-                end
-                n_cached_preds += 1
-            end
+        if !isempty(eval_losses)
+            push!(test_losses, mean(eval_losses))
         end
     end
-    push!(test_losses, mean(eval_losses))
 
-    println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
+    # println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
+    println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
 
     if wb !== nothing
-        wb.log(Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                     "test_loss" => test_losses[end], "global_step" => global_step))
+        log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
+                        "val_loss" => val_losses[end], "global_step" => global_step)
+        if !isempty(test_losses)
+            log_dict["test_loss"] = test_losses[end]
+        end
+        wb.log(log_dict)
     end
 
-    if test_losses[end] < best_test_loss
-        global best_test_loss = test_losses[end]
+    # if test_losses[end] < best_test_loss
+    #     global best_test_loss = test_losses[end]
+    if val_losses[end] < best_val_loss
+        global best_val_loss = val_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
         log_model(model, joinpath(save_dir, "best"), config)
@@ -357,11 +413,12 @@ log_model(model, save_dir, config)
 
 # save shard split for finetune reuse
 jldsave(joinpath(save_dir, "shard_split.jld2");
-        train_shards=train_shards, test_shards=test_shards)
+        train_shards=train_shards, val_shards=val_shards, test_shards=test_shards)
 
-log_info(; save_dir=save_dir, train_indices=Int[], test_indices=Int[],
+log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indices=Int[],
            n_epochs=length(train_losses), train_losses=train_losses,
-           test_losses=test_losses, all_preds=all_preds, all_trues=all_trues)
+           val_losses=val_losses, test_losses=test_losses,
+           all_preds=all_preds, all_trues=all_trues)
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)
@@ -370,7 +427,8 @@ run_hours, run_minutes = div(total_minutes, 60), rem(total_minutes, 60)
 log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            skip=pretrain_skip, pearson=cp, spearman=cs,
            total_steps=global_step, best_epoch=best_epoch,
-           best_test_loss=best_test_loss)
+           best_val_loss=best_val_loss)
 
 wb !== nothing && wandb.finish()
-println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")
+# println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")
+println("Done. Best val loss: $(round(best_val_loss, digits=4)) at epoch $best_epoch")

@@ -5,8 +5,25 @@ using TOML, PyCall
 export load_config, gpu_lr, init_wandb, resolve_model_dir!, resolve_data_path!
 
 
+function _merge_local!(config::Dict, toml_path::String)
+    local_path = replace(toml_path, r"\.toml$" => ".local.toml")
+    if !isfile(local_path)
+        # also check for local.toml in the same directory
+        local_path = joinpath(dirname(toml_path), "local.toml")
+    end
+    if isfile(local_path)
+        local_config = TOML.parsefile(local_path)
+        for (k, v) in local_config
+            config[k] = v
+        end
+        println("merged local config: $local_path")
+    end
+    return config
+end
+
 function load_config(toml_path::String; overrides...)
     config = TOML.parsefile(toml_path)
+    _merge_local!(config, toml_path)
     for (k, v) in overrides
         config[String(k)] = v
     end
@@ -15,6 +32,7 @@ end
 
 function load_config(toml_path::String, args::Dict{String, Any})
     config = TOML.parsefile(toml_path)
+    _merge_local!(config, toml_path)
     for (k, v) in args
         !isnothing(v) && (config[k] = v)
     end
@@ -89,9 +107,13 @@ function resolve_model_dir!(config::Dict;
 end
 
 
+# const DATA_PATHS = Dict(
+#     "lincs" => "data/lincs/lincs_trt_data.jld2",
+#     "tahoe" => "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2",
+# )
 const DATA_PATHS = Dict(
     "lincs" => "data/lincs/lincs_trt_data.jld2",
-    "tahoe" => "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2",
+    "tahoe" => "data/tahoe/filtered_pseudobulks_alpha_10000.jld2",
 )
 
 const LABEL_PATHS = Dict(
@@ -100,16 +122,24 @@ const LABEL_PATHS = Dict(
 
 function resolve_data_path!(config::Dict)
     fmt = get(config, "data_format", "tahoe")
-    if !haskey(DATA_PATHS, fmt)
-        error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")
+
+    # if data_path was already set (e.g. from local.toml or CLI), use it
+    existing = get(config, "data_path", "")
+    if existing != "" && isfile(existing)
+        println("resolved data_path: $existing (from config)")
+        path = existing
+    else
+        if !haskey(DATA_PATHS, fmt)
+            error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")
+        end
+        repo_root = abspath(joinpath(@__DIR__, ".."))
+        path = DATA_PATHS[fmt]
+        if !isabspath(path)
+            path = joinpath(repo_root, path)
+        end
+        config["data_path"] = path
+        println("resolved data_path: $path")
     end
-    repo_root = abspath(joinpath(@__DIR__, ".."))
-    path = DATA_PATHS[fmt]
-    if !isabspath(path)
-        path = joinpath(repo_root, path)
-    end
-    config["data_path"] = path
-    println("resolved data_path: $path")
 
     if haskey(LABEL_PATHS, fmt) && get(config, "label_path", "") == ""
         lpath = LABEL_PATHS[fmt]

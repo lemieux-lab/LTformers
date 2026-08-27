@@ -2,7 +2,7 @@ module Preprocess
 
 using Statistics, Random
 
-export select_hvg, rank_genes, inverse_ranks, reindex_to_rank_order, ttsplit
+export select_hvg, rank_genes, inverse_ranks, reindex_to_rank_order, ttsplit, tvsplit
 
 # function log1p_normalize(data_expr::Matrix)
 #     return Float32.(log1p.(data_expr))
@@ -63,6 +63,22 @@ function ttsplit(X::Matrix, ratio::AbstractFloat; y=nothing)
         return X[:, train_idx], X[:, test_idx], train_idx, test_idx
     end
     return X[:, train_idx], y[:, train_idx], X[:, test_idx], y[:, test_idx], train_idx, test_idx
+end
+
+
+function tvsplit(X::Matrix, val_ratio::AbstractFloat, test_ratio::AbstractFloat; y=nothing)
+    idx = shuffle(1:size(X, 2))
+    n_test = floor(Int, length(idx) * test_ratio)
+    n_val  = floor(Int, length(idx) * val_ratio)
+    s_test = length(idx) - n_test
+    s_val  = s_test - n_val
+    train_idx = idx[1:s_val]
+    val_idx   = idx[s_val+1:s_test]
+    test_idx  = idx[s_test+1:end]
+    if isnothing(y)
+        return X[:, train_idx], X[:, val_idx], X[:, test_idx], train_idx, val_idx, test_idx
+    end
+    return X[:, train_idx], y[:, train_idx], X[:, val_idx], y[:, val_idx], X[:, test_idx], y[:, test_idx], train_idx, val_idx, test_idx
 end
 
 

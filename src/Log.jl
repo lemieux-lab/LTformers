@@ -39,9 +39,11 @@ end
 
 function log_info(; train_indices,
                     test_indices,
+                    val_indices = nothing,
                     n_epochs::Int,
                     train_losses,
                     test_losses,
+                    val_losses = nothing,
                     save_dir::String,
                     all_preds = nothing,
                     all_trues = nothing,
@@ -50,13 +52,19 @@ function log_info(; train_indices,
                     y_test_masked = nothing,
                     X_test = nothing)
 
-    jldsave(joinpath(save_dir, "indices.jld2");
-            train_indices = train_indices,
-            test_indices = test_indices)
+    idx_kwargs = Dict{Symbol,Any}(:train_indices => train_indices,
+                                  :test_indices => test_indices)
+    if !isnothing(val_indices)
+        idx_kwargs[:val_indices] = val_indices
+    end
+    jldsave(joinpath(save_dir, "indices.jld2"); idx_kwargs...)
 
     loss_kwargs = Dict{Symbol,Any}(:epochs => 1:n_epochs,
                                    :train_losses => train_losses,
                                    :test_losses => test_losses)
+    if !isnothing(val_losses)
+        loss_kwargs[:val_losses] = val_losses
+    end
     if !isnothing(target_variances)
         loss_kwargs[:target_variances] = target_variances
     end

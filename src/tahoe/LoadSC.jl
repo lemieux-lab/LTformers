@@ -3,6 +3,7 @@ module LoadSC
 using CSV, DataFrames, Random, PyCall, SparseArrays, JLD2
 
 export load_gene_vocab, list_shards, shard_train_test_split, load_shard_split
+export shard_train_val_test_split, load_shard_val_split
 export load_shard_pyarrow
 
 const _pq = PyNULL()
@@ -60,6 +61,33 @@ function load_shard_split(model_dir::String, all_shards::Vector{String}, test_ra
     end
     println("no shard split found at $split_path, using new random split")
     return shard_train_test_split(all_shards, test_ratio)
+end
+
+function shard_train_val_test_split(shard_paths::Vector{String}, val_ratio::Float64 = 0.1, test_ratio::Float64 = 0.1)
+    n = length(shard_paths)
+    idx = shuffle(1:n)
+    n_test = floor(Int, n * test_ratio)
+    n_val  = floor(Int, n * val_ratio)
+    test_idx  = sort(idx[1:n_test])
+    val_idx   = sort(idx[n_test+1:n_test+n_val])
+    train_idx = sort(idx[n_test+n_val+1:end])
+    return shard_paths[train_idx], shard_paths[val_idx], shard_paths[test_idx]
+end
+
+function load_shard_val_split(model_dir::String, all_shards::Vector{String}, val_ratio::Float64 = 0.1, test_ratio::Float64 = 0.1)
+    split_path = joinpath(model_dir, "shard_split.jld2")
+    if model_dir != "" && isfile(split_path)
+        saved = load(split_path)
+        println("loaded pretrain shard split from $split_path")
+        if haskey(saved, "val_shards")
+            return saved["train_shards"], saved["val_shards"], saved["test_shards"]
+        else
+            println("  (no val_shards found — falling back to new 3-way split)")
+        end
+    else
+        println("no shard split found at $split_path, using new random split")
+    end
+    return shard_train_val_test_split(all_shards, val_ratio, test_ratio)
 end
 
 function load_shard_pyarrow(path::String)

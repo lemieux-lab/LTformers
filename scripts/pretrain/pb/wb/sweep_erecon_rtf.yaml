@@ -6,7 +6,8 @@ project: PB-PT-Aug
 name: erecon_rtf_sweep
 method: bayes
 metric:
-  name: test_loss
+  # name: test_loss
+  name: val_loss
   goal: minimize
 parameters:
   modeltype:
@@ -34,7 +35,8 @@ parameters:
     value: 100
   # sweep params
   lr:
-    min: 0.0005
+    # min: 0.0005
+    min: 0.001
     max: 0.005
   drop_prob:
     min: 0.1

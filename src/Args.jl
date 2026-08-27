@@ -88,6 +88,9 @@ function load_pretrain_args()
         "--subset_shards"
             help = "max number of shards to use (0 = all); applied after train/test split"
             arg_type = Int
+        "--seed"
+            help = "random seed for reproducibility"
+            arg_type = Int
     end
     return parse_args(s)
 end
@@ -178,6 +181,9 @@ function load_finetune_args()
         "--target_gene"
             help = "target gene for lvl3 regression (default: IGFBP3)"
             arg_type = String
+        "--seed"
+            help = "random seed for reproducibility"
+            arg_type = Int
     end
     return parse_args(s)
 end

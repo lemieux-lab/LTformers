@@ -18,6 +18,6 @@ lincs pseudo-bulk
 
     1.0: 25mins/ep, MiG
 
-lincs pseudo-bulk
+tahoe pseudo-bulk
 
     1.0: 15mins/ep, MiG

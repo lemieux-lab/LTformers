@@ -1,15 +1,15 @@
 # default config
 
-# data paths
-data_path = "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2"
+# data paths — cluster-specific overrides go in config/local.toml (gitignored)
+data_path = ""
 data_format = "tahoe"
 modeltype = "rtf"
 sorted_gene_path = ""
 
-# single-cell data paths
-data_dir = "/home/golem/scratch/chans/transformers/data/tahoe/data"
-meta_dir = "/home/golem/scratch/chans/transformers/data/tahoe/metadata"
-coding_gene_path = "/home/golem/scratch/chans/transformers/data/tahoe/protein-coding_gene.txt"
+# single-cell data paths — cluster-specific overrides go in config/local.toml
+data_dir = ""
+meta_dir = ""
+coding_gene_path = ""
 
 # constant params
 batch_size = 128

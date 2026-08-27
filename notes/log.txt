@@ -597,3 +597,46 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 
 -- pb fine-tuning
     -- need to begin new sweeps on finished tahoe pb
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 26 2026 ###
+
+-- pb pre-training
+    -- running mlm etf wandb
+    -- do i need to re-run the tahoe pb?
+    -- ACCIDENTALLY FORGOT VALIDATION SPLIT :')
+        -- implementing 80/10/10 split for pt and ft
+        -- wherein we eval and checkpt on val loss, then test only at the end
+
+-- sc pre-training
+    -- running mlm etf/rtf on balrog (not sweep yet)
+    -- testing cq
+
+-- pb fine-tuning
+    -- running new sweeps for finetune on tahoe pb?
+        -- sweep on: lr, dropout 
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 27 2026 ###
+
+-- pb pre-training
+    -- need to re-run sweeps, fixed validation loss thingy
+    -- currently running all tahoe configs sweeps (6)
+
+-- sc pre-training
+    -- finished mlm rtf on balrog
+        -- not bad, but not good i guess
+    -- running mlm etf (1)
+    -- testing cq so can do sweeps
+
+-- pb fine-tuning
+    -- need to begin once new sweeps are completed!
+    -- for now, doing a finetune test on mlm rtf sc vs mlm rtf tahoe (2)
+
+-- data comparison
+    -- still need to get sc cl overlay plot, running now (1)
+
+-- also:
+    -- reformatting git for cq vs iric clsuters

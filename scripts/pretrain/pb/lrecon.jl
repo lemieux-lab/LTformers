@@ -64,20 +64,26 @@ n_genes = size(X_ranks, 1)
 MASK_ID = n_genes + 1
 
 # splits
-_, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
+# _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
+_, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 
 if use_exp
     X_expr = Float32.(data_expr)
     X_train = X_expr[:, train_indices]
+    X_val = X_expr[:, val_indices]
     X_test = X_expr[:, test_indices]
     X_ranks_train = X_ranks[:, train_indices]
+    X_ranks_val = X_ranks[:, val_indices]
     X_ranks_test = X_ranks[:, test_indices]
 else
     X_train = X_ranks[:, train_indices]
+    X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
+X_ranks_val = X_ranks[:, val_indices]
 X_ranks_test = X_ranks[:, test_indices]
 if use_exp
+    inv_ranks_val = inverse_ranks(X_ranks_val)
     inv_ranks_test = inverse_ranks(X_ranks_test)
 end
 
@@ -101,7 +107,17 @@ Flux.testmode!(ema_model)
 # opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
-# mask
+# mask val
+X_val_masked = similar(X_val)
+if use_exp
+    val_corrupt_mask = falses(size(X_val))
+    corrupt_expr!(X_val_masked, val_corrupt_mask, X_val, config["mask_ratio"])
+else
+    y_val_masked = similar(X_val)
+    mask_input!(X_val_masked, y_val_masked, X_val, config["mask_ratio"], -100, MASK_ID, false)
+end
+
+# mask test
 X_test_masked = similar(X_test)
 if use_exp
     test_corrupt_mask = falses(size(X_test))
@@ -127,6 +143,7 @@ wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
 # train
 train_losses = Float32[]
+val_losses = Float32[]
 test_losses = Float32[]
 target_variances = Float32[]
 gene_error_sums = zeros(Float32, n_genes)
@@ -137,7 +154,8 @@ rank_error_counts = zeros(Int, n_genes)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-best_test_loss = Inf32
+# best_test_loss = Inf32
+best_val_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
@@ -209,78 +227,105 @@ for epoch in ProgressBar(1:n_total_epochs)
         println("UH OH epoch $epoch: target embedding variance = $tgt_var")
     end
 
-    # eval epoch — use ema_model (the saved checkpoint) for eval loss
-    # Flux.testmode!(model)
+    # val eval (every epoch — used for checkpointing and sweep selection)
+    val_eval_losses = Float32[]
+    for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
+        end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
+        x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
+        x_clean_batch = CuArray(X_val[:, start_idx:end_idx])
+        target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
+        if use_exp
+            m_batch = CuArray(Float32.(val_corrupt_mask[:, start_idx:end_idx]))
+            mask_2d = m_batch
+        else
+            y_batch = CuArray(y_val_masked[:, start_idx:end_idx])
+            mask_2d = Float32.(y_batch .!= -100)
+        end
+        loss_val, _, _ = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
+        push!(val_eval_losses, cpu(loss_val))
+    end
+    push!(val_losses, mean(val_eval_losses))
+
+    # test eval (final epoch only — held out for reporting)
+    is_last = is_last || done
     eval_losses = Float32[]
 
-    for start_idx in 1:config["batch_size"]:size(X_test_masked, 2)
-        end_idx = min(start_idx + config["batch_size"] - 1, size(X_test_masked, 2))
+    if is_last
+        for start_idx in 1:config["batch_size"]:size(X_test_masked, 2)
+            end_idx = min(start_idx + config["batch_size"] - 1, size(X_test_masked, 2))
 
-        x_batch = CuArray(X_test_masked[:, start_idx:end_idx])
-        x_clean_batch = CuArray(X_test[:, start_idx:end_idx])
-        target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
+            x_batch = CuArray(X_test_masked[:, start_idx:end_idx])
+            x_clean_batch = CuArray(X_test[:, start_idx:end_idx])
+            target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
 
-        if use_exp
-            m_batch = CuArray(Float32.(test_corrupt_mask[:, start_idx:end_idx]))
-            mask_2d = m_batch
-            mask_cpu = test_corrupt_mask[:, start_idx:end_idx]
-        else
-            y_batch = CuArray(y_test_masked[:, start_idx:end_idx])
-            mask_bool = y_batch .!= -100
-            mask_2d = Float32.(mask_bool)
-            mask_cpu = cpu(mask_bool)
-        end
+            if use_exp
+                m_batch = CuArray(Float32.(test_corrupt_mask[:, start_idx:end_idx]))
+                mask_2d = m_batch
+                mask_cpu = test_corrupt_mask[:, start_idx:end_idx]
+            else
+                y_batch = CuArray(y_test_masked[:, start_idx:end_idx])
+                mask_bool = y_batch .!= -100
+                mask_2d = Float32.(mask_bool)
+                mask_cpu = cpu(mask_bool)
+            end
 
-        # loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
-        loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
-        push!(eval_losses, cpu(loss_val))
+            # loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
+            loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
+            push!(eval_losses, cpu(loss_val))
 
-        if (is_last || done) && !isnothing(decoded_masked)
-            dec_cpu = cpu(decoded_masked)
-            tgt_cpu = cpu(tgt_masked)
-            ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
-            inv_ranks_batch = use_exp ? inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))] : nothing
-            embed_dim_local = size(dec_cpu, 1)
-            masked_idx = 0
-            for j in 1:size(mask_cpu, 2)
-                for pos in 1:size(mask_cpu, 1)
-                    if mask_cpu[pos, j]
-                        masked_idx += 1
-                        push!(saved_preds, dec_cpu[:, masked_idx])
-                        push!(saved_targets, tgt_cpu[:, masked_idx])
-                        push!(saved_positions, Int32(pos))
-                        emb_mse = sum((dec_cpu[:, masked_idx] .- tgt_cpu[:, masked_idx]) .^ 2) / embed_dim_local
-                        if use_exp
-                            # ETF: pos = gene index
-                            gene_error_sums[pos] += emb_mse
-                            gene_error_counts[pos] += 1
-                            r = inv_ranks_batch[pos, j]  # rank of gene pos
-                            rank_error_sums[r] += emb_mse
-                            rank_error_counts[r] += 1
-                        else
-                            # RTF: pos = rank position, ranks_batch[pos,j] = gene_id
-                            rank_error_sums[pos] += emb_mse
-                            rank_error_counts[pos] += 1
-                            gene_id = ranks_batch[pos, j]
-                            gene_error_sums[gene_id] += emb_mse
-                            gene_error_counts[gene_id] += 1
+            if !isnothing(decoded_masked)
+                dec_cpu = cpu(decoded_masked)
+                tgt_cpu = cpu(tgt_masked)
+                ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
+                inv_ranks_batch = use_exp ? inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))] : nothing
+                embed_dim_local = size(dec_cpu, 1)
+                masked_idx = 0
+                for j in 1:size(mask_cpu, 2)
+                    for pos in 1:size(mask_cpu, 1)
+                        if mask_cpu[pos, j]
+                            masked_idx += 1
+                            push!(saved_preds, dec_cpu[:, masked_idx])
+                            push!(saved_targets, tgt_cpu[:, masked_idx])
+                            push!(saved_positions, Int32(pos))
+                            emb_mse = sum((dec_cpu[:, masked_idx] .- tgt_cpu[:, masked_idx]) .^ 2) / embed_dim_local
+                            if use_exp
+                                gene_error_sums[pos] += emb_mse
+                                gene_error_counts[pos] += 1
+                                r = inv_ranks_batch[pos, j]
+                                rank_error_sums[r] += emb_mse
+                                rank_error_counts[r] += 1
+                            else
+                                rank_error_sums[pos] += emb_mse
+                                rank_error_counts[pos] += 1
+                                gene_id = ranks_batch[pos, j]
+                                gene_error_sums[gene_id] += emb_mse
+                                gene_error_counts[gene_id] += 1
+                            end
                         end
                     end
                 end
             end
         end
     end
-    push!(test_losses, mean(eval_losses))
-
-    if wb !== nothing
-        wb.log(Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                     "test_loss" => test_losses[end],
-                     "target_variance" => target_variances[end],
-                     "global_step" => global_step))
+    if !isempty(eval_losses)
+        push!(test_losses, mean(eval_losses))
     end
 
-    if test_losses[end] < best_test_loss
-        global best_test_loss = test_losses[end]
+    if wb !== nothing
+        log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
+                        "val_loss" => val_losses[end],
+                        "target_variance" => target_variances[end],
+                        "global_step" => global_step)
+        if !isempty(test_losses)
+            log_dict["test_loss"] = test_losses[end]
+        end
+        wb.log(log_dict)
+    end
+
+    # if test_losses[end] < best_test_loss
+    #     global best_test_loss = test_losses[end]
+    if val_losses[end] < best_val_loss
+        global best_val_loss = val_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
         log_model(ema_model, joinpath(save_dir, "best"), config)
@@ -304,9 +349,10 @@ plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir
 
 # log_model(ema_model, save_dir)
 log_model(ema_model, save_dir, config)
-log_info(; save_dir=save_dir, train_indices=train_indices, test_indices=test_indices,
+log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
-           test_losses=test_losses, target_variances=target_variances,
+           val_losses=val_losses, test_losses=test_losses,
+           target_variances=target_variances,
            X_test_masked=X_test_masked,
            y_test_masked=use_exp ? test_corrupt_mask : y_test_masked,
            X_test=use_exp ? X_expr[:, test_indices] : X_test)
@@ -317,6 +363,6 @@ run_hours, run_minutes = div(total_minutes, 60), rem(total_minutes, 60)
 
 log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            skip=pretrain_skip, total_steps=global_step,
-           best_epoch=best_epoch, best_test_loss=best_test_loss)
+           best_epoch=best_epoch, best_val_loss=best_val_loss)
 
 wb !== nothing && wandb.finish()

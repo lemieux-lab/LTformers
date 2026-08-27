@@ -31,7 +31,7 @@ etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-22_07-50/best"
 # tahoe single-cell
 
 # [tahoe_sc.mlm]
-# rtf = ""
+# rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-08-24_11-28/best/"
 # etf = ""
 
 # [tahoe_sc.lrecon]

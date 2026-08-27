@@ -1,0 +1,15 @@
+data_path = "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2"
+data_dir = "/home/golem/scratch/chans/transformers/data/tahoe/data"
+meta_dir = "/home/golem/scratch/chans/transformers/data/tahoe/metadata"
+coding_gene_path = "/home/golem/scratch/chans/transformers/data/tahoe/protein-coding_gene.txt"
+
+# ex.
+
+# on balrog
+# git checkout -b some-experiment
+# make changes, commit, push
+# git push origin some-experiment
+
+# on rorqual
+# git fetch
+# git checkout some-experiment

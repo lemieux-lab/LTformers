@@ -6,8 +6,12 @@ wandb/
 scripts/analyses/sandbox/
 notes/prev/
 notes/wip/
+
+# environments
 aarch64/conda/
 x86_64/conda/
 .venv*
+*.local.toml
+
 *.sh
 *.log

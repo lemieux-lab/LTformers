@@ -1,0 +1,39 @@
+# .venv-x86_64/bin/wandb sweep scripts/finetune/pb/wb/sweep_ft_rtf_mlm.yaml
+# run_sweep gh18_sbatch ft_rtf_mlm <entity>/PB-FT-Aug/<sweep_id>
+
+program: scripts/finetune/pb/w_pretrain/rank_tf.jl
+project: PB-FT-Aug
+name: ft_rtf_mlm_sweep
+method: grid
+metric:
+  name: best_val_loss
+  goal: minimize
+parameters:
+  modeltype:
+    value: "rtf"
+  mode:
+    value: "e2e"
+  task:
+    value: "mlm"
+  level:
+    value: "lvl2"
+  data_format:
+    value: "tahoe"
+  wandb_mode:
+    value: "online"
+  n_epochs:
+    value: 50
+  batch_size:
+    value: 100
+  # swept params
+  lr:
+    values: [0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005]
+  drop_prob:
+    values: [0.05, 0.1, 0.15, 0.2]
+  seed:
+    values: [42, 123, 456]
+command:
+  - ${env}
+  - julia
+  - ${program}
+  - ${args}

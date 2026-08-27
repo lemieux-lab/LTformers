@@ -52,20 +52,26 @@ n_genes = size(X_ranks, 1)
 MASK_ID = n_genes + 1
 
 # splits
-_, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
+# _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
+_, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 
 if use_exp
     X_train = X_expr[:, train_indices]
+    X_val = X_expr[:, val_indices]
     X_test = X_expr[:, test_indices]
 else
     X_train = X_ranks[:, train_indices]
+    X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
 X_expr_train = X_expr[:, train_indices]
+X_expr_val = X_expr[:, val_indices]
 X_expr_test = X_expr[:, test_indices]
 X_ranks_train = X_ranks[:, train_indices]
+X_ranks_val = X_ranks[:, val_indices]
 X_ranks_test = X_ranks[:, test_indices]
 if use_exp
+    inv_ranks_val = inverse_ranks(X_ranks_val)
     inv_ranks_test = inverse_ranks(X_ranks_test)
 end
 
@@ -86,7 +92,17 @@ model = fix_gpu_dropout(model)
 # opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
-# mask
+# mask val
+X_val_masked = similar(X_val)
+if use_exp
+    val_corrupt_mask = falses(size(X_val))
+    corrupt_expr!(X_val_masked, val_corrupt_mask, X_val, config["mask_ratio"])
+else
+    y_val_labels = fill(-100f0, size(X_expr_val))
+    mask_input_erecon!(X_val_masked, y_val_labels, X_val, X_expr_val, config["mask_ratio"], -100f0, MASK_ID)
+end
+
+# mask test
 X_test_masked = similar(X_test)
 if use_exp
     test_corrupt_mask = falses(size(X_test))
@@ -112,6 +128,7 @@ wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
 # train
 train_losses = Float32[]
+val_losses = Float32[]
 test_losses = Float32[]
 all_preds = Float32[]
 all_trues = Float32[]
@@ -123,7 +140,8 @@ rank_error_counts = zeros(Int, n_genes)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-best_test_loss = Inf32
+# best_test_loss = Inf32
+best_val_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
@@ -183,94 +201,121 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # eval epoch
+    # val eval (every epoch — used for checkpointing and sweep selection)
     Flux.testmode!(model)
+    val_eval_losses = Float32[]
+    for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
+        end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
+        x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
+        if use_exp
+            y_batch = CuArray(X_expr_val[:, start_idx:end_idx])
+            m_batch = CuArray(Float32.(val_corrupt_mask[:, start_idx:end_idx]))
+            loss_val, _, _ = masked_erecon_loss(model, x_batch, y_batch, m_batch)
+        else
+            y_batch = CuArray(y_val_labels[:, start_idx:end_idx])
+            loss_val, _, _ = masked_erecon_loss(model, x_batch, y_batch)
+        end
+        push!(val_eval_losses, cpu(loss_val))
+    end
+    push!(val_losses, mean(val_eval_losses))
+
+    # test eval (final epoch only — held out for reporting)
+    is_last = is_last || done
     eval_losses = Float32[]
     epoch_preds = Float32[]
     epoch_trues = Float32[]
 
-    for start_idx in 1:config["batch_size"]:size(X_test_masked, 2)
-        end_idx = min(start_idx + config["batch_size"] - 1, size(X_test_masked, 2))
+    if is_last
+        for start_idx in 1:config["batch_size"]:size(X_test_masked, 2)
+            end_idx = min(start_idx + config["batch_size"] - 1, size(X_test_masked, 2))
 
-        x_batch = CuArray(X_test_masked[:, start_idx:end_idx])
+            x_batch = CuArray(X_test_masked[:, start_idx:end_idx])
 
-        if use_exp
-            y_batch = CuArray(X_expr_test[:, start_idx:end_idx])
-            m_batch = CuArray(Float32.(test_corrupt_mask[:, start_idx:end_idx]))
+            if use_exp
+                y_batch = CuArray(X_expr_test[:, start_idx:end_idx])
+                m_batch = CuArray(Float32.(test_corrupt_mask[:, start_idx:end_idx]))
 
-            loss_val, preds_masked, y_masked = masked_erecon_loss(model, x_batch, y_batch, m_batch)
-            push!(eval_losses, cpu(loss_val))
+                loss_val, preds_masked, y_masked = masked_erecon_loss(model, x_batch, y_batch, m_batch)
+                push!(eval_losses, cpu(loss_val))
 
-            if (is_last || done) && !isnothing(preds_masked)
-                preds_cpu = cpu(preds_masked)
-                y_cpu = cpu(y_masked)
-                append!(epoch_preds, preds_cpu)
-                append!(epoch_trues, y_cpu)
+                if !isnothing(preds_masked)
+                    preds_cpu = cpu(preds_masked)
+                    y_cpu = cpu(y_masked)
+                    append!(epoch_preds, preds_cpu)
+                    append!(epoch_trues, y_cpu)
 
-                m_cpu = test_corrupt_mask[:, start_idx:end_idx]
-                # ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
-                inv_ranks_batch = inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))]
-                batch_len = size(m_cpu, 2)
-                masked_idx = 0
-                for j in 1:batch_len
-                    for pos in 1:n_genes  # ETF: pos = gene index
-                        m_cpu[pos, j] || continue
-                        masked_idx += 1
-                        sq_err = (preds_cpu[masked_idx] - y_cpu[masked_idx])^2
-                        gene_error_sums[pos] += sq_err  # per-gene
-                        gene_error_counts[pos] += 1
-                        r = inv_ranks_batch[pos, j]  # rank of gene pos
-                        rank_error_sums[r] += sq_err  # per-rank
-                        rank_error_counts[r] += 1
+                    m_cpu = test_corrupt_mask[:, start_idx:end_idx]
+                    # ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
+                    inv_ranks_batch = inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))]
+                    batch_len = size(m_cpu, 2)
+                    masked_idx = 0
+                    for j in 1:batch_len
+                        for pos in 1:n_genes  # ETF: pos = gene index
+                            m_cpu[pos, j] || continue
+                            masked_idx += 1
+                            sq_err = (preds_cpu[masked_idx] - y_cpu[masked_idx])^2
+                            gene_error_sums[pos] += sq_err  # per-gene
+                            gene_error_counts[pos] += 1
+                            r = inv_ranks_batch[pos, j]  # rank of gene pos
+                            rank_error_sums[r] += sq_err  # per-rank
+                            rank_error_counts[r] += 1
+                        end
                     end
                 end
-            end
-        else
-            y_batch = CuArray(y_test_labels[:, start_idx:end_idx])
+            else
+                y_batch = CuArray(y_test_labels[:, start_idx:end_idx])
 
-            loss_val, preds_masked, y_masked = masked_erecon_loss(model, x_batch, y_batch)
-            push!(eval_losses, cpu(loss_val))
+                loss_val, preds_masked, y_masked = masked_erecon_loss(model, x_batch, y_batch)
+                push!(eval_losses, cpu(loss_val))
 
-            if (is_last || done) && !isnothing(preds_masked)
-                preds_cpu = cpu(preds_masked)
-                y_cpu_masked = cpu(y_masked)
-                append!(epoch_preds, preds_cpu)
-                append!(epoch_trues, y_cpu_masked)
+                if !isnothing(preds_masked)
+                    preds_cpu = cpu(preds_masked)
+                    y_cpu_masked = cpu(y_masked)
+                    append!(epoch_preds, preds_cpu)
+                    append!(epoch_trues, y_cpu_masked)
 
-                y_labels_cpu = cpu(y_batch)
-                ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
-                batch_len = size(y_labels_cpu, 2)
-                masked_idx = 0
-                for j in 1:batch_len
-                    for pos in 1:n_genes  # RTF: pos = rank position
-                        (y_labels_cpu[pos, j] == -100f0) && continue
-                        masked_idx += 1
-                        sq_err = (preds_cpu[masked_idx] - y_cpu_masked[masked_idx])^2
-                        rank_error_sums[pos] += sq_err  # per-rank
-                        rank_error_counts[pos] += 1
-                        gene_id = ranks_batch[pos, j]  # gene at rank pos
-                        gene_error_sums[gene_id] += sq_err  # per-gene
-                        gene_error_counts[gene_id] += 1
+                    y_labels_cpu = cpu(y_batch)
+                    ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
+                    batch_len = size(y_labels_cpu, 2)
+                    masked_idx = 0
+                    for j in 1:batch_len
+                        for pos in 1:n_genes  # RTF: pos = rank position
+                            (y_labels_cpu[pos, j] == -100f0) && continue
+                            masked_idx += 1
+                            sq_err = (preds_cpu[masked_idx] - y_cpu_masked[masked_idx])^2
+                            rank_error_sums[pos] += sq_err  # per-rank
+                            rank_error_counts[pos] += 1
+                            gene_id = ranks_batch[pos, j]  # gene at rank pos
+                            gene_error_sums[gene_id] += sq_err  # per-gene
+                            gene_error_counts[gene_id] += 1
+                        end
                     end
                 end
             end
         end
     end
-    push!(test_losses, mean(eval_losses))
-
-    if wb !== nothing
-        wb.log(Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                     "test_loss" => test_losses[end], "global_step" => global_step))
+    if !isempty(eval_losses)
+        push!(test_losses, mean(eval_losses))
     end
 
-    if test_losses[end] < best_test_loss
-        global best_test_loss = test_losses[end]
+    if wb !== nothing
+        log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
+                        "val_loss" => val_losses[end], "global_step" => global_step)
+        if !isempty(test_losses)
+            log_dict["test_loss"] = test_losses[end]
+        end
+        wb.log(log_dict)
+    end
+
+    # if test_losses[end] < best_test_loss
+    #     global best_test_loss = test_losses[end]
+    if val_losses[end] < best_val_loss
+        global best_val_loss = val_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
         log_model(model, joinpath(save_dir, "best"), config)
     end
 
-    is_last = is_last || done
     if is_last
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
@@ -300,9 +345,10 @@ plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir
 
 # log_model(model, save_dir)
 log_model(model, save_dir, config)
-log_info(; save_dir=save_dir, train_indices=train_indices, test_indices=test_indices,
+log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
-           test_losses=test_losses, all_preds=all_preds, all_trues=all_trues,
+           val_losses=val_losses, test_losses=test_losses,
+           all_preds=all_preds, all_trues=all_trues,
            X_test_masked=X_test_masked,
            y_test_masked=use_exp ? X_expr_test : y_test_labels,
            X_test=use_exp ? X_expr[:, test_indices] : X_test)
@@ -314,6 +360,6 @@ run_hours, run_minutes = div(total_minutes, 60), rem(total_minutes, 60)
 log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            skip=pretrain_skip, pearson=cp, spearman=cs,
            total_steps=global_step, best_epoch=best_epoch,
-           best_test_loss=best_test_loss)
+           best_val_loss=best_val_loss)
 
 wb !== nothing && wandb.finish()

@@ -252,7 +252,7 @@ function _load_arch_config(model_dir::String, config::Dict)
     return config
 end
 
-function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications)
+function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X_val=nothing)
     if config["modeltype"] == "mlp"
         ft_model = Flux.Chain(
             Flux.Dense(n_genes => config["hidden_dim"], gelu),
@@ -260,6 +260,9 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications)
             Flux.Dropout(config["drop_prob"]),
             Flux.Dense(config["hidden_dim"] => n_classifications))
         ft_model = fix_gpu_dropout(cu(ft_model))
+        if X_val !== nothing
+            return ft_model, Float32.(X_train), Float32.(X_val), Float32.(X_test)
+        end
         return ft_model, Float32.(X_train), Float32.(X_test)
     end
 
@@ -330,6 +333,17 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications)
         test_input = get_embeds(pt_model, X_test, config["batch_size"])
     end
 
+    # extract val embeddings if X_val provided
+    if X_val !== nothing
+        if config["modeltype"] == "etf"
+            val_input = get_embeds_exp(pt_model, X_val, config["batch_size"])
+        elseif config["task"] in ("lrecon", "erecon")
+            val_input = get_embeds_lrecon(pt_model, X_val, config["batch_size"])
+        else
+            val_input = get_embeds(pt_model, X_val, config["batch_size"])
+        end
+    end
+
     ft_model = Flux.Chain(
         Flux.Dense(ac["embed_dim"] => config["hidden_dim"], gelu),
         Flux.LayerNorm(config["hidden_dim"]),
@@ -337,6 +351,9 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications)
         Flux.Dense(config["hidden_dim"] => n_classifications))
     ft_model = fix_gpu_dropout(cu(ft_model))
 
+    if X_val !== nothing
+        return ft_model, train_input, val_input, test_input
+    end
     return ft_model, train_input, test_input
 end
 

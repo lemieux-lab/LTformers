@@ -6,7 +6,8 @@ project: SC-PT-Aug
 name: lrecon_etf_sweep
 method: bayes
 metric:
-  name: test_loss
+  # name: test_loss
+  name: val_loss
   goal: minimize
 parameters:
   modeltype:
