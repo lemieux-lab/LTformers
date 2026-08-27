@@ -8,10 +8,11 @@ notes/prev/
 notes/wip/
 
 # environments
-aarch64/conda/
-x86_64/conda/
+aarch64/
+x86_64/
+cq/
 .venv*
-*.local.toml
+*/local.toml
 
 *.sh
 *.log
