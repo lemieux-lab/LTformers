@@ -42,18 +42,48 @@ end
 println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
 
 top_k = config["top_k"]
-n_classes = n_coding
 MASK_ID = Int32(n_coding + 1)
+
+# ETF-HVG: gene-position paradigm — load pre-computed HVG indices
+# Run scripts/pretrain/sc/compute_hvg.jl first to generate hvg_indices.jld2
+hvg_idx = nothing
+n_hvg = 0
+if use_exp
+    hvg_path = get(config, "hvg_path", "")
+    if hvg_path != "" && isfile(hvg_path)
+        _phase("loading HVG indices from $hvg_path")
+        hvg_data = load(hvg_path)
+        hvg_idx = hvg_data["hvg_idx"]
+        n_hvg = length(hvg_idx)
+        println("  loaded $n_hvg HVG indices (computed from $(hvg_data["n_cells_scanned"]) cells)")
+    else
+        @warn "ETF without HVG: using legacy top_k + rank-ordered (set hvg_path in config for gene-position paradigm)"
+    end
+end
+
+# model setup: ETF-HVG uses n_hvg genes, legacy ETF/RTF uses n_coding with top_k
+use_hvg = use_exp && !isnothing(hvg_idx)
+if use_hvg
+    seq_len = n_hvg
+    n_classes = n_hvg  # predict rank 1..n_hvg
+    println("ETF-HVG: gene-position paradigm, seq_len=$n_hvg, predicting rank within HVG set")
+else
+    seq_len = top_k
+    n_classes = n_coding  # predict gene ID 1..n_coding
+end
 
 _phase("$(use_exp ? "ExpModel" : "RankModel")()")
 model = if use_exp
-    ExpModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
+    # ETF-HVG: n_genes=n_hvg (pos_emb + classifier sized for HVG set)
+    # ETF legacy: n_genes=n_coding (full vocab)
+    n_genes_etf = use_hvg ? n_hvg : n_coding
+    ExpModel(n_genes=n_genes_etf, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
              n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-             dropout_prob=config["drop_prob"], seq_len=top_k)
+             dropout_prob=config["drop_prob"], seq_len=seq_len)
 else
     RankModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
               n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-              dropout_prob=config["drop_prob"], seq_len=top_k)
+              dropout_prob=config["drop_prob"], seq_len=seq_len)
 end
 _phase("cu() + fix_gpu_dropout()")
 model = cu(model)
@@ -66,8 +96,8 @@ opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 # masking buffers
 X_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
 y_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
-X_masked_etf = Matrix{Float32}(undef, top_k, config["batch_size"])
-y_masked_etf = Matrix{Int32}(undef, top_k, config["batch_size"])
+X_masked_etf = Matrix{Float32}(undef, seq_len, config["batch_size"])
+y_masked_etf = Matrix{Int32}(undef, seq_len, config["batch_size"])
 
 # save dir
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
@@ -87,10 +117,10 @@ all_preds = Int[]
 all_trues = Int[]
 # rank_error_sums = zeros(Float32, n_coding)
 # rank_error_counts = zeros(Int, n_coding)
-rank_error_sums = zeros(Float32, top_k)   # indexed by rank position (1..top_k)
-rank_error_counts = zeros(Int, top_k)
-gene_error_sums = zeros(Float32, n_coding)  # indexed by gene_id (1..n_coding)
-gene_error_counts = zeros(Int, n_coding)
+rank_error_sums = zeros(Float32, seq_len)   # indexed by position (1..seq_len)
+rank_error_counts = zeros(Int, seq_len)
+gene_error_sums = zeros(Float32, n_classes)  # indexed by label (gene_id for RTF/legacy ETF, rank for HVG ETF)
+gene_error_counts = zeros(Int, n_classes)
 
 # pre-allocate GPU buffers (#4) — reverted: copyto! from CPU SubArray to CuArray
 # triggers scalar indexing (CUDA.jl doesn't specialize for SubArray sources)
@@ -141,9 +171,19 @@ for sp in _val_shards
     batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
                                  config["batch_size"]; modeltype=config["modeltype"],
                                  token_to_idx=token_to_idx,
-                                 load_shard_fn=load_shard_pyarrow)
+                                 load_shard_fn=load_shard_pyarrow,
+                                 hvg_idx=hvg_idx)
     for batch in batches
-        if use_exp
+        if use_hvg
+            # ETF-HVG: batch = (expr, ranks), mask expr, labels = ranks
+            batch_expr, batch_ranks = batch
+            bs = size(batch_expr, 2)
+            xm = Matrix{Float32}(undef, n_hvg, bs)
+            ym = Matrix{Int32}(undef, n_hvg, bs)
+            sc_mask_input_exp_rank!(xm, ym, batch_expr, batch_ranks, config["mask_ratio"], -100)
+            push!(val_cache, (x=copy(xm), y=copy(ym)))
+        elseif use_exp
+            # ETF legacy: batch = (ids, expr), mask expr, labels = gene IDs
             batch_ids, batch_expr = batch
             bs = size(batch_expr, 2)
             xm = Matrix{Float32}(undef, top_k, bs)
@@ -169,9 +209,17 @@ for sp in _eval_shards
     batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
                                  config["batch_size"]; modeltype=config["modeltype"],
                                  token_to_idx=token_to_idx,
-                                 load_shard_fn=load_shard_pyarrow)
+                                 load_shard_fn=load_shard_pyarrow,
+                                 hvg_idx=hvg_idx)
     for batch in batches
-        if use_exp
+        if use_hvg
+            batch_expr, batch_ranks = batch
+            bs = size(batch_expr, 2)
+            xm = Matrix{Float32}(undef, n_hvg, bs)
+            ym = Matrix{Int32}(undef, n_hvg, bs)
+            sc_mask_input_exp_rank!(xm, ym, batch_expr, batch_ranks, config["mask_ratio"], -100)
+            push!(eval_cache, (x=copy(xm), y=copy(ym)))
+        elseif use_exp
             batch_ids, batch_expr = batch
             bs = size(batch_expr, 2)
             xm = Matrix{Float32}(undef, top_k, bs)
@@ -208,11 +256,20 @@ for epoch in ProgressBar(1:n_total_epochs)
         batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
                                      config["batch_size"]; modeltype=config["modeltype"],
                                      token_to_idx=token_to_idx,
-                                     load_shard_fn=load_shard_pyarrow)
+                                     load_shard_fn=load_shard_pyarrow,
+                                     hvg_idx=hvg_idx)
 
         n_shard_steps = 0
         for batch in batches
-            if use_exp
+            if use_hvg
+                batch_expr, batch_ranks = batch
+                bs = size(batch_expr, 2)
+                xm = @view X_masked_etf[:, 1:bs]
+                ym = @view y_masked_etf[:, 1:bs]
+                sc_mask_input_exp_rank!(xm, ym, batch_expr, batch_ranks, config["mask_ratio"], -100)
+                x_gpu = CuArray(xm)
+                y_gpu = CuArray(ym)
+            elseif use_exp
                 batch_ids, batch_expr = batch
                 bs = size(batch_expr, 2)
                 xm = @view X_masked_etf[:, 1:bs]
@@ -277,11 +334,20 @@ for epoch in ProgressBar(1:n_total_epochs)
                 batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
                                              config["batch_size"]; modeltype=config["modeltype"],
                                              token_to_idx=token_to_idx,
-                                             load_shard_fn=load_shard_pyarrow)
+                                             load_shard_fn=load_shard_pyarrow,
+                                             hvg_idx=hvg_idx)
                 collect_preds = pred_shard_count < MAX_PRED_SHARDS
 
                 for batch in batches
-                    if use_exp
+                    if use_hvg
+                        batch_expr, batch_ranks = batch
+                        bs = size(batch_expr, 2)
+                        xm = @view X_masked_etf[:, 1:bs]
+                        ym = @view y_masked_etf[:, 1:bs]
+                        sc_mask_input_exp_rank!(xm, ym, batch_expr, batch_ranks, config["mask_ratio"], -100)
+                        x_gpu = CuArray(xm)
+                        y_gpu = CuArray(ym)
+                    elseif use_exp
                         batch_ids, batch_expr = batch
                         bs = size(batch_expr, 2)
                         xm = @view X_masked_etf[:, 1:bs]
@@ -314,7 +380,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                         batch_len = size(y_labels_cpu, 2)
                         masked_idx = 0
                         for j in 1:batch_len
-                            for pos in 1:top_k
+                            for pos in 1:seq_len
                                 r = y_labels_cpu[pos, j]
                                 (r == -100 || r <= 0 || r > n_classes) && continue
                                 masked_idx += 1
@@ -404,11 +470,11 @@ else
     println("  skipping heatmap: no predictions collected")
     (NaN, NaN)
 end
-plot_per_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir)
-plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
+plot_per_rank_error(rank_error_sums, rank_error_counts, seq_len, save_dir)
+plot_per_gene_error(gene_error_sums, gene_error_counts, n_classes, save_dir,
                     "mean rank error", "per_gene_error";
                     sorted_gene_path=get(config, "sorted_gene_path", ""))
-plot_per_sample_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir,
+plot_per_sample_rank_error(rank_error_sums, rank_error_counts, seq_len, save_dir,
                            "mean rank error", "per_rank_error")
 
 # log_model(model, save_dir)

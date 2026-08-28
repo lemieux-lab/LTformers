@@ -26,9 +26,9 @@ Flux.@layer RankClassifier
 
 function RankClassifier(; n_genes::Int, embed_dim::Int, n_layers::Int,
                           n_classifications::Int, n_heads::Int, hidden_dim::Int,
-                          dropout_prob::Float64)
+                          dropout_prob::Float64, seq_len::Int = n_genes)
     embedding = Flux.Embedding(n_genes + 1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     head = Flux.Chain(
@@ -61,9 +61,9 @@ Flux.@layer ExpClassifier
 
 function ExpClassifier(; n_genes::Int, embed_dim::Int, n_layers::Int,
                          n_classifications::Int, n_heads::Int, hidden_dim::Int,
-                         dropout_prob::Float64)
+                         dropout_prob::Float64, seq_len::Int = n_genes)
     proj = Flux.Dense(1 => embed_dim)
-    pos_emb = Flux.Embedding(n_genes => embed_dim)
+    pos_emb = Flux.Embedding(seq_len => embed_dim)
     emb_dropout = Flux.Dropout(dropout_prob)
     transformer = Flux.Chain([Transf(embed_dim, hidden_dim; n_heads, dropout_prob) for _ in 1:n_layers]...)
     head = Flux.Chain(
@@ -252,7 +252,7 @@ function _load_arch_config(model_dir::String, config::Dict)
     return config
 end
 
-function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X_val=nothing)
+function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X_val=nothing, seq_len::Int=n_genes)
     if config["modeltype"] == "mlp"
         ft_model = Flux.Chain(
             Flux.Dense(n_genes => config["hidden_dim"], gelu),
@@ -273,7 +273,8 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
     if config["modeltype"] == "etf" && config["task"] == "lrecon"
         pt_model = ExpLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -283,7 +284,8 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
     elseif config["modeltype"] == "etf" && config["task"] == "erecon"
         pt_model = ExpEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -294,7 +296,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         pt_model = ExpModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_classes=n_genes,
             n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            dropout_prob=ac["drop_prob"])
+            dropout_prob=ac["drop_prob"], seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -304,7 +306,8 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
     elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
         pt_model = RankLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -314,7 +317,8 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
     elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
         pt_model = RankEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -325,7 +329,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         pt_model = RankModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_classes=n_genes,
             n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            dropout_prob=ac["drop_prob"])
+            dropout_prob=ac["drop_prob"], seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         pt_model = fix_gpu_dropout(cu(pt_model))
         Flux.testmode!(pt_model)
@@ -357,7 +361,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
     return ft_model, train_input, test_input
 end
 
-function build_e2em(config::Dict, n_classifications; n_genes::Int)
+function build_e2em(config::Dict, n_classifications; n_genes::Int, seq_len::Int=n_genes)
     # load arch config from pretrained checkpoint (handles n_layers/dim mismatches)
     ac = _load_arch_config(config["model_dir"], config)
     state = load("$(config["model_dir"])/model_state.jld2")["model_state"]
@@ -393,7 +397,8 @@ function build_e2em(config::Dict, n_classifications; n_genes::Int)
     elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
         pt_model = RankLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         ft_model = RankFTModel(pt_model;
             embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
@@ -402,7 +407,8 @@ function build_e2em(config::Dict, n_classifications; n_genes::Int)
     elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
         pt_model = RankEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
+            seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         ft_model = RankFTModel(pt_model;
             embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
@@ -412,7 +418,7 @@ function build_e2em(config::Dict, n_classifications; n_genes::Int)
         pt_model = RankModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_classes=n_genes,
             n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            dropout_prob=ac["drop_prob"])
+            dropout_prob=ac["drop_prob"], seq_len=seq_len)
         Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
         ft_model = RankFTModel(pt_model;
             embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],

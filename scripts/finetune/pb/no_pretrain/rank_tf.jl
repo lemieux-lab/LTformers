@@ -43,12 +43,13 @@ else  # tahoe
     meta_df = data
 end
 
-n_hvg = get(config, "n_hvg", 0)
-if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
-    data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
-end
+# RTF = rank-position paradigm: no HVG, use top_k truncation instead
+# n_hvg = get(config, "n_hvg", 0)
+# if n_hvg > 0 && n_hvg < size(data_expr, 1)
+#     n_orig = size(data_expr, 1)
+#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
+#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
+# end
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -64,11 +65,21 @@ y_train, y_val, y_test = d.y_train, d.y_val, d.y_test
 train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
 cidx_dict, cs = d.cidx_dict, d.cs
 
-# model
+# top_k truncation: dsplit's RTF path already rank-sorted the data
+top_k = get(config, "top_k", 1024)
+if top_k < n_genes
+    X_train = X_train[1:top_k, :]
+    X_val   = X_val[1:top_k, :]
+    X_test  = X_test[1:top_k, :]
+    println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
+end
+
+# model — n_genes = full vocab for embedding, seq_len = top_k for pos_emb
 model = RankClassifier(n_genes=n_genes, embed_dim=config["embed_dim"],
                        n_layers=config["n_layers"], n_classifications=n_classifications,
                        n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                       dropout_prob=config["drop_prob"])
+                       dropout_prob=config["drop_prob"],
+                       seq_len=min(top_k, n_genes))
 model = fix_gpu_dropout(cu(model))
 # opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)

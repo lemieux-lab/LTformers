@@ -36,11 +36,22 @@ if config["subset_ratio"] < 1.0
     println("subset: $(length(subset_idx))/$(n_total) samples")
 end
 
-n_hvg = get(config, "n_hvg", 0)
-if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
-    data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
+# gene selection: ETF = HVG (gene-position paradigm), RTF = no HVG (rank-position paradigm)
+# n_hvg = get(config, "n_hvg", 0)
+# if n_hvg > 0 && n_hvg < size(data_expr, 1)
+#     n_orig = size(data_expr, 1)
+#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
+#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
+# end
+if use_exp  # ETF: HVG selects fixed gene set; position encodes gene identity
+    n_hvg = get(config, "n_hvg", 0)
+    if n_hvg > 0 && n_hvg < size(data_expr, 1)
+        n_orig = size(data_expr, 1)
+        data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
+        println("HVG filter: $(n_orig) → $(n_hvg) genes")
+    end
+else  # RTF: no HVG — needs full gene vocab for embedding lookup
+    println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
 gene_medians = vec(median(data_expr, dims=2)) .+ 1f-10
@@ -49,6 +60,7 @@ X_ranks = rank_genes(data_expr, gene_medians)
 n_genes = size(X_ranks, 1)
 n_classes = n_genes
 MASK_ID = n_genes + 1
+top_k = get(config, "top_k", 1024)
 
 # _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
@@ -70,19 +82,27 @@ if use_exp
     X_inv_ranks_val = inv_ranks[:, val_indices]
     X_inv_ranks_test = inv_ranks[:, test_indices]
 else
+    # RTF: truncate to top_k (row 1 = highest expressed gene's ID)
+    X_ranks_full = X_ranks
+    if top_k < n_genes
+        X_ranks = X_ranks[1:top_k, :]
+        println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
+    end
     X_train = X_ranks[:, train_indices]
     X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
 
+seq_len = use_exp ? n_genes : min(top_k, n_genes)
+
 model = if use_exp
     ExpModel(n_genes=n_genes, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
              n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-             dropout_prob=config["drop_prob"])
+             dropout_prob=config["drop_prob"], seq_len=seq_len)
 else
     RankModel(n_genes=n_genes, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
               n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-              dropout_prob=config["drop_prob"])
+              dropout_prob=config["drop_prob"], seq_len=seq_len)
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
@@ -118,7 +138,7 @@ dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "mlm", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-if n_hvg > 0
+if use_exp && @isdefined(hvg_idx)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
 

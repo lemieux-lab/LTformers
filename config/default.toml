@@ -1,12 +1,12 @@
 # default config
 
-# data paths — cluster-specific overrides go in config/local.toml (gitignored)
+# data paths
 data_path = ""
 data_format = "tahoe"
 modeltype = "rtf"
 sorted_gene_path = ""
 
-# single-cell data paths — cluster-specific overrides go in config/local.toml
+# single-cell data paths
 data_dir = ""
 meta_dir = ""
 coding_gene_path = ""
@@ -18,8 +18,9 @@ embed_dim = 128
 hidden_dim = 128
 n_heads = 2
 n_layers = 2
-n_hvg = 1024 # bulk sequence length
-top_k = 1024 # single-cell sequence length
+n_hvg = 1024 # for ETF
+top_k = 1024 # for RTF
+hvg_path = "" # pre-computed HVG indices for SC-ETF
 n_eval_shards = 10
 subset_shards = 0
 subset_ratio = 1.0

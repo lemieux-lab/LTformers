@@ -3,9 +3,9 @@ module ProcessSC
 using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays, Base.Threads
 
 export log_normalize_col!, process_cell_topk_flat
-export build_batch_rtf, build_batch_etf, batches_from_shard
+export build_batch_rtf, build_batch_etf, build_batch_etf_hvg, batches_from_shard
 export batches_from_shard_data
-export sc_mask_input!, sc_mask_input_exp!, sc_mask_input_erecon!, sc_masked_loss
+export sc_mask_input!, sc_mask_input_exp!, sc_mask_input_exp_rank!, sc_mask_input_erecon!, sc_masked_loss
 export cell_to_dense_flat!, process_cell_topk_flat
 export gpu_rank_errors
 
@@ -115,12 +115,54 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     return batch_ids, batch_expr
 end
 
+# ETF-HVG batch building: extract expression at fixed HVG gene positions (gene-position paradigm)
+# Returns (batch_expr, batch_ranks) where position i = hvg gene i across all cells
+function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
+                              expr_flat::Vector{Float32}, cell_indices::AbstractVector{Int},
+                              token_to_idx::Dict{Int,Int}, n_coding::Int,
+                              hvg_idx::Vector{Int})
+    n_hvg = length(hvg_idx)
+    bs = length(cell_indices)
+    batch_expr = Matrix{Float32}(undef, n_hvg, bs)
+    batch_ranks = Matrix{Int32}(undef, n_hvg, bs)
+    nt = nthreads()
+    if nt > 1 && bs >= 4
+        @threads for j in 1:bs
+            dense = Vector{Float32}(undef, n_coding)
+            cell_to_dense_flat!(dense, genes_flat, offsets, expr_flat,
+                                cell_indices[j], token_to_idx)
+            hvg_expr = dense[hvg_idx]
+            batch_expr[:, j] = hvg_expr
+            # compute ranks within HVG set (1 = highest expression)
+            perm = sortperm(hvg_expr, rev=true)
+            for (rank, idx) in enumerate(perm)
+                batch_ranks[idx, j] = Int32(rank)
+            end
+        end
+    else
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            cell_to_dense_flat!(dense, genes_flat, offsets, expr_flat,
+                                ci, token_to_idx)
+            hvg_expr = dense[hvg_idx]
+            batch_expr[:, j] = hvg_expr
+            # compute ranks within HVG set (1 = highest expression)
+            perm = sortperm(hvg_expr, rev=true)
+            for (rank, idx) in enumerate(perm)
+                batch_ranks[idx, j] = Int32(rank)
+            end
+        end
+    end
+    return batch_expr, batch_ranks
+end
+
 # yields one batch at a time via Channel so first step starts immediately
 function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::Int,
                             top_k::Int, batch_size::Int;
                             modeltype::String = "rtf",
                             token_to_idx::Dict{Int,Int} = error("token_to_idx required"),
-                            load_shard_fn = error("load_shard_fn required"))
+                            load_shard_fn = error("load_shard_fn required"),
+                            hvg_idx::Union{Vector{Int}, Nothing} = nothing)
     println("  loading shard: $(basename(path))")
     shard = load_shard_fn(path)
     println("  loaded $(shard.n_cells) cells, building batches...")
@@ -130,7 +172,13 @@ function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::
         for start_idx in 1:batch_size:shard.n_cells
             end_idx = min(start_idx + batch_size - 1, shard.n_cells)
             ci = cell_order[start_idx:end_idx]
-            if modeltype == "etf"
+            if modeltype == "etf" && !isnothing(hvg_idx)
+                # ETF-HVG: gene-position paradigm
+                expr, ranks = build_batch_etf_hvg(shard.genes_flat, shard.offsets, shard.expr_flat,
+                                                   ci, token_to_idx, n_coding, hvg_idx)
+                put!(ch, (expr, ranks))
+            elseif modeltype == "etf"
+                # ETF legacy: rank-ordered top_k (kept for backward compat)
                 ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
                                             ci, token_to_idx, n_coding, top_k)
                 put!(ch, (ids, vals))
@@ -180,6 +228,24 @@ function sc_mask_input_exp!(X_masked::AbstractMatrix{Float32}, mask_labels::Abst
     return X_masked, mask_labels
 end
 
+
+# ETF-HVG masking: mask expression values, labels = ranks at masked positions
+function sc_mask_input_exp_rank!(X_masked::AbstractMatrix{Float32}, mask_labels::AbstractMatrix{Int32},
+                                 X_expr::AbstractMatrix{Float32}, X_ranks::AbstractMatrix{Int32},
+                                 mask_ratio::Float64, mask_val::Int)
+    copyto!(X_masked, X_expr)
+    fill!(mask_labels, Int32(mask_val))
+    n_rows, n_samples = size(X_expr)
+    num_masked = ceil(Int, n_rows * mask_ratio)
+    for j in 1:n_samples
+        mask_pos = sample(1:n_rows, num_masked, replace=false)
+        for pos in mask_pos
+            mask_labels[pos, j] = X_ranks[pos, j]  # rank as label (not gene ID)
+            X_masked[pos, j] = -1f0
+        end
+    end
+    return X_masked, mask_labels
+end
 
 function sc_mask_input_erecon!(X_masked::AbstractMatrix{Int32}, expr_labels::AbstractMatrix{Float32},
                               X_ids::AbstractMatrix{Int32}, X_expr::AbstractMatrix{Float32},
@@ -238,13 +304,18 @@ end
 function batches_from_shard_data(shard, coding_tokens::Vector{Int}, n_coding::Int,
                                  top_k::Int, batch_size::Int;
                                  modeltype::String = "rtf",
-                                 token_to_idx::Dict{Int,Int} = error("token_to_idx required"))
+                                 token_to_idx::Dict{Int,Int} = error("token_to_idx required"),
+                                 hvg_idx::Union{Vector{Int}, Nothing} = nothing)
     cell_order = shuffle(1:shard.n_cells)
     return Channel{Any}(1) do ch
         for start_idx in 1:batch_size:shard.n_cells
             end_idx = min(start_idx + batch_size - 1, shard.n_cells)
             ci = cell_order[start_idx:end_idx]
-            if modeltype == "etf"
+            if modeltype == "etf" && !isnothing(hvg_idx)
+                expr, ranks = build_batch_etf_hvg(shard.genes_flat, shard.offsets, shard.expr_flat,
+                                                   ci, token_to_idx, n_coding, hvg_idx)
+                put!(ch, (expr, ranks))
+            elseif modeltype == "etf"
                 ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
                                             ci, token_to_idx, n_coding, top_k)
                 put!(ch, (ids, vals))

@@ -44,11 +44,13 @@ else  # tahoe
 end
 
 
+# ETF = gene-position paradigm (like scGPT/scBERT/BulkFormer)
+# HVG selects a fixed gene set; position encodes gene identity, not rank
+n_genes_orig = size(data_expr, 1)
 n_hvg = get(config, "n_hvg", 0)
 if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
+    println("HVG filter: $(n_genes_orig) → $(n_hvg) genes")
 end
 
 d = dsplit(data_expr, config;
@@ -59,7 +61,9 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
 # build e2e model from pre-trained
-ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes)
+# n_genes_orig: pretrained model's vocab size (for classifier layer shape matching during load)
+# seq_len=d.n_genes: after HVG, d.n_genes = n_hvg (pos_emb size)
+ft_model = build_e2em(config, d.n_classifications; n_genes=n_genes_orig, seq_len=d.n_genes)
 ft_model = fix_gpu_dropout(cu(ft_model))
 # opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)

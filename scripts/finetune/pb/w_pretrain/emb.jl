@@ -44,11 +44,14 @@ else  # tahoe
 end
 
 
-n_hvg = get(config, "n_hvg", 0)
-if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
-    data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
+# gene selection: RTF=top_k (rank-position paradigm), ETF=HVG (gene-position paradigm)
+n_genes_orig = size(data_expr, 1)
+if config["modeltype"] == "etf"
+    n_hvg = get(config, "n_hvg", 0)
+    if n_hvg > 0 && n_hvg < size(data_expr, 1)
+        data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
+        println("HVG filter: $(n_genes_orig) → $(n_hvg) genes")
+    end
 end
 
 d = dsplit(data_expr, config;
@@ -58,11 +61,29 @@ d = dsplit(data_expr, config;
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
+if config["modeltype"] == "rtf"
+    # RTF: truncate ranked gene IDs to top_k (same as pretraining's per-cell top-k)
+    top_k = get(config, "top_k", 1024)
+    if top_k < d.n_genes
+        d = merge(d, (X_train = d.X_train[1:top_k, :],
+                       X_val   = d.X_val[1:top_k, :],
+                       X_test  = d.X_test[1:top_k, :]))
+        println("top_k truncation: $(d.n_genes) → $top_k ranked genes per sample")
+    end
+    seq_len = top_k
+    n_genes_for_model = d.n_genes  # full vocab for embedding lookup
+else
+    # ETF: HVG already applied above; seq_len = n_hvg, n_genes_orig for pretrained model loading
+    seq_len = d.n_genes  # after HVG
+    n_genes_for_model = n_genes_orig  # pretrained vocab size for weight loading
+end
+
 # build embedding-only model
 # ft_model, train_input, test_input = build_embm(config, d.X_train, d.X_test,
 #                                                 d.n_genes, d.n_classifications)
 ft_model, train_input, val_input, test_input = build_embm(config, d.X_train, d.X_test,
-                                                d.n_genes, d.n_classifications; X_val=d.X_val)
+                                                n_genes_for_model, d.n_classifications; X_val=d.X_val,
+                                                seq_len=seq_len)
 # opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 

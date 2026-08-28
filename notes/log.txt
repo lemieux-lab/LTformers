@@ -630,13 +630,47 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
         -- not bad, but not good i guess
     -- running mlm etf (1)
     -- testing cq so can do sweeps
+        -- attempting batch_size 550 (1)
 
--- pb fine-tuning
+-- fine-tuning
     -- need to begin once new sweeps are completed!
     -- for now, doing a finetune test on mlm rtf sc vs mlm rtf tahoe (2)
+        -- ft MLM rtf PB done: /home/golem/scratch/chans/transformers/out/PB_ft_rtf_20260827_1232.out
+        -- ft MLM rtf SC issue:
+            -- pretrain was done on 19k genes while ft is on 1024 genes?? double check this
+            -- ok so HVG filtering is only implemented in scGPT 
+                -- (wherein we use expression values on single-cell level dataset of a lot of vocab)
+            -- changed ft sc to use top-k genes thing instead.
+            -- which is good because top-k + truncation is what it was already pre-trained on!
+            -- re-running this (1)
 
 -- data comparison
     -- still need to get sc cl overlay plot, running now (1)
 
 -- also:
     -- reformatting git for cq vs iric clsuters
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 28 2026 ###
+
+-- pb pre-train
+    -- need to redo RTFs (changed from HVG to top-k truncation)
+    -- re-running RTF sweeps! (ETF sweeps are still runnning)
+
+-- sc pre-train
+    -- need to redo ETFs
+        -- changed to precompute hvg indices then this is the same indices always used for ETF filtering
+        -- testing how long it takes to precompute hvg indices on 1 shard
+    -- CQ:
+        -- testing batch_size=500 - good! 12mins/10steps
+
+-- fine-tune
+    -- need to re-run:
+        -- SC mlm rtf
+    -- waiting for pre-train:
+        -- PB all
+        -- SC all (- mlm rtf)
+
+-- data comparison
+    -- sc cl overlay completed!

@@ -43,13 +43,6 @@ else  # tahoe
     meta_df = data
 end
 
-n_hvg = get(config, "n_hvg", 0)
-if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
-    data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
-end
-
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
            label_source=(fmt == "tahoe" ? meta_df : nothing),
@@ -57,8 +50,18 @@ d = dsplit(data_expr, config;
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
-# build e2e model from pre-trained
-ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes)
+# truncate ranked data to top_k (sequence length) — keeps gene IDs from full vocab
+# (same as pretraining's per-cell top-k truncation)
+top_k = get(config, "top_k", 1024)
+if top_k < d.n_genes
+    d = merge(d, (X_train = d.X_train[1:top_k, :],
+                   X_val   = d.X_val[1:top_k, :],
+                   X_test  = d.X_test[1:top_k, :]))
+    println("top_k truncation: $(d.n_genes) → $top_k ranked genes per sample")
+end
+
+# build e2e model from pre-trained (n_genes = full vocab for embedding, seq_len = top_k for pos_emb)
+ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=top_k)
 ft_model = fix_gpu_dropout(cu(ft_model))
 # opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
