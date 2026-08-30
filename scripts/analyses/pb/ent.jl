@@ -7,7 +7,7 @@ using JLD2, StatsBase, Statistics, CairoMakie, DataFrames
 dataset = "tahoe" # for pseudobulk
 
 if dataset == "lincs"
-    expr = load("data/data_expr.jld2")["data_expr"]
+    expr = load("data/lincs/data_expr.jld2")["data_expr"]
     fig_dir = "results/lincs/figures/entropies"
     data_dir = "results/lincs/data/entropies"
     save_prefix = "lincs"
@@ -101,7 +101,7 @@ begin
         ylabel="Shannon entropy (bits)",
         yaxisposition=:left,
         xtickformat=values -> [string(Int(round(v))) for v in values],
-        title = "Tahoe pseudo-bulk entropy vs. sparsity per rank position")
+        title = dataset == "lincs" ? "LINCS L1000 entropy vs. sparsity per rank position" : "Tahoe pseudo-bulk entropy vs. sparsity per rank position")
     ax_spar = Axis(fig_overlay[1, 1],
         ylabel="Sparsity (1 = always 0)",
         yaxisposition=:right)

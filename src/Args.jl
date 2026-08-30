@@ -91,6 +91,12 @@ function load_pretrain_args()
         "--seed"
             help = "random seed for reproducibility"
             arg_type = Int
+        "--hvg_n_shards"
+            help = "number of shards to scan for HVG computation (compute_hvg.jl)"
+            arg_type = Int
+        "--hvg_out"
+            help = "output path for HVG indices (compute_hvg.jl)"
+            arg_type = String
     end
     return parse_args(s)
 end

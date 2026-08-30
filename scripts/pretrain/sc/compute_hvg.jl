@@ -1,4 +1,4 @@
-# SLURM_TIME="2-00:00" cpu_sbatch sc_hvgidx julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml --hvg_n_shards 1
+# SLURM_TIME="2-00:00" cpu_sbatch sc_hvgidx_1 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 1
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -10,6 +10,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src/tahoe"))
 using Args, Config, LoadSC, ProcessSC
 
+# load_pretrain_args requires -t (modeltype); pass -t etf since HVG is for ETF
 args = load_pretrain_args()
 config = load_config(args["config"], args)
 
@@ -49,7 +50,7 @@ for (si, shard_path) in enumerate(scan_shards)
             delta2 = x - gene_mean[g]
             gene_m2[g] += delta * delta2
         end
-        total_cells += 1
+        global total_cells += 1
     end
 end
 

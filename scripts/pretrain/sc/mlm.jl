@@ -316,6 +316,9 @@ for epoch in ProgressBar(1:n_total_epochs)
         push!(val_eval_losses, loss_val)
     end
     push!(val_losses, mean(val_eval_losses))
+    # reclaim GPU memory after val eval to avoid OOM at epoch boundary
+    GC.gc(true)
+    CUDA.reclaim()
 
     # test eval (final epoch only — held out for reporting)
     is_last = (epoch == n_total_epochs) || done
@@ -435,6 +438,12 @@ for epoch in ProgressBar(1:n_total_epochs)
             append!(all_trues, epoch_trues)
             println("  predstrues: $(n_cached_preds) cached batches collected ($(length(all_preds)) predictions)")
         end
+    end
+
+    # reclaim GPU memory after test eval (final epoch) to avoid OOM
+    if is_last
+        GC.gc(true)
+        CUDA.reclaim()
     end
 
     # println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
