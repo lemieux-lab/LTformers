@@ -50,8 +50,7 @@ d = dsplit(data_expr, config;
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
-# truncate ranked data to top_k (sequence length) — keeps gene IDs from full vocab
-# (same as pretraining's per-cell top-k truncation)
+# top-k + truncation
 top_k = get(config, "top_k", 1024)
 if top_k < d.n_genes
     d = merge(d, (X_train = d.X_train[1:top_k, :],
@@ -60,10 +59,11 @@ if top_k < d.n_genes
     println("top_k truncation: $(d.n_genes) → $top_k ranked genes per sample")
 end
 
-# build e2e model from pre-trained (n_genes = full vocab for embedding, seq_len = top_k for pos_emb)
+# build e2e model from pre-trained
+# n_genes = full vocab for embedding
+# seq_len = top_k for pos_emb
 ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=top_k)
 ft_model = fix_gpu_dropout(cu(ft_model))
-# opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
@@ -88,7 +88,6 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 n_total_epochs = if use_max_steps
@@ -134,7 +133,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     Flux.testmode!(ft_model)
     val_eval_losses = Float32[]
     n_val = size(d.X_val, 2)
@@ -151,7 +150,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]

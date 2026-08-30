@@ -694,11 +694,12 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 -- sc pre-train
     -- ETF:
         -- precomputing hvg indices on 1 shard:
-    -- CQ:
+    -- CQ: 
         -- both 160k mlm rtf + etf had OOM on batch_size=600; 
             -- re-run etf after precomputing hvg idx finished
         -- debugging rtf:
-            -- val eval loop has un-GC'd tensors? trying CUDA.reclaim()? on CQ w/ same batch_size
+            -- val eval loop has un-GC'd tensors? 
+            -- trying CUDA.reclaim()? on CQ w/ same batch_size (1)
             -- if still error, just decr. batch_size!
     -- running lr rtf + er rtf (2)
     -- need to wait for hvg indices computation to finish (1)

@@ -1,3 +1,6 @@
+# currently has a fallback for if hvg indices are empty then uses top-k truncation method
+# need to replace with hvg indices after it finishes precomputing!
+
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
@@ -28,24 +31,19 @@ _phase(name) = (println("[$(round(time() - _t0, digits=1))s] $name"); flush(stdo
 _phase("load_gene_vocab()")
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 
-# _phase("list_shards() + shard_train_test_split()")
 _phase("list_shards() + shard_train_val_test_split()")
 all_shards = list_shards(config["data_dir"])
-# train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
 train_shards, val_shards, test_shards = shard_train_val_test_split(all_shards, 0.1, 0.1)
 if config["subset_shards"] > 0
     train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
     val_shards = val_shards[1:min(max(1, div(config["subset_shards"], 8)), length(val_shards))]
     test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 8)), length(test_shards))]
 end
-# println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
 println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
 
 top_k = config["top_k"]
 MASK_ID = Int32(n_coding + 1)
 
-# ETF-HVG: gene-position paradigm — load pre-computed HVG indices
-# Run scripts/pretrain/sc/compute_hvg.jl first to generate hvg_indices.jld2
 hvg_idx = nothing
 n_hvg = 0
 if use_exp
@@ -61,7 +59,6 @@ if use_exp
     end
 end
 
-# model setup: ETF-HVG uses n_hvg genes, legacy ETF/RTF uses n_coding with top_k
 use_hvg = use_exp && !isnothing(hvg_idx)
 if use_hvg
     seq_len = n_hvg
@@ -74,8 +71,6 @@ end
 
 _phase("$(use_exp ? "ExpModel" : "RankModel")()")
 model = if use_exp
-    # ETF-HVG: n_genes=n_hvg (pos_emb + classifier sized for HVG set)
-    # ETF legacy: n_genes=n_coding (full vocab)
     n_genes_etf = use_hvg ? n_hvg : n_coding
     ExpModel(n_genes=n_genes_etf, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
              n_classes=n_classes, n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
@@ -88,9 +83,6 @@ end
 _phase("cu() + fix_gpu_dropout()")
 model = cu(model)
 model = fix_gpu_dropout(model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # masking buffers
@@ -115,33 +107,22 @@ test_losses = Float32[]
 test_rank_errors = Float32[]
 all_preds = Int[]
 all_trues = Int[]
-# rank_error_sums = zeros(Float32, n_coding)
-# rank_error_counts = zeros(Int, n_coding)
-rank_error_sums = zeros(Float32, seq_len)   # indexed by position (1..seq_len)
+rank_error_sums = zeros(Float32, seq_len) # indexed by position
 rank_error_counts = zeros(Int, seq_len)
-gene_error_sums = zeros(Float32, n_classes)  # indexed by label (gene_id for RTF/legacy ETF, rank for HVG ETF)
+gene_error_sums = zeros(Float32, n_classes) # indexed by label 
 gene_error_counts = zeros(Int, n_classes)
 
-# pre-allocate GPU buffers (#4) — reverted: copyto! from CPU SubArray to CuArray
-# triggers scalar indexing (CUDA.jl doesn't specialize for SubArray sources)
-# x_gpu_buf_rtf = CUDA.zeros(Int32, top_k, config["batch_size"])
-# y_gpu_buf_rtf = CUDA.zeros(Int32, top_k, config["batch_size"])
-# x_gpu_buf_etf = CUDA.zeros(Float32, top_k, config["batch_size"])
-# y_gpu_buf_etf = CUDA.zeros(Int32, top_k, config["batch_size"])
-
-# cap predstrues to avoid multi-GB files (#8)
+# cap predstrues to avoid hella large files
 const MAX_PRED_SHARDS = 5
 
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
 _phase("load_shard_pyarrow() — estimating epochs")
 n_total_epochs = if use_max_steps
-    # sample 1 shard instead of 5 to avoid slow PyArrow startup overhead
     # n_sample = min(5, length(train_shards))
     n_sample = 1
     sample_shards = train_shards[1:n_sample]
@@ -175,7 +156,6 @@ for sp in _val_shards
                                  hvg_idx=hvg_idx)
     for batch in batches
         if use_hvg
-            # ETF-HVG: batch = (expr, ranks), mask expr, labels = ranks
             batch_expr, batch_ranks = batch
             bs = size(batch_expr, 2)
             xm = Matrix{Float32}(undef, n_hvg, bs)
@@ -183,7 +163,6 @@ for sp in _val_shards
             sc_mask_input_exp_rank!(xm, ym, batch_expr, batch_ranks, config["mask_ratio"], -100)
             push!(val_cache, (x=copy(xm), y=copy(ym)))
         elseif use_exp
-            # ETF legacy: batch = (ids, expr), mask expr, labels = gene IDs
             batch_ids, batch_expr = batch
             bs = size(batch_expr, 2)
             xm = Matrix{Float32}(undef, top_k, bs)
@@ -238,7 +217,6 @@ end
 println("  cached $(length(eval_cache)) test batches from $(length(_eval_shards)) shards")
 
 _phase("training loop — batches_from_shard() + sc_masked_loss() + Flux.withgradient()")
-# for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
@@ -305,7 +283,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     _phase("val eval (epoch $epoch)")
     Flux.testmode!(model)
     val_eval_losses = Float32[]
@@ -320,7 +298,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     GC.gc(true)
     CUDA.reclaim()
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done
     eval_losses = Float32[]
     epoch_rank_errors = Int[]
@@ -439,14 +417,11 @@ for epoch in ProgressBar(1:n_total_epochs)
             println("  predstrues: $(n_cached_preds) cached batches collected ($(length(all_preds)) predictions)")
         end
     end
-
-    # reclaim GPU memory after test eval (final epoch) to avoid OOM
     if is_last
         GC.gc(true)
         CUDA.reclaim()
     end
 
-    # println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
     println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
 
     if wb !== nothing
@@ -460,8 +435,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -486,7 +459,6 @@ plot_per_gene_error(gene_error_sums, gene_error_counts, n_classes, save_dir,
 plot_per_sample_rank_error(rank_error_sums, rank_error_counts, seq_len, save_dir,
                            "mean rank error", "per_rank_error")
 
-# log_model(model, save_dir)
 log_model(model, save_dir, config)
 # save shard split for finetune reuse
 jldsave(joinpath(save_dir, "shard_split.jld2");
@@ -508,5 +480,4 @@ log_params(config, gpu_info, run_hours, run_minutes, save_dir;
 
 wb !== nothing && wandb.finish()
 _phase("done.")
-# println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")
 println("Done. Best val loss: $(round(best_val_loss, digits=4)) at epoch $best_epoch")

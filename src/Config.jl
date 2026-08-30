@@ -107,10 +107,6 @@ function resolve_model_dir!(config::Dict;
 end
 
 
-# const DATA_PATHS = Dict(
-#     "lincs" => "data/lincs/lincs_trt_data.jld2",
-#     "tahoe" => "/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2",
-# )
 const DATA_PATHS = Dict(
     "lincs" => "data/lincs/lincs_trt_data.jld2",
     "tahoe" => "data/tahoe/filtered_pseudobulks_alpha_10000.jld2",

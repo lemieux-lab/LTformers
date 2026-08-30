@@ -102,9 +102,6 @@ model = fix_gpu_dropout(model)
 
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask val
@@ -227,7 +224,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         println("UH OH epoch $epoch: target embedding variance = $tgt_var")
     end
 
-    # val eval (every epoch — used for checkpointing and sweep selection)
+    # val eval (every epoch for checkpt + sweep selection)
     val_eval_losses = Float32[]
     for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
         end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
@@ -246,7 +243,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     eval_losses = Float32[]
 
@@ -269,7 +266,6 @@ for epoch in ProgressBar(1:n_total_epochs)
                 mask_cpu = cpu(mask_bool)
             end
 
-            # loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
             loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
             push!(eval_losses, cpu(loss_val))
 
@@ -322,8 +318,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -347,7 +341,6 @@ plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
 plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir,
                            "mean embedding MSE", "per_rank_error")
 
-# log_model(ema_model, save_dir)
 log_model(ema_model, save_dir, config)
 log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,

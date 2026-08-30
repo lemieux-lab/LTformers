@@ -36,21 +36,15 @@ if config["subset_ratio"] < 1.0
     println("subset: $(length(subset_idx))/$(n_total) samples")
 end
 
-# gene selection: ETF = HVG (gene-position paradigm), RTF = no HVG (rank-position paradigm)
-# n_hvg = get(config, "n_hvg", 0)
-# if n_hvg > 0 && n_hvg < size(data_expr, 1)
-#     n_orig = size(data_expr, 1)
-#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
-# end
-if use_exp  # ETF: HVG selects fixed gene set; position encodes gene identity
+# gene selection
+if use_exp
     n_hvg = get(config, "n_hvg", 0)
     if n_hvg > 0 && n_hvg < size(data_expr, 1)
         n_orig = size(data_expr, 1)
         data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
         println("HVG filter: $(n_orig) → $(n_hvg) genes")
     end
-else  # RTF: no HVG — needs full gene vocab for embedding lookup
+else
     println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
@@ -62,18 +56,10 @@ n_classes = n_genes
 MASK_ID = n_genes + 1
 top_k = get(config, "top_k", 1024)
 
-# _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 
 if use_exp
     X_expr = Float32.(data_expr)
-    # # OLD: reindex expression into rank order — predicts gene ID at rank (doesn't learn well)
-    # X_expr_ranked = reindex_to_rank_order(X_expr, X_ranks)
-    # X_train = X_expr_ranked[:, train_indices]
-    # X_test = X_expr_ranked[:, test_indices]
-    # X_ranks_train = X_ranks[:, train_indices]
-    # X_ranks_test = X_ranks[:, test_indices]
-    # gene-ordered expression: position i = gene i, labels = rank of each gene
     X_train = X_expr[:, train_indices]
     X_val = X_expr[:, val_indices]
     X_test = X_expr[:, test_indices]
@@ -82,7 +68,6 @@ if use_exp
     X_inv_ranks_val = inv_ranks[:, val_indices]
     X_inv_ranks_test = inv_ranks[:, test_indices]
 else
-    # RTF: truncate to top_k (row 1 = highest expressed gene's ID)
     X_ranks_full = X_ranks
     if top_k < n_genes
         X_ranks = X_ranks[1:top_k, :]
@@ -106,9 +91,6 @@ else
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask val
@@ -122,10 +104,8 @@ end
 
 # mask test
 X_test_masked = similar(X_test)
-# y_test_masked = use_exp ? similar(X_ranks_test) : similar(X_test)
 y_test_masked = use_exp ? similar(X_inv_ranks_test) : similar(X_test)
 if use_exp
-    # mask_input_exp!(X_test_masked, y_test_masked, X_test, X_ranks_test, config["mask_ratio"], -100)
     mask_input_exp!(X_test_masked, y_test_masked, X_test, X_inv_ranks_test, config["mask_ratio"], -100)
 else
     mask_input!(X_test_masked, y_test_masked, X_test, config["mask_ratio"], -100, MASK_ID, false)
@@ -160,7 +140,6 @@ gene_error_counts = zeros(Int, n_genes)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
@@ -172,7 +151,6 @@ else
 end
 warmup_epochs = max(1, div(n_total_epochs, 10))
 X_train_masked = similar(X_train)
-# y_train_masked = use_exp ? similar(X_ranks_train) : similar(X_train)
 y_train_masked = use_exp ? similar(X_inv_ranks_train) : similar(X_train)
 
 for epoch in ProgressBar(1:n_total_epochs)
@@ -181,7 +159,6 @@ for epoch in ProgressBar(1:n_total_epochs)
     Optimisers.adjust!(opt, compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs))
 
     if use_exp
-        # mask_input_exp!(X_train_masked, y_train_masked, X_train, X_ranks_train, config["mask_ratio"], -100)
         mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
     else
         mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
@@ -209,7 +186,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpointing and sweep selection)
+    # val eval (every epoch for checkpt + sweep selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
@@ -221,7 +198,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     eval_losses = Float32[]
     epoch_rank_errors = Int[]
@@ -246,7 +223,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                 append!(epoch_trues, y_targets_cpu)
 
                 for i in eachindex(y_targets_cpu)
-                    r = y_targets_cpu[i]  # ETF: r = rank (target class in inverse_ranks mode); RTF: r = gene_id
+                    r = y_targets_cpu[i]  # ETF: r = rank; RTF: r = gene_id
                     col = @view logits_cpu[:, i]
                     err = count(x -> x > col[r], col)
                     push!(epoch_rank_errors, err)
@@ -297,8 +274,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -322,7 +297,6 @@ plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
 plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir,
                            "mean rank error", "per_rank_error")
 
-# log_model(model, save_dir)
 log_model(model, save_dir, config)
 log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,

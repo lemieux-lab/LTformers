@@ -4,10 +4,6 @@ using Statistics, Random
 
 export select_hvg, rank_genes, inverse_ranks, reindex_to_rank_order, ttsplit, tvsplit
 
-# function log1p_normalize(data_expr::Matrix)
-#     return Float32.(log1p.(data_expr))
-# end
-
 function select_hvg(data_expr::Matrix, n_hvg::Int)
     gene_vars = vec(var(data_expr, dims=2))
     hvg_idx = sortperm(gene_vars, rev=true)[1:n_hvg]
@@ -15,7 +11,6 @@ function select_hvg(data_expr::Matrix, n_hvg::Int)
     return data_expr[hvg_idx, :], hvg_idx
 end
 
-# inverse permutation of rank_genes output
 # inv[gene_id, sample] = rank of that gene (1 = highest expression)
 function inverse_ranks(X_ranks::Matrix{Int32})
     inv = similar(X_ranks)

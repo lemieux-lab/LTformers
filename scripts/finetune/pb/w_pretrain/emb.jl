@@ -44,7 +44,7 @@ else  # tahoe
 end
 
 
-# gene selection: RTF=top_k (rank-position paradigm), ETF=HVG (gene-position paradigm)
+# gene selection
 n_genes_orig = size(data_expr, 1)
 if config["modeltype"] == "etf"
     n_hvg = get(config, "n_hvg", 0)
@@ -62,7 +62,7 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
 if config["modeltype"] == "rtf"
-    # RTF: truncate ranked gene IDs to top_k (same as pretraining's per-cell top-k)
+    # RTF: top-k + truncation
     top_k = get(config, "top_k", 1024)
     if top_k < d.n_genes
         d = merge(d, (X_train = d.X_train[1:top_k, :],
@@ -79,12 +79,9 @@ else
 end
 
 # build embedding-only model
-# ft_model, train_input, test_input = build_embm(config, d.X_train, d.X_test,
-#                                                 d.n_genes, d.n_classifications)
 ft_model, train_input, val_input, test_input = build_embm(config, d.X_train, d.X_test,
                                                 n_genes_for_model, d.n_classifications; X_val=d.X_val,
                                                 seq_len=seq_len)
-# opt = Flux.setup(Optimisers.Adam(config["lr"]), ft_model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
@@ -109,7 +106,6 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 n_total_epochs = if use_max_steps
@@ -155,7 +151,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     Flux.testmode!(ft_model)
     val_eval_losses = Float32[]
     n_val = size(val_input, 2)
@@ -172,7 +168,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]

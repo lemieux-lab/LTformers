@@ -24,14 +24,12 @@ start_time = now()
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 
 all_shards = list_shards(config["data_dir"])
-# train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
 train_shards, val_shards, test_shards = shard_train_val_test_split(all_shards, 0.1, 0.1)
 if config["subset_shards"] > 0
     train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
     val_shards = val_shards[1:min(max(1, div(config["subset_shards"], 8)), length(val_shards))]
     test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 8)), length(test_shards))]
 end
-# println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
 println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
 
 top_k = config["top_k"]
@@ -48,9 +46,6 @@ else
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
@@ -73,21 +68,18 @@ val_losses = Float32[]
 test_losses = Float32[]
 all_preds = Float32[]
 all_trues = Float32[]
-gene_error_sums = zeros(Float32, n_coding)  # indexed by gene_id (1..n_coding)
+gene_error_sums = zeros(Float32, n_coding) # indexed by gene_id
 gene_error_counts = zeros(Int, n_coding)
-# rank_error_sums = zeros(Float32, n_coding)
-rank_error_sums = zeros(Float32, top_k)   # indexed by rank position (1..top_k)
+rank_error_sums = zeros(Float32, top_k) # indexed by rank position
 rank_error_counts = zeros(Int, top_k)
 
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
-    # sample 1 shard instead of 5 to avoid slow PyArrow startup overhead
     # n_sample = min(5, length(train_shards))
     n_sample = 1
     sample_shards = train_shards[1:n_sample]
@@ -161,7 +153,6 @@ for sp in _eval_shards
 end
 println("  cached $(length(eval_cache)) test batches from $(length(_eval_shards)) shards")
 
-# for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
@@ -220,7 +211,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for cached in val_cache
@@ -238,7 +229,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done
     eval_losses = Float32[]
 
@@ -357,7 +348,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
 
-    # println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
     println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
 
     if wb !== nothing
@@ -369,8 +359,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -408,7 +396,6 @@ else
     (NaN, NaN)
 end
 
-# log_model(model, save_dir)
 log_model(model, save_dir, config)
 
 # save shard split for finetune reuse
@@ -430,5 +417,4 @@ log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            best_val_loss=best_val_loss)
 
 wb !== nothing && wandb.finish()
-# println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")
 println("Done. Best val loss: $(round(best_val_loss, digits=4)) at epoch $best_epoch")

@@ -247,7 +247,6 @@ function _load_arch_config(model_dir::String, config::Dict)
         end
         return merged
     end
-    # no saved config found — use finetune config as-is
     @warn "no model_config.jld2 or params.txt found for $model_dir; using finetune config arch params"
     return config
 end

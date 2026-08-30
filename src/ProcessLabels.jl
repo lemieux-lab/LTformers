@@ -112,13 +112,11 @@ end
 function get_pt_idx(label_idx, model_dir::String)
     if model_dir == ""
         println("no model_dir set, using new random split")
-        # return nothing, nothing, nothing
         return nothing, nothing, nothing, nothing
     end
     indices_path = "$model_dir/indices.jld2"
     if !isfile(indices_path)
         println("no $indices_path, using new random split")
-        # return nothing, nothing, nothing
         return nothing, nothing, nothing, nothing
     end
     pt_idx = load(indices_path)
@@ -160,13 +158,9 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
             X = rank_genes_fn(X, gene_medians)
         end
 
-        # X_train, X_test, train_idx, test_idx = ttsplit_fn(X, 0.2f0)
-        # y_train, y_test = y[:, train_idx], y[:, test_idx]
         X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
         y_train, y_val, y_test = y[:, train_idx], y[:, val_idx], y[:, test_idx]
 
-        # return (; X_train, X_test, y_train, y_test, train_idx, test_idx,
-        #           n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing)
         return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
                   n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing)
     end
@@ -181,18 +175,16 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
 
     model_dir = get(config, "model_dir", "")
 
-    # helper: carve val from train when pretrain checkpoint lacks val_indices
+    # get val from train when pretrain checkpoint lacks val_indices
     function _split_val_from_train(train_idx)
-        n_val = floor(Int, length(train_idx) * 0.125)  # ~10% of total (12.5% of 80%)
+        n_val = floor(Int, length(train_idx) * 0.125)
         shuffled = shuffle(train_idx)
         return shuffled[n_val+1:end], shuffled[1:n_val]
     end
 
     if config["modeltype"] == "mlp"
-        # train_idx, test_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
-            # X_train, X_test, train_idx, test_idx = ttsplit_fn(X, 0.2f0)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
         else
             if isnothing(val_idx)
@@ -202,10 +194,8 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         end
 
     elseif config["modeltype"] == "etf"
-        # train_idx, test_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
-            # X_train, X_test, train_idx, test_idx = ttsplit_fn(X, 0.2f0)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
         else
             if isnothing(val_idx)
@@ -217,10 +207,8 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     else  # rtf
         gene_medians = vec(median(X, dims=2)) .+ 1f-10
         X_ranked = rank_genes_fn(X, gene_medians)
-        # train_idx, test_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
-            # X_train, X_test, train_idx, test_idx = ttsplit_fn(X_ranked, 0.2f0)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_ranked, 0.1f0, 0.1f0)
         else
             if isnothing(val_idx)
@@ -230,12 +218,10 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         end
     end
 
-    # y_train, y_test = y_oh[:, train_idx], y_oh[:, test_idx]
     y_train, y_val, y_test = y_oh[:, train_idx], y_oh[:, val_idx], y_oh[:, test_idx]
 
     cidx_dict, cs = config["level"] == "lvl2" ? oversmpl(y_train) : (nothing, nothing)
-    # return (; X_train, X_test, y_train, y_test, train_idx, test_idx,
-    #           n_genes, n_classifications=n_cls, cidx_dict, cs)
+
     return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
               n_genes, n_classifications=n_cls, cidx_dict, cs)
 end

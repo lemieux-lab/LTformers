@@ -52,7 +52,6 @@ n_genes = size(X_ranks, 1)
 MASK_ID = n_genes + 1
 
 # splits
-# _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 
 if use_exp
@@ -87,9 +86,6 @@ else
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask val
@@ -140,7 +136,6 @@ rank_error_counts = zeros(Int, n_genes)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
@@ -201,7 +196,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpointing and sweep selection)
+    # val eval (every epoch for checkpt + sweep selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
@@ -219,7 +214,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     eval_losses = Float32[]
     epoch_preds = Float32[]
@@ -245,19 +240,18 @@ for epoch in ProgressBar(1:n_total_epochs)
                     append!(epoch_trues, y_cpu)
 
                     m_cpu = test_corrupt_mask[:, start_idx:end_idx]
-                    # ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
                     inv_ranks_batch = inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))]
                     batch_len = size(m_cpu, 2)
                     masked_idx = 0
                     for j in 1:batch_len
-                        for pos in 1:n_genes  # ETF: pos = gene index
+                        for pos in 1:n_genes # ETF: pos = gene index
                             m_cpu[pos, j] || continue
                             masked_idx += 1
                             sq_err = (preds_cpu[masked_idx] - y_cpu[masked_idx])^2
-                            gene_error_sums[pos] += sq_err  # per-gene
+                            gene_error_sums[pos] += sq_err # per-gene
                             gene_error_counts[pos] += 1
-                            r = inv_ranks_batch[pos, j]  # rank of gene pos
-                            rank_error_sums[r] += sq_err  # per-rank
+                            r = inv_ranks_batch[pos, j] # rank of gene pos
+                            rank_error_sums[r] += sq_err # per-rank
                             rank_error_counts[r] += 1
                         end
                     end
@@ -279,14 +273,14 @@ for epoch in ProgressBar(1:n_total_epochs)
                     batch_len = size(y_labels_cpu, 2)
                     masked_idx = 0
                     for j in 1:batch_len
-                        for pos in 1:n_genes  # RTF: pos = rank position
+                        for pos in 1:n_genes # RTF: pos = rank position
                             (y_labels_cpu[pos, j] == -100f0) && continue
                             masked_idx += 1
                             sq_err = (preds_cpu[masked_idx] - y_cpu_masked[masked_idx])^2
-                            rank_error_sums[pos] += sq_err  # per-rank
+                            rank_error_sums[pos] += sq_err # per-rank
                             rank_error_counts[pos] += 1
-                            gene_id = ranks_batch[pos, j]  # gene at rank pos
-                            gene_error_sums[gene_id] += sq_err  # per-gene
+                            gene_id = ranks_batch[pos, j] # gene at rank pos
+                            gene_error_sums[gene_id] += sq_err # per-gene
                             gene_error_counts[gene_id] += 1
                         end
                     end

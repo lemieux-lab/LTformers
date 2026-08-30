@@ -37,14 +37,12 @@ end
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 
 all_shards = list_shards(config["data_dir"])
-# train_shards, test_shards = shard_train_test_split(all_shards, 0.2)
 train_shards, val_shards, test_shards = shard_train_val_test_split(all_shards, 0.1, 0.1)
 if config["subset_shards"] > 0
     train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
     val_shards = val_shards[1:min(max(1, div(config["subset_shards"], 8)), length(val_shards))]
     test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 8)), length(test_shards))]
 end
-# println("Shards: $(length(train_shards)) train, $(length(test_shards)) test")
 println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
 
 top_k = config["top_k"]
@@ -64,9 +62,6 @@ model = fix_gpu_dropout(model)
 
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
-
-# opt = Flux.setup(Adam(config["lr"]), model)
-# opt = Flux.setup(AdamW(config["lr"]), model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
 
 # mask
@@ -88,34 +83,25 @@ train_losses = Float32[]
 val_losses = Float32[]
 test_losses = Float32[]
 target_variances = Float32[]
-# saved_preds = Vector{Float32}[]
-# saved_targets = Vector{Float32}[]
-# saved_positions = Vector{Int}[]  # BUG: creates Vector{Vector{Int}}, push!(_, Int32) errors
-# saved_positions = Int32[]
-# per-position scalar metrics (all eval batches)
 saved_mse = Float32[]
 saved_cossim = Float32[]
 saved_positions = Int32[]
-# small embedding sample for PCA/visualization
 MAX_EMBED_BATCHES = 10
 sample_preds = Vector{Float32}[]
 sample_targets = Vector{Float32}[]
 sample_positions = Int32[]
-gene_error_sums = zeros(Float32, n_coding)  # indexed by gene_id (1..n_coding)
+gene_error_sums = zeros(Float32, n_coding) # indexed by gene_id
 gene_error_counts = zeros(Int, n_coding)
-# rank_error_sums = zeros(Float32, n_coding)
-rank_error_sums = zeros(Float32, top_k)   # indexed by rank position (1..top_k)
+rank_error_sums = zeros(Float32, top_k) # indexed by rank position
 rank_error_counts = zeros(Int, top_k)
 
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
 n_total_epochs = if use_max_steps
-    # sample 1 shard instead of 5 to avoid slow PyArrow startup overhead
     # n_sample = min(5, length(train_shards))
     n_sample = 1
     sample_shards = train_shards[1:n_sample]
@@ -193,7 +179,6 @@ println("  cached $(length(eval_cache)) test batches from $(length(_eval_shards)
 
 collapse_check_batch = nothing
 
-# for epoch in 1:n_total_epochs
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
@@ -206,7 +191,6 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     for (si, shard_path) in enumerate(shuffled_train)
         done && break
-        # shard_modeltype = use_exp ? "etf" : "rtf"
         batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
                                      config["batch_size"]; modeltype=config["modeltype"],
                                      token_to_idx=token_to_idx,
@@ -273,7 +257,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     val_eval_losses = Float32[]
     for cached in val_cache
         if use_exp
@@ -291,7 +275,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done
     eval_losses = Float32[]
 
@@ -433,7 +417,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
 
-    # println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) test=$(round(test_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
     println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
 
     if wb !== nothing
@@ -447,8 +430,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -460,13 +441,6 @@ end
 # save
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss")
 
-# if !isempty(saved_preds)
-#     pred_matrix = reduce(hcat, saved_preds)
-#     target_matrix = reduce(hcat, saved_targets)
-#     jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2");
-#         preds=pred_matrix, targets=target_matrix, positions=saved_positions,
-#         target_variances=target_variances)
-# end
 if !isempty(saved_mse)
     diag = Dict{String, Any}(
         "mse" => saved_mse,
@@ -479,7 +453,6 @@ if !isempty(saved_mse)
         diag["sample_targets"] = reduce(hcat, sample_targets)
         diag["sample_positions"] = sample_positions
     end
-    # jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag...)
     diag_sym = Dict(Symbol(k) => v for (k, v) in diag)
     jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag_sym...)
 end
@@ -494,7 +467,6 @@ else
     println("  skipping per-gene/per-rank plots: no predictions collected")
 end
 
-# log_model(ema_model, save_dir)
 log_model(ema_model, save_dir, config)
 
 # save shard split for finetune reuse
@@ -515,5 +487,4 @@ log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            best_epoch=best_epoch, best_val_loss=best_val_loss)
 
 wb !== nothing && wandb.finish()
-# println("Done. Best test loss: $(round(best_test_loss, digits=4)) at epoch $best_epoch")
 println("Done. Best val loss: $(round(best_val_loss, digits=4)) at epoch $best_epoch")

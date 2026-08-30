@@ -94,7 +94,6 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 n_total_epochs = if use_max_steps
@@ -140,7 +139,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch — used for checkpoint selection)
+    # val eval (every epoch for checkpt selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     n_val = size(X_val, 2)
@@ -157,7 +156,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only — held out for reporting)
+    # test eval (final epoch only)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -185,8 +184,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         append!(all_trues, epoch_trues)
     end
 
-    # if test_losses[end] < best_test_loss
-    #     global best_test_loss = test_losses[end]
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
