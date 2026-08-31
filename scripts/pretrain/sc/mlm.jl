@@ -222,8 +222,13 @@ for epoch in ProgressBar(1:n_total_epochs)
     lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
     Optimisers.adjust!(opt, lr)
 
-    # train
+    # train — reclaim GPU memory before starting (critical for epoch 2+ after eval)
     Flux.trainmode!(model)
+    if epoch > 1
+        GC.gc(true)
+        CUDA.reclaim()
+        _phase("GPU before epoch $epoch train: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
+    end
     epoch_losses = Float32[]
     shuffled_train = shuffle(train_shards)
 
@@ -268,6 +273,8 @@ for epoch in ProgressBar(1:n_total_epochs)
                 sc_masked_loss(m, x_gpu, y_gpu, n_classes)[1]
             end
             Flux.update!(opt, model, grads[1])
+            CUDA.unsafe_free!(x_gpu)
+            CUDA.unsafe_free!(y_gpu)
             push!(epoch_losses, l_val)
             n_shard_steps += 1
             global global_step += 1
@@ -292,11 +299,14 @@ for epoch in ProgressBar(1:n_total_epochs)
         y_gpu = CuArray(cached.y)
         loss_val, _, _ = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
         push!(val_eval_losses, loss_val)
+        CUDA.unsafe_free!(x_gpu)
+        CUDA.unsafe_free!(y_gpu)
     end
     push!(val_losses, mean(val_eval_losses))
     # reclaim GPU memory after val eval to avoid OOM at epoch boundary
     GC.gc(true)
     CUDA.reclaim()
+    _phase("GPU after val eval: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
 
     # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done
