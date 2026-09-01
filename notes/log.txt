@@ -709,3 +709,58 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
     -- waiting for pre-train:
         -- PB all
         -- SC all (- mlm rtf)
+
+-----------------------------------------------------------------------------------------------------------
+
+### aug 31 2026 ###
+
+-- pb pre-train
+    -- still running rest of sweeps (6)
+        -- only TmlmR is getting oom error??? 
+        -- re-running again after deleting some files
+
+-- sc pre-train
+    -- CUDA.reclaim() didn't do anything, more memory thing updated
+        -- pending on CQ, if it still doesn't work then decr batch_size and undo all the gc stuff
+    -- running lr rtf + er rtf (2)
+    -- hvg indices computation
+        -- changed to log time as well!!
+        -- 48mins/shard, this is not quite ideal since something like 300 shards would take over 10 days
+        -- running 30 shards for now just to have something to work w/ for the time being? (1)
+        -- double check:
+            -- if there is much variation between 10 vs 100 etc
+            -- if randomly chosen sufficiently
+            -- runs faster w/ more memory or w/ more cpus?
+            -- testing 2shard 32cpu 100mem, 32cpu 200mem, 64cpu 100mem to see if makes a diff! (3)
+            -- testing 10shard to compare against 30 shard against 1 shard etc (2: 30, 10)
+
+-- fine-tune
+    -- sc mlm rtf not too good, this was fine-tuned on pb data... so not rly correct
+        -- currently implementing sc finetune!
+            -- how to do lvl2 labels filter?
+                -- need list of pb tahoe drugs used to apply to lvl2 sc tahoe?
+            -- how to do ttv split?
+                -- how is pb doing it?
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 1 2026 ###
+
+-- pb pre-train
+    -- still running
+
+-- sc pre-train
+    -- hvg idx computation
+        -- still running 30 shard (1)
+        -- compare:
+            -- 10 vs 30 shard
+                -- 
+            -- n_cpus vs mem
+                -- no effect
+
+-- pb fine-tune
+    -- lvl2:
+        -- how to do labels filter? same drugs as pb?
+        -- how to do ttv split on sc? via samples?
+    -- lvl3:
+        -- implement (PC method)

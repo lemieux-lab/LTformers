@@ -68,8 +68,10 @@ function resolve_model_dir!(config::Dict;
         "lincs"
     elseif fmt == "tahoe"
         "tahoe_pb"
+    elseif fmt == "tahoe_sc"
+        "tahoe_sc"
     else
-        error("resolve_model_dir!: unknown data_format '$fmt' (expected lincs or tahoe)")
+        error("resolve_model_dir!: unknown data_format '$fmt' (expected lincs, tahoe, or tahoe_sc)")
     end
 
     models = TOML.parsefile(models_toml)

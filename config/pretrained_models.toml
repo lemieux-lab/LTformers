@@ -30,14 +30,14 @@ etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-22_07-50/best"
 
 # tahoe single-cell
 
-# [tahoe_sc.mlm]
-# rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-08-24_11-28/best/"
-# etf = ""
+[tahoe_sc.mlm]
+rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-08-24_11-28/best"
+etf = "results/tahoe/sc/pretrain/mlm/etf/2026-08-27_03-27/best"
 
-# [tahoe_sc.lrecon]
-# rtf = ""
-# etf = ""
+[tahoe_sc.lrecon]
+rtf = "results/tahoe/sc/pretrain/lrecon/rtf/2026-08-23_23-39/best"
+etf = "results/tahoe/sc/pretrain/lrecon/etf/2026-08-23_23-48/best"
 
-# [tahoe_sc.erecon]
-# rtf = ""
-# etf = ""
+[tahoe_sc.erecon]
+rtf = "results/tahoe/sc/pretrain/erecon/rtf/2026-08-23_23-57/best"
+etf = "results/tahoe/sc/pretrain/erecon/etf/2026-08-24_00-04/best"

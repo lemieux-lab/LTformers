@@ -2,7 +2,7 @@ module Args
 
 using ArgParse
 
-export load_pretrain_args, load_finetune_args
+export load_pretrain_args, load_finetune_args, load_sc_finetune_args
 
 
 function load_pretrain_args()
@@ -190,6 +190,99 @@ function load_finetune_args()
         "--seed"
             help = "random seed for reproducibility"
             arg_type = Int
+    end
+    return parse_args(s)
+end
+
+
+function load_sc_finetune_args()
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        # -- finetune args --
+        "--config", "-c"
+            help = "path to TOML config file"
+            arg_type = String
+            default = "config/default.toml"
+        "--mode", "-m"
+            help = "ft mode: e2e or emb"
+            arg_type = String
+            required = true
+        "--task"
+            help = "pretrain objective: mlm, lrecon, or erecon"
+            arg_type = String
+        "--model_dir"
+            help = "path to pretrained model directory (contains model_state.jld2)"
+            arg_type = String
+        "--level", "-l"
+            help = "level of finetuning: lvl1 or lvl2"
+            arg_type = String
+            required = true
+        "--n_epochs", "-e"
+            help = "number of epochs total"
+            arg_type = Int
+            required = true
+        "--modeltype", "-t"
+            help = "model type: rtf, mlp, or etf"
+            arg_type = String
+            required = true
+        "--batch_size", "-b"
+            help = "batchsize"
+            arg_type = Int
+        "--additional_notes", "-n"
+            help = "run-specific notes"
+            arg_type = String
+        "--lr"
+            help = "learning rate"
+            arg_type = Float64
+        "--drop_prob"
+            help = "dropout probability"
+            arg_type = Float64
+        "--embed_dim"
+            help = "embedding dimension"
+            arg_type = Int
+        "--hidden_dim"
+            help = "hidden layer dimension"
+            arg_type = Int
+        "--n_heads"
+            help = "number of attention heads"
+            arg_type = Int
+        "--n_layers"
+            help = "number of transformer layers"
+            arg_type = Int
+        "--max_ft_steps"
+            help = "max finetune steps (0 = use n_epochs)"
+            arg_type = Int
+        "--wandb_mode"
+            help = "wandb mode: disabled, online, or offline"
+            arg_type = String
+        "--seed"
+            help = "random seed for reproducibility"
+            arg_type = Int
+        # -- SC-specific args --
+        "--data_dir"
+            help = "path to Tahoe-100M parquet shard directory"
+            arg_type = String
+        "--meta_dir"
+            help = "path to Tahoe-100M metadata directory (gene_vocabulary.jsonl)"
+            arg_type = String
+        "--coding_gene_path"
+            help = "path to protein-coding gene list TSV"
+            arg_type = String
+        "--top_k"
+            help = "number of top genes per cell for RTF sequence input"
+            arg_type = Int
+        "--n_hvg"
+            help = "number of highly variable genes to keep (ETF; 0 = all)"
+            arg_type = Int
+        "--hvg_path"
+            help = "path to pre-computed HVG indices JLD2 (for ETF)"
+            arg_type = String
+        "--subset_shards"
+            help = "max number of shards to use (0 = all); for debugging"
+            arg_type = Int
+        "--pb_data_path"
+            help = "path to PB JLD2 for determining valid lvl2 drugs"
+            arg_type = String
     end
     return parse_args(s)
 end

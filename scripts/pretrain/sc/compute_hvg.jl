@@ -1,10 +1,10 @@
-# SLURM_TIME="2-00:00" cpu_sbatch sc_hvgidx_1 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 1
+# SLURM_TIME="1-00:00" cpu_sbatch sc_hvgidx_2c64 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 2
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
 
-using JLD2, Random, Statistics
+using JLD2, Random, Statistics, Dates
 
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src/tahoe"))
@@ -33,9 +33,10 @@ gene_m2 = zeros(Float64, n_coding)
 
 dense = Vector{Float32}(undef, n_coding)
 total_cells = 0
+t_start = now()
 
 for (si, shard_path) in enumerate(scan_shards)
-    println("  [$si/$n_scan] $(basename(shard_path))")
+    t_shard = now()
     shard = load_shard_pyarrow(shard_path)
 
     for ci in 1:shard.n_cells
@@ -52,7 +53,16 @@ for (si, shard_path) in enumerate(scan_shards)
         end
         global total_cells += 1
     end
+
+    elapsed_shard = round((now() - t_shard).value / 1000, digits=1)
+    elapsed_total = round((now() - t_start).value / 1000, digits=1)
+    avg_per_shard = round(elapsed_total / si, digits=1)
+    eta = round(avg_per_shard * (n_scan - si), digits=0)
+    println("  [$si/$n_scan] $(basename(shard_path)) — $(shard.n_cells) cells, $(elapsed_shard)s (avg $(avg_per_shard)s/shard, ETA $(eta)s)")
 end
+
+total_time = round((now() - t_start).value / 1000, digits=1)
+println("Total scan time: $(total_time)s ($(round(total_time/60, digits=1)) min)")
 
 # compute variance
 gene_var = zeros(Float64, n_coding)
