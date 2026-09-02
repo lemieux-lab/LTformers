@@ -74,12 +74,12 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "mlp", timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "emlp", timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "PB-FT-Aug", "mlp_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "PB-FT-Aug", "emlp_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train

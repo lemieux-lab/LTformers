@@ -43,7 +43,12 @@ d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, t
                            subset_shards=get(config, "subset_shards", 0),
                            process_cell_topk_flat_fn=process_cell_topk_flat,
                            cell_to_dense_flat_fn=cell_to_dense_flat!,
-                           oversmpl_fn=oversmpl)
+                           oversmpl_fn=oversmpl,
+                           source_cell=get(config, "source_cell", ""),
+                           target_cell=get(config, "target_cell", ""),
+                           dose=get(config, "dose", ""),
+                           meta_dir=get(config, "meta_dir", ""),
+                           regression_pairs_fn=get_regression_pairs_pca)
 
 n_genes = d.n_genes
 n_classifications = d.n_classifications
