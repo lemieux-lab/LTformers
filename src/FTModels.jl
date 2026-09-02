@@ -252,7 +252,7 @@ function _load_arch_config(model_dir::String, config::Dict)
 end
 
 function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X_val=nothing, seq_len::Int=n_genes)
-    if config["modeltype"] == "mlp"
+    if config["modeltype"] == "emlp"
         ft_model = Flux.Chain(
             Flux.Dense(n_genes => config["hidden_dim"], gelu),
             Flux.LayerNorm(config["hidden_dim"]),

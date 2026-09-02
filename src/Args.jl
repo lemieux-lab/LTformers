@@ -127,7 +127,7 @@ function load_finetune_args()
             arg_type = Int
             required = true
         "--modeltype", "-t"
-            help = "model type: rtf, mlp, or etf"
+            help = "model type: rtf, emlp, rmlp, or etf"
             arg_type = String
             required = true
         "--batch_size", "-b"
@@ -184,8 +184,11 @@ function load_finetune_args()
         "--target_cell"
             help = "target cell line for lvl3 regression (default: PC3)"
             arg_type = String
-        "--target_gene"
-            help = "target gene for lvl3 regression (default: IGFBP3)"
+        # "--target_gene"
+        #     help = "target gene for lvl3 regression (default: IGFBP3)"
+        #     arg_type = String
+        "--dose"
+            help = "dose filter for lvl3 regression (e.g. '5.0' for Tahoe, '10.0' for LINCS; empty = no filter)"
             arg_type = String
         "--seed"
             help = "random seed for reproducibility"
@@ -214,7 +217,7 @@ function load_sc_finetune_args()
             help = "path to pretrained model directory (contains model_state.jld2)"
             arg_type = String
         "--level", "-l"
-            help = "level of finetuning: lvl1 or lvl2"
+            help = "level of finetuning: lvl1, lvl2, or lvl3 (regression)"
             arg_type = String
             required = true
         "--n_epochs", "-e"
@@ -222,7 +225,7 @@ function load_sc_finetune_args()
             arg_type = Int
             required = true
         "--modeltype", "-t"
-            help = "model type: rtf, mlp, or etf"
+            help = "model type: rtf, emlp, rmlp, or etf"
             arg_type = String
             required = true
         "--batch_size", "-b"
@@ -282,6 +285,15 @@ function load_sc_finetune_args()
             arg_type = Int
         "--pb_data_path"
             help = "path to PB JLD2 for determining valid lvl2 drugs"
+            arg_type = String
+        "--source_cell"
+            help = "source cell line for lvl3 regression"
+            arg_type = String
+        "--target_cell"
+            help = "target cell line for lvl3 regression"
+            arg_type = String
+        "--dose"
+            help = "dose filter for lvl3 regression (e.g. '5.0'; empty = no filter)"
             arg_type = String
     end
     return parse_args(s)

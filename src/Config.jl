@@ -120,6 +120,7 @@ const LABEL_PATHS = Dict(
 
 function resolve_data_path!(config::Dict)
     fmt = get(config, "data_format", "tahoe")
+    repo_root = abspath(joinpath(@__DIR__, ".."))
 
     # if data_path was already set (e.g. from local.toml or CLI), use it
     existing = get(config, "data_path", "")
@@ -130,7 +131,7 @@ function resolve_data_path!(config::Dict)
         if !haskey(DATA_PATHS, fmt)
             error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")
         end
-        repo_root = abspath(joinpath(@__DIR__, ".."))
+        # repo_root = abspath(joinpath(@__DIR__, ".."))
         path = DATA_PATHS[fmt]
         if !isabspath(path)
             path = joinpath(repo_root, path)

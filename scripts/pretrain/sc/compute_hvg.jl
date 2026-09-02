@@ -1,4 +1,4 @@
-# SLURM_TIME="1-00:00" cpu_sbatch sc_hvgidx_2c64 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 2
+# SLURM_TIME="7-00:00" cpu_sbatch sc_hvgidx_100 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 100
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"

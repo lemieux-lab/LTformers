@@ -747,20 +747,32 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 ### sep 1 2026 ###
 
 -- pb pre-train
-    -- still running
+    -- still running (6)
 
 -- sc pre-train
     -- hvg idx computation
         -- still running 30 shard (1)
         -- compare:
             -- 10 vs 30 shard
-                -- 
+                -- little difference. can just use 30 shard probably! 
+                -- but oging to run 100 shard anywasy cuz why not (1)
+                -- but updated the path so we can do sc etf now
             -- n_cpus vs mem
                 -- no effect
+        -- updated hvg idx path!
+            -- need to test sc etfs now! waiting on rorqual....
+    -- still running lr rtf + er rtf (2)
 
 -- pb fine-tune
     -- lvl2:
-        -- how to do labels filter? same drugs as pb?
-        -- how to do ttv split on sc? via samples?
+        -- labels filter is same drugs as pb
+        -- ttv split on sc is via samples
     -- lvl3:
-        -- implement (PC method)
+        -- implementing (PC method)
+        -- waiting for CL analyses to finish (need to pick lowest corr. cell lines) (1)
+
+-- no-pretrain
+    -- currently implementing lincs mlp, need rank and exp for article 1 figure 2
+        -- doing test run! (on mega_sbatch) for both rmlp and emlp (2)
+    -- need to organize what is needed for p2 figures then implement tahoe mlp later
+    -- later, need to also do sweep on emlp, rmlp, etf, rtf for no-pretrain on all lvl tasks

@@ -20,7 +20,7 @@ n_heads = 2
 n_layers = 2
 n_hvg = 1024 # for ETF
 top_k = 1024 # for RTF
-hvg_path = "" # pre-computed HVG indices for SC-ETF
+hvg_path = "data/hvg_indices.jld2" # pre-computed HVG indices for SC-ETF (30-shard, 846k cells)
 n_eval_shards = 10
 subset_shards = 0
 subset_ratio = 1.0
@@ -43,7 +43,8 @@ label_path = ""
 # lvl3 references/targets
 source_cell = "MCF7"
 target_cell = "PC3"
-target_gene = "IGFBP3"
+# target_gene = "IGFBP3"  # replaced by PCA-based prediction
+dose = ""  # dose filter: "5.0" for Tahoe, "10" for LINCS; empty = no filter
 
 # misc
 wandb_mode = "online"
