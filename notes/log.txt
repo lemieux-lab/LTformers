@@ -800,21 +800,41 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 ### sep 2 2026 ###
 
 -- pb pre-train
-    -- still running sweeps (3)
-    -- review: other sweeps
+    -- rtf
+        -- running sweeps (3)
+    -- etf
+        -- completed sweeps (3) review???
 
 -- sc pre-train
-    -- still running er rtf (1)
-    -- still running 100 shard hvg idx for later (1)
-    -- still running 100step tests on all etfs (3)
-    -- run: sc on cq after git pull
+    -- rtf
+        -- running er rtf (1)
+    -- etf
+        -- running 100step tests on all etfs (3) ~ waiting on sc er rtf to be complete first tho
+        -- running 100 shard hvg for later (1)
+    -- cq implementation:
+        -- running 10ep test for speed reference (1)
 
--- fine-tune
+-- pb fine-tune
     -- lincs
-        -- still running no-pt emlp sweep (1)
-        -- review: no-pt rmlp sweep
-        -- review: no-pt lvl1,2 implementation
-        -- review: lvl3 implementation
+        -- no-pt
+            -- mlp
+                -- running emlp, rmlp sweeps (2)
+                -- need to implement lvl3
+            -- tf
+                -- need to implement lvl3
+        -- w-pt
+            -- testing lvl1, 2 code
+            -- need to implement lvl3
+        -- waitng on lvl3 cl comparison
     -- tahoe
-        -- implement: no-pt mlp for sc and pb
-        -- implement: lvl3 code
+        -- no-pt
+            -- need to implement mlp, tf
+        -- w-pt
+            -- need to test lvl1,2
+            -- need to implement lvl3
+
+-- sc fine-tune
+    -- no-pt
+        -- need to implement mlp, tf
+    -- w-pt
+        -- need to run pts on cq

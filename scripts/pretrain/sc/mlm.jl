@@ -227,7 +227,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     if epoch > 1
         GC.gc(true)
         CUDA.reclaim()
-        _phase("GPU before epoch $epoch train: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
+        # _phase("GPU before epoch $epoch train: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
+        _phase("GPU before epoch $epoch train reclaim")
     end
     epoch_losses = Float32[]
     shuffled_train = shuffle(train_shards)
@@ -306,7 +307,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     # reclaim GPU memory after val eval to avoid OOM at epoch boundary
     GC.gc(true)
     CUDA.reclaim()
-    _phase("GPU after val eval: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
+    # _phase("GPU after val eval: $(round(CUDA.used_memory()/2^30, digits=2)) GiB used, $(round(CUDA.reserved_memory()/2^30, digits=2)) GiB reserved")
+    _phase("GPU after val eval reclaim")
 
     # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done

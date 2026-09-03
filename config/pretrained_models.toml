@@ -18,15 +18,14 @@ etf = ""
 
 [tahoe_pb.mlm]
 rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-21_22-50/best"
-etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-02_16-54/best" # NOT COMPLETE
+etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.769, spearman=0.745, best_val_loss=5.450
 
 [tahoe_pb.lrecon]
-rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-22_17-36/best"
-etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-17_22-12/best"
+rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-22_17-36/best"etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-27_11-51/best" # 160k steps, best_val_loss=0.0064 (newer script)
 
 [tahoe_pb.erecon]
-rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-18_13-15/best"
-etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-22_07-50/best"
+rtf = "results/tahoe/pb/pretrain/erecon/rtf/2026-08-18_13-15/best"
+etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.978, spearman=0.973, best_val_loss=0.029
 
 # tahoe single-cell
 
