@@ -123,10 +123,14 @@ function resolve_data_path!(config::Dict)
     repo_root = abspath(joinpath(@__DIR__, ".."))
 
     # if data_path was already set (e.g. from local.toml or CLI), use it
+    # but only if it matches the requested data_format
     existing = get(config, "data_path", "")
-    if existing != "" && isfile(existing)
+    if existing != "" && isfile(existing) && haskey(DATA_PATHS, fmt) && contains(existing, fmt)
         println("resolved data_path: $existing (from config)")
         path = existing
+    # elseif existing != "" && isfile(existing)
+    #     println("resolved data_path: $existing (from config)")
+    #     path = existing
     else
         if !haskey(DATA_PATHS, fmt)
             error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")

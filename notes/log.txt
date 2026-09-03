@@ -776,3 +776,45 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
         -- doing test run! (on mega_sbatch) for both rmlp and emlp (2)
     -- need to organize what is needed for p2 figures then implement tahoe mlp later
     -- later, need to also do sweep on emlp, rmlp, etf, rtf for no-pretrain on all lvl tasks
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 2 2026 ###
+
+-- pb pre-train
+    -- running sweeps still (6)
+
+-- sc pre-train
+    -- still running er rtf (1)
+    -- finshed lr rtf, need to do a proper sweep tho; diverges around 32k steps
+    -- also doing 100step tests on all etfs (3)
+        -- still runnign 100 shard hvg idx tho for later (1)
+
+-- fine-tune 
+    -- lincs
+        -- no-pretrain mlp is working (30s/ep)
+        -- running sweeps now on mega_sbatch (2)
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 2 2026 ###
+
+-- pb pre-train
+    -- still running sweeps (3)
+    -- review: other sweeps
+
+-- sc pre-train
+    -- still running er rtf (1)
+    -- still running 100 shard hvg idx for later (1)
+    -- still running 100step tests on all etfs (3)
+    -- run: sc on cq after git pull
+
+-- fine-tune
+    -- lincs
+        -- still running no-pt emlp sweep (1)
+        -- review: no-pt rmlp sweep
+        -- review: no-pt lvl1,2 implementation
+        -- review: lvl3 implementation
+    -- tahoe
+        -- implement: no-pt mlp for sc and pb
+        -- implement: lvl3 code

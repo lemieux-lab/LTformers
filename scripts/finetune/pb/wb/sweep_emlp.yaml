@@ -21,8 +21,8 @@ parameters:
     value: "online"
   n_epochs:
     value: 100
-  max_steps:
-    value: 0
+  # max_steps:
+  #   value: 0
   max_ft_steps:
     value: 0
   lr:
