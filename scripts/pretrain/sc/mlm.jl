@@ -457,7 +457,8 @@ end
 
 _phase("plot_loss() + log_model() + log_params()")
 # save
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce";
+         val_losses=val_losses)
 cs, cp = if !isempty(all_preds)
     plot_ranked_heatmap(all_trues, all_preds, save_dir)
 else

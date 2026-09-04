@@ -288,7 +288,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 # log
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce";
+         val_losses=val_losses)
 cs, cp = plot_ranked_heatmap(all_trues, all_preds, save_dir)
 plot_per_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir)
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,

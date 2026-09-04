@@ -1,0 +1,68 @@
+# lincs! (pb-only)
+
+DATA ANALYSIS #####
+-- histogram of expression [DONE]
+-- cosine vs. kt distance vectors [DONE] (100k vectors)
+-- entropy by rank [DONE]
+    
+    maybe:
+    -- euclidean vs. kt distance vectors? [DONE]
+    -- distance vectors by cell line, compound, sample size?
+    -- mean expression variance by gene vs. by rank?
+    -- tsne/umap by cell line, compound?
+
+PRE-TRAIN
+-- RTF
+    -- mlm
+    -- erecon
+    -- lrecon
+-- ETF
+    -- mlm
+    -- erecon
+    -- lrecon
+
+FINE-TUNE
+-- w/o-pt
+    -- RMLP
+        -- lvl1:
+        -- lvl2:
+        -- lvl3:
+    -- EMLP
+        -- lvl1:
+        -- lvl2:
+        -- lvl3:
+    -- RTF
+        -- lvl1:
+        -- lvl2:
+        -- lvl3:
+    -- ETF
+        -- lvl1:
+        -- lvl2:
+        -- lvl3:
+-- w/-pt
+    -- RTF
+        -- mlm
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:
+        -- erecon
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:
+        -- lrecon
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:
+    -- ETF
+        -- mlm
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:
+        -- erecon
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:
+        -- lrecon
+            -- lvl1:
+            -- lvl2:
+            -- lvl3:

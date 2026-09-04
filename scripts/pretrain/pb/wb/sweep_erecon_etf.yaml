@@ -17,7 +17,8 @@ parameters:
   wandb_mode:
     value: "online"
   max_steps:
-    value: 160000
+    # value: 160000
+    value: 40000
   n_epochs:
     value: 0
   embed_dim:

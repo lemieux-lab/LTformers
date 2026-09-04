@@ -317,7 +317,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 # log
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE";
+         val_losses=val_losses)
 
 cs = corspearman(all_trues, all_preds)
 cp = cor(all_trues, all_preds)

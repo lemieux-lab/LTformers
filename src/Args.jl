@@ -295,6 +295,12 @@ function load_sc_finetune_args()
         "--dose"
             help = "dose filter for lvl3 regression (e.g. '5.0'; empty = no filter)"
             arg_type = String
+        # "--data_format"
+        #     help = "data format (ignored for SC; kept for CLI compatibility with PB sweep launchers)"
+        #     arg_type = String
+        "--data_format"
+            help = "data format (ignored for SC; kept for CLI compatibility with PB sweep launchers)"
+            arg_type = String
     end
     return parse_args(s)
 end

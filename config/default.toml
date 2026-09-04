@@ -24,7 +24,8 @@ hvg_path = "data/hvg_indices.jld2" # pre-computed HVG indices for SC-ETF (30-sha
 n_eval_shards = 10
 subset_shards = 0
 subset_ratio = 1.0
-max_steps = 160000 # pre-train
+# max_steps = 160000 # pre-train
+max_steps = 40000 # pre-train
 
 # variable params
 lr = 0.0005

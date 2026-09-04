@@ -1,0 +1,47 @@
+# .venv-x86_64/bin/wandb sweep scripts/finetune/sc/w_pretrain/wb/sweep_rtf_lrecon_lvl1.yaml
+# run_sweep gh18_sbatch rtf_lrecon_lvl1 <entity>/SC-FT-Aug/<sweep_id>
+
+program: scripts/finetune/sc/w_pretrain/rank_tf.jl
+project: SC-FT-Aug
+name: rtf_lrecon_lvl1_sweep
+method: bayes
+metric:
+  name: best_val_loss
+  goal: minimize
+parameters:
+  modeltype:
+    value: "rtf"
+  mode:
+    value: "e2e"
+  task:
+    value: "lrecon"
+  level:
+    value: "lvl1"
+  # wandb_mode: follows local.toml
+    # value: "online"
+  n_epochs:
+    value: 0
+  max_ft_steps:
+    value: 40000
+  batch_size:
+    value: 100
+  subset_shards:
+    value: 100
+  # swept params
+  lr:
+    distribution: log_uniform_values
+    min: 0.00005
+    max: 0.01
+  drop_prob:
+    min: 0.01
+    max: 0.3
+early_terminate:
+  type: hyperband
+  min_iter: 5
+  eta: 3
+  s: 3
+command:
+  - ${env}
+  - julia
+  - ${program}
+  - ${args}

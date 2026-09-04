@@ -799,42 +799,69 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 
 ### sep 2 2026 ###
 
--- pb pre-train
-    -- rtf
-        -- running sweeps (3)
-    -- etf
-        -- completed sweeps (3) review???
+a1
+-- pre-train
+    -- can use prev. results for etf/rtf mlm/lrecon for now but need to redo later...
+    -- NEED etf/rtf erecon
+-- fine-tune
+    -- done 10ep test on all lvls for all no-pt (4)
+        -- good
+    -- RUNNING no-pt mlp arch sweep for lvl2 (2)
+    -- can use prev. results for now for lvl1,2 on etf/rtf mlm/lrecon but need to redo later...
+    -- fixed yamls
+    -- NEED all lvls no-pts
+    -- NEED lvl3 implementation
+    -- L8R all lvls etf/rtf erecon 
 
--- sc pre-train
-    -- rtf
-        -- running er rtf (1)
-    -- etf
-        -- running 100step tests on all etfs (3) ~ waiting on sc er rtf to be complete first tho
-        -- running 100 shard hvg for later (1)
-    -- cq implementation:
-        -- running 10ep test for speed reference (1)
+a2
+-- pre-train
+    -- PB
+        -- done etf sweeps, updated .toml
+            -- why is test loss always at 0???
+        -- RUNNNING rtf sweeps (3)
+    -- SC
+        -- RUNNING 100shard hvg for etfs later (1)
+        -- done 10step test on mlm rtf for speed reference
+            -- 10steps in 6.5mins??? so would take about 23 days for 160k steps.
+            -- should max at 45k steps instead (~7days)
+            -- need to sweep based off of less steps then!
+        -- NEED rtf, etf sweeps
+            -- RUNNING mlm etf, rtf (2, CQ)
+-- fine-tune
+    -- PB
+        -- done 10ep test on all lvls for all no-pt (4)
+            -- good
+        -- RUNNING no-pt mlp arch sweep for lvl2 (2)
+        -- fixed yamls
+        -- NEED lvl3 implementation
+        -- NEED etf sweeps
+        -- L8R to finish rtf pre-training
+    -- SC
+        -- error 10ep test on all lvls for all no-pt (4)
+        -- fixed yamls
+        -- RUNNING no-pt 1step mlp tests for lvl1, lvl2 (4)
+            -- after, to do mlp arch sweep
+        -- NEED lvl3 implementation
+        -- L8R to finish pre-training
 
--- pb fine-tune
+-- doesn't tahoe PB also need HVG indices???
+-- changed all pts to 40k steps since best epoch was usually around 60 on tpb
+-- moved wandb status to local.toml since cq requires it offline
+-- NEED to fix .sh files!
+-- NEED to update a1, a2.txts
+
+-- re: lvl3
     -- lincs
-        -- no-pt
-            -- mlp
-                -- running emlp, rmlp sweeps (2)
-                -- need to implement lvl3
-            -- tf
-                -- need to implement lvl3
-        -- w-pt
-            -- testing lvl1, 2 code
-            -- need to implement lvl3
-        -- waitng on lvl3 cl comparison
+        -- prev. was JURKAT and SKB w/ lwoest correlation (0.355)
+        -- however, JURKAT had the messed up singular plate that we removed from the vectors thing
+        -- thus after that single plate was excluded, we have VCAP and WA09 (0.428)
+        -- however, it looks pretty bimodal
+        -- thus we can use PC2 instead which is 0.58 lwoer bound w/ 12.5% variance explained
+        -- additionally, WA09 only has 103 unique drugs and 300 samples so could just be noisy
+        -- jurkat-skb had 172 shared drugs, 1.4k-3.7k samples
+        -- vcap-wa09 has 77 shared drugs, 32.5k-300 samples
+        -- running again to see what other ones are viable w. more samples
     -- tahoe
-        -- no-pt
-            -- need to implement mlp, tf
-        -- w-pt
-            -- need to test lvl1,2
-            -- need to implement lvl3
-
--- sc fine-tune
-    -- no-pt
-        -- need to implement mlp, tf
-    -- w-pt
-        -- need to run pts on cq
+        -- CVCL_0218 and CVCL_1577 w/ lowest correlation (0.643)
+        -- borderline bimodal, could also do PC2 for this
+        -- 337 shared drugs, 487-425 samples

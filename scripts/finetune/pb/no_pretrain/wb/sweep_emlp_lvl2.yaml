@@ -1,9 +1,9 @@
-# .venv-x86_64/bin/wandb sweep scripts/finetune/pb/wb/sweep_emlp.yaml
-# run_sweep gh18_sbatch emlp <entity>/PB-FT-Aug/<sweep_id>
+# .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_emlp_lvl2.yaml
+# run_sweep gh18_sbatch emlp_lvl2 <entity>/PB-FT-Aug/<sweep_id>
 
 program: scripts/finetune/pb/no_pretrain/emlp.jl
 project: PB-FT-Aug
-name: emlp_sweep
+name: emlp_nopt_lvl2_sweep
 method: bayes
 metric:
   name: best_val_loss
@@ -14,17 +14,18 @@ parameters:
   mode:
     value: "e2e"
   level:
-    values: ["lvl1", "lvl2"]
+    value: "lvl2"
   data_format:
     value: "lincs"
-  wandb_mode:
-    value: "online"
+  # wandb_mode: follows local.toml
+    # value: "online"
   n_epochs:
-    value: 100
-  # max_steps:
-  #   value: 0
-  max_ft_steps:
     value: 0
+  max_ft_steps:
+    value: 80000
+  batch_size:
+    value: 100
+  # swept params
   lr:
     distribution: log_uniform_values
     min: 0.00005
@@ -36,9 +37,9 @@ parameters:
     values: [2, 4, 6, 8]
 early_terminate:
   type: hyperband
-  min_iter: 15
-  eta: 2
-  s: 2
+  min_iter: 5
+  eta: 3
+  s: 3
 command:
   - ${env}
   - julia

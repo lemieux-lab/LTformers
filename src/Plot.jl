@@ -6,11 +6,22 @@ export plot_loss, plot_ranked_heatmap, plot_cosine
 export plot_per_rank_error, plot_per_gene_error, plot_per_sample_rank_error
 
 
-function plot_loss(n_epochs::Int, train_losses, test_losses, save_dir::String, loss::String)
+function plot_loss(n_epochs::Int, train_losses, test_losses, save_dir::String, loss::String;
+                   val_losses=Float32[])
     fig_loss = Figure(size = (600, 400))
     ax_loss = Axis(fig_loss[1, 1], xlabel="Epoch", ylabel="Loss ($loss)")
     lines!(ax_loss, 1:n_epochs, train_losses, label="Train", linewidth=2)
-    lines!(ax_loss, 1:n_epochs, test_losses, label="Test", linewidth=2)
+    if !isempty(val_losses) && length(val_losses) == n_epochs
+        lines!(ax_loss, 1:n_epochs, val_losses, label="Val", linewidth=2)
+    end
+    if length(test_losses) == n_epochs
+        lines!(ax_loss, 1:n_epochs, test_losses, label="Test", linewidth=2)
+    elseif length(test_losses) >= 1
+        # test evaluated only at end — plot as marker(s) at the correct epoch(s)
+        test_epochs = (n_epochs - length(test_losses) + 1):n_epochs
+        scatter!(ax_loss, collect(test_epochs), collect(test_losses),
+                 label="Test", markersize=8)
+    end
     axislegend(ax_loss, position=:rt)
     save("$save_dir/loss.png", fig_loss)
 end

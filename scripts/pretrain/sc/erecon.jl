@@ -368,7 +368,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 # save
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE";
+         val_losses=val_losses)
 
 # correlation scatter
 using StatsBase: corspearman

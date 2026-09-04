@@ -1,0 +1,47 @@
+# .venv-x86_64/bin/wandb sweep scripts/finetune/sc/no_pretrain/wb/sweep_emlp_lvl2.yaml
+# run_sweep gh18_sbatch emlp_lvl2 <entity>/SC-FT-Aug/<sweep_id>
+
+program: scripts/finetune/sc/no_pretrain/emlp.jl
+project: SC-FT-Aug
+name: emlp_nopt_lvl2_sweep
+method: bayes
+metric:
+  name: best_val_loss
+  goal: minimize
+parameters:
+  modeltype:
+    value: "emlp"
+  mode:
+    value: "e2e"
+  level:
+    value: "lvl2"
+  # wandb_mode: follows local.toml
+    # value: "online"
+  n_epochs:
+    value: 0
+  max_ft_steps:
+    value: 80000
+  batch_size:
+    value: 100
+  subset_shards:
+    value: 100
+  # swept params
+  lr:
+    distribution: log_uniform_values
+    min: 0.00005
+    max: 0.01
+  drop_prob:
+    min: 0.01
+    max: 0.3
+  n_layers:
+    values: [2, 4, 6, 8]
+early_terminate:
+  type: hyperband
+  min_iter: 5
+  eta: 3
+  s: 3
+command:
+  - ${env}
+  - julia
+  - ${program}
+  - ${args}

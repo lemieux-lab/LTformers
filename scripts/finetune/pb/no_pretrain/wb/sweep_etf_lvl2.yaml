@@ -1,0 +1,53 @@
+# .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_etf_lvl2.yaml
+# run_sweep gh18_sbatch etf_lvl2 <entity>/PB-FT-Aug/<sweep_id>
+
+program: scripts/finetune/pb/no_pretrain/exp_tf.jl
+project: PB-FT-Aug
+name: etf_nopt_lvl2_sweep
+method: bayes
+metric:
+  name: best_val_loss
+  goal: minimize
+parameters:
+  modeltype:
+    value: "etf"
+  mode:
+    value: "e2e"
+  level:
+    value: "lvl2"
+  data_format:
+    value: "lincs"
+  # wandb_mode: follows local.toml
+    # value: "online"
+  n_epochs:
+    value: 0
+  max_ft_steps:
+    value: 80000
+  batch_size:
+    value: 100
+  embed_dim:
+    value: 128
+  hidden_dim:
+    value: 128
+  n_heads:
+    value: 2
+  n_layers:
+    value: 2
+  # swept params
+  lr:
+    distribution: log_uniform_values
+    min: 0.00005
+    max: 0.01
+  drop_prob:
+    min: 0.01
+    max: 0.3
+early_terminate:
+  type: hyperband
+  min_iter: 5
+  eta: 3
+  s: 3
+command:
+  - ${env}
+  - julia
+  - ${program}
+  - ${args}
