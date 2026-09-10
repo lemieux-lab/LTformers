@@ -797,7 +797,7 @@ if wnat to do the cl overlay for sc need to re-run smapling vecotrs etf O_O lokw
 
 -----------------------------------------------------------------------------------------------------------
 
-### sep 2 2026 ###
+### sep 3 2026 ###
 
 a1
 -- pre-train
@@ -865,3 +865,276 @@ a2
         -- CVCL_0218 and CVCL_1577 w/ lowest correlation (0.643)
         -- borderline bimodal, could also do PC2 for this
         -- 337 shared drugs, 487-425 samples
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 5 2026 ###
+
+a1
+-- pre-train
+    -- NEED tf sweeps
+        -- can use prev. results for etf/rtf mlm/lrecon for now but need to redo later...
+        -- L8R etf/rtf erecon
+-- fine-tune
+    -- NEED all lvls no-pts sweeps
+        -- can use prev. results for now for lvl1,2 on etf/rtf mlm/lrecon but need to redo later...
+        -- done no-pt mlp arch sweep for lvl2 (2)
+            -- 8 layers best??
+            -- can do a full run on no-pt mlp arch sweeps
+        -- lowkey, for rmlp would need normalized values for Dense() layers, no????
+        -- like how it was before, with values bounded between [-1, 1]
+    -- NEED lvl3 implementation
+    -- L8R all lvls etf/rtf erecon 
+
+a2
+-- pre-train
+    -- PB
+        -- NEED tf sweeps
+            -- done etf sweeps, updated .toml
+                -- why is test loss always at 0???
+                -- fixed val loss logging
+            -- done rtf sweeps (3)
+                -- didn't really work, would defos need to re-run everything 
+    -- SC
+        -- RUNNING 100shard hvg for etfs later (1)
+        -- NEED tf sweeps
+            -- done mlm etf, rtf (2, CQ)
+                -- wandb sweeps are not working (API request error); not sure why
+-- fine-tune
+    -- PB
+        -- NEED no-pt sweeps
+            -- done no-pt mlp arch sweep for lvl2 (2)
+                -- need to re-run since rmlp has too few runs, however 8 layers should be fine??
+                -- rmlp only ran at 6 layers (not 8) and it was doing ok
+        -- NEED lvl3 implementation
+        -- L8R to finish rtf pre-training
+    -- SC
+        -- done no-pt 1step mlp tests for lvl1, lvl2 (4)
+            -- after, to do mlp arch sweep
+            -- 2mins for 1step in exp, 4mins for 1step in rank
+        -- NEED lvl3 implementation
+        -- L8R to finish pre-training
+
+-- todo:
+    -- redo rmlp?
+    -- sweep no-pt mlps on lincs, t-pb, t-sc
+        -- 
+    -- sweep pts on CQ for t-sc
+        -- RUNNING to try again just mlm rtf
+    -- sweep pts on gh18 for t-pb
+        -- RUNNING (6)
+    -- sweep pts on gh18 for lincs
+    -- implement lvl3, test
+    -- sweep no-pt tf?
+    -- clean .sh files
+    -- finish a1/a2.txt
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 8 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 implement
+        -- cannot find a good LINCS cl pair... not enough samples/drugs overlap between any low correlation ones
+        -- DONE lvl3 analysis again to broaden search?
+    -- TODO no-pt sweeps
+        -- RUNNING rmlp (1) on lvl2
+            -- need to re-run rmlp since change
+            -- DONE emlp on lvl2
+                -- best: emlp_nopt_lincs_lvl2_2026-09-08_00-01
+                    -- lr=0.001, drop_prob=0.02, n_layers=6
+        -- RUNNING emlp (1) on lvl1
+        -- rmlp to be changed to normalized to how the AE version of the rank input was implemented previously:
+        -- aka divide by n_genes, then shift to [-0.5, 0.5]
+            -- can also alternatively divide by n_genes only or just do zero-mean unit variance?
+            -- difference would just be centering vs not centering (all would have uniform distr)
+            -- actually instead just doing the divide by n_genes, otherwise the highest expressed map to most negative values
+        -- RUNNING test on rmlp on all datasets to eval (1)
+    -- TODO pt sweeps
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+            -- REVIEW params, then run good runs
+                -- all still running...
+    -- sc
+        -- DEBUG cq runs
+            -- RUNNING rtf, etf mlm on offline random sweep using job arrays (1:1-10, CQ)
+        -- TODO sweeps
+-- fine-tune
+    -- pb
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+            -- RUNNING rmlp (1) on lvl2
+            -- need to re-run rmlp since change
+            -- DONE emlp on lvl2
+                -- best: emlp_nopt_tahoe_lvl2_2026-09-08_11-00
+                    -- lr=0.0005, drop_prob=0.06, n_layers=2
+            -- RUNNING emlp (1) on lvl1
+        -- TODO pt sweeps
+    -- sc
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+        -- TODO pt sweeps
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 9 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 implement
+        -- RUNNING new (more detailed) lvl3 analysis
+    -- TODO no-pt sweeps
+        -- RUNNING rmlp (1) on lvl2
+            -- need to re-run rmlp since change
+            -- DONE emlp on lvl2
+            -- DONE emlp on lvl1
+                -- best: emlp_nopt_lincs_lvl1_2026-09-09_01-02
+                -- lr=0.00005, drop_prob=0.08, n_layers=2
+        -- RUNNING test on rmlp on all datasets to eval (1)
+            -- DONE
+    -- TODO pt sweeps
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+            -- REVIEW params, then run good runs
+                -- all still running...
+    -- sc
+        -- DEBUG cq runs
+            -- RUNNING rtf, etf mlm on offline random sweep using job arrays (1:1-10, CQ)
+        -- TODO sweeps
+-- fine-tune
+    -- pb
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+            -- RUNNING rmlp (1) on lvl2
+            -- need to re-run rmlp since change
+            -- RUNNING emlp (1) on lvl1
+        -- TODO pt sweeps
+    -- sc
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+        -- TODO pt sweeps
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 10 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 implement
+    -- TODO no-pt sweeps
+        -- RUNNING rmlp sweep on lvl1, lvl2 since normalization change (2)
+            -- reviewed test on rmlp
+                -- good!
+    -- TODO pt sweeps
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+            -- REVIEW
+                -- need to re-run RTF, keep having OOM errors 
+                -- PENDING RTF sweep! (can probably scancel the rmlp lvl2 sweeps for lincs/tahoe if fast)
+                -- the rest of the runs are still running... could probably give it a few more days?
+    -- sc
+        -- DEBUG cq runs
+            -- rtf CUDA now working (after updating the LocalPreferences.toml on rorqual)
+            -- issue is now OOM (9GB)
+            -- RUNNING rtf mlm on offline random sweep using job arrays (1:1-10, CQ)
+                -- batch_size=200, max_steps=2k (is that enough???)
+                -- worked, now trying etf mlm! and everything else. (6:1-2, CQ)
+                -- was [828.5s] for 2k steps 
+        -- TODO sweeps
+-- fine-tune
+    -- pb
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+            -- RUNNING rmlp sweep on lvl1, lvl2 since normalization change (2)
+                -- reviewed test on rmlp
+                    -- OOM error, RUNNING rmlp test 5ep 32bs again (1)
+                    -- good!
+            -- done emlp on lvl1
+                -- reviewed if everything is ok! (or if close to done)
+                -- task is too easy, don't need to train that long (lw all configs are like the same)
+                -- best: emlp_nopt_tahoe_lvl1_2026-09-10_12-11
+                    -- lr=0.0005, drop_prob=0.25, n_layers=2
+            -- RUNNING emlp sweep on lvl2 (1)
+        -- TODO pt sweeps
+    -- sc
+        -- TODO lvl3 implement
+        -- TODO no-pt sweeps
+            -- REVIEW test on rmlp
+                -- CLI arg error, RUNNING rmlp test 5ep 32bs again (1)
+        -- TODO pt sweeps
+
+re: lvl3 (more detailed analysis)
+-- lowest pair correlation b/n lincs CL is 0.4, b/n tahoe CL is 0.7
+-- note: if bimodality coefficient is high, we want to capture PC2 instead of PC1 (but can still use a bimodal one)
+    -- as it is likely a batch effect
+-- most viable:
+    -- lincs:
+        -- JURKAT (blood) -> SKB (tumor?? unsure origin)
+            -- corr: 0.458
+            -- drugs: 172
+            -- n_source: 1.4k
+            -- n_target: 3.7k
+            -- PC1 variance: 17%
+            -- bimodality: 0.327
+            -- PC1 corr: 0.023
+        -- U20S (bone) -> VCAP (prostate) ** maybe better
+            -- corr: 0.512
+            -- drugs: 831
+            -- n_source: 10.1k
+            -- n_target: 32.5k
+            -- PC1 variance: 16.4%
+            -- bimodality: 0.227
+            -- PC1 corr: 0.031
+    -- tahoe:
+        -- 0218 (colon) -> 1577 (lung) ** maybe better
+            -- corr: 0.699
+            -- drugs: 337
+            -- n_source: 487
+            -- n_target: 425
+            -- PC1 variance: 22.1%
+            -- bimodality: 0.589
+            -- PC1 corr: 0.643
+            -- PC2 corr: 0.876
+        -- 0152 (pancreas) -> 1693 (lung) 
+            -- corr: 0.706
+            -- drugs: 379
+            -- n_source: 489
+            -- n_target: 489
+            -- PC1 variance: 19.4%
+            -- bimodality: 0.572
+            -- PC1 corr: 0.966
+            -- PC2 corr: 0.930
+
+    JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
+8097778        test_rmlp_tahoe_sc   R 1-22:01:37     1   32 gres:gpu:1    200G majsrv6 (None)
+8097844                   lvl3_cl   R   23:56:39     1   32        N/A    100G binslv26 (None)
+8097821    TPB_rmlp_lvl1_as61l5lq  PD 7-00:00:00     1   10 gres:gpu:1     80G  (Resources)
+8097823    TPB_rmlp_lvl2_oghmlz4k  PD 7-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+8097829            TmlmR_nonpnhym  PD 7-00:00:00     1   64 gres:gpu:G    500G  (Priority)
+8096550            TmlmE_1xweiku5   R 1-19:27:45     1   10 gres:gpu:1     80G balrog (None)
+8096552             TerE_jbyj1vlp   R 3-06:14:36     1   10 gres:gpu:1     80G balrog (None)
+8096553             TerR_0krnhz7p   R 4-07:27:47     1   10 gres:gpu:1     80G balrog (None)
+8096554           TlrecE_5pmy94pl   R 5-05:34:30     1   10 gres:gpu:1     80G balrog (None)
+8096555           TlrecR_sgp9tsem   R 5-05:42:53     1   10 gres:gpu:1     80G balrog (None)
+8097818    TPB_emlp_lvl2_pg4lh7h3   R 6-22:12:46     1   10 gres:gpu:1     80G balrog (None)
+8097820      L_rmlp_lvl1_6fmomrxw   R 6-22:22:24     1   10 gres:gpu:1     80G balrog (None)
+8097822      L_rmlp_lvl2_e9jpewie   R 6-22:24:27     1   64 gres:gpu:G    500G balrog (None)

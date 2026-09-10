@@ -1,0 +1,129 @@
+# Tahoe Single-Cell swept hyperparameters per config
+
+# ──────────────────────────────────────────────
+# pretrain
+# ──────────────────────────────────────────────
+
+[pretrain.mlm.rtf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+
+[pretrain.mlm.etf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+
+[pretrain.erecon.rtf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+
+[pretrain.erecon.etf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+
+[pretrain.lrecon.rtf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+ema_decay = 0.0
+
+[pretrain.lrecon.etf]
+lr = 0.0
+drop_prob = 0.0
+mask_ratio = 0.0
+ema_decay = 0.0
+
+# ──────────────────────────────────────────────
+# finetune — with pretrain
+# ──────────────────────────────────────────────
+
+[finetune.w_pretrain.rtf.mlm.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.mlm.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.erecon.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.erecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.lrecon.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.lrecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.mlm.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.mlm.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.erecon.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.erecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.lrecon.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.lrecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+# ──────────────────────────────────────────────
+# finetune — no pretrain
+# ──────────────────────────────────────────────
+
+[finetune.no_pretrain.rtf.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.no_pretrain.rtf.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.no_pretrain.etf.lvl1]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.no_pretrain.etf.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.no_pretrain.rmlp.lvl1]
+lr = 0.0
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.rmlp.lvl2]
+lr = 0.0
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.emlp.lvl1]
+lr = 0.0
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.emlp.lvl2]
+lr = 0.0
+drop_prob = 0.0
+n_layers = 0

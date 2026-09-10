@@ -5,6 +5,14 @@ using TOML, PyCall
 export load_config, gpu_lr, init_wandb, resolve_model_dir!, resolve_data_path!
 
 
+# dataset -> swept-HP config file (relative to repo root)
+const HP_CONFIGS = Dict(
+    "tahoe"    => "config/tpb.toml",
+    "lincs"    => "config/lincs.toml",
+    "tahoe_sc" => "config/ts.toml",
+)
+
+
 function _merge_local!(config::Dict, toml_path::String)
     local_path = replace(toml_path, r"\.toml$" => ".local.toml")
     if !isfile(local_path)
@@ -21,6 +29,56 @@ function _merge_local!(config::Dict, toml_path::String)
     return config
 end
 
+"""
+    _merge_hp!(config, hp_section, args; dataset="")
+
+Merge dataset-specific swept hyperparameters into `config`.
+
+`hp_section` is the full vector of TOML keys to the leaf section,
+e.g. `["pretrain", "mlm", "rtf"]` or `["finetune", "no_pretrain", "emlp", "lvl1"]`.
+The dataset file is chosen from `HP_CONFIGS` using `data_format`
+(or the explicit `dataset` kwarg for SC scripts).
+
+Values from the HP file override `default.toml` / `local.toml`, but
+any key explicitly passed via CLI (`args` with non-nothing value) is
+kept as-is, so WandB sweep overrides still win.
+"""
+function _merge_hp!(config::Dict, hp_section::Vector{String},
+                    args::Union{Dict{String,Any}, Nothing} = nothing;
+                    dataset::String = "")
+    data_fmt = dataset != "" ? dataset : get(config, "data_format", "tahoe")
+    hp_rel   = get(HP_CONFIGS, data_fmt, "")
+    hp_rel == "" && return config
+
+    repo_root = abspath(joinpath(@__DIR__, ".."))
+    hp_path   = joinpath(repo_root, hp_rel)
+    if !isfile(hp_path)
+        println("warning: hp config not found: $hp_path")
+        return config
+    end
+
+    hp   = TOML.parsefile(hp_path)
+    node = hp
+    for key in hp_section
+        if !haskey(node, key)
+            println("warning: hp section [$(join(hp_section, "."))] not found in $hp_rel")
+            return config
+        end
+        node = node[key]
+    end
+
+    for (k, v) in node
+        # skip if CLI explicitly set this key
+        if !isnothing(args) && !isnothing(get(args, k, nothing))
+            continue
+        end
+        config[k] = v
+    end
+    println("merged hp config: $hp_rel [$(join(hp_section, "."))]")
+    return config
+end
+
+
 function load_config(toml_path::String; overrides...)
     config = TOML.parsefile(toml_path)
     _merge_local!(config, toml_path)
@@ -30,9 +88,23 @@ function load_config(toml_path::String; overrides...)
     return config
 end
 
-function load_config(toml_path::String, args::Dict{String, Any})
+function load_config(toml_path::String, args::Dict{String, Any};
+                     hp_section::Vector{String} = String[],
+                     dataset::String = "")
     config = TOML.parsefile(toml_path)
     _merge_local!(config, toml_path)
+
+    # merge dataset-specific HP *before* CLI args so sweeps override
+    if !isempty(hp_section)
+        # need data_format + modeltype to resolve the section;
+        # pull from args first (since they aren't merged yet), fall back to config
+        for key in ("data_format", "modeltype")
+            v = get(args, key, nothing)
+            !isnothing(v) && (config[key] = v)
+        end
+        _merge_hp!(config, hp_section, args; dataset=dataset)
+    end
+
     for (k, v) in args
         !isnothing(v) && (config[k] = v)
     end
