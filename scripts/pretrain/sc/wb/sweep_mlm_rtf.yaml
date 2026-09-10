@@ -3,7 +3,7 @@
 
 program: scripts/pretrain/sc/mlm.jl
 project: SC-PT-Aug
-name: mlm_rtf_sweep
+name: SC_mlm_rtf_sweep
 method: bayes
 metric:
   # name: test_loss
@@ -32,6 +32,7 @@ parameters:
     value: 1024
   # sweep params
   lr:
+    distribution: log_uniform_values
     min: 0.0005
     max: 0.005
   drop_prob:

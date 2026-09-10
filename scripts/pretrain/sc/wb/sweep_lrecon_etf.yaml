@@ -3,7 +3,7 @@
 
 program: scripts/pretrain/sc/lrecon.jl
 project: SC-PT-Aug
-name: lrecon_etf_sweep
+name: SC_lrecon_etf_sweep
 method: bayes
 metric:
   # name: test_loss
@@ -32,6 +32,7 @@ parameters:
     value: 1024
   # sweep params
   lr:
+    distribution: log_uniform_values
     min: 0.0005
     max: 0.005
   drop_prob:
@@ -39,7 +40,7 @@ parameters:
     max: 0.2
   mask_ratio:
     min: 0.1
-    max: 0.3
+    max: 0.5
   ema_decay:
     min: 0.8
     max: 0.999

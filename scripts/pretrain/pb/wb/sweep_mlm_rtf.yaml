@@ -1,12 +1,11 @@
 # .venv-x86_64/bin/wandb sweep scripts/pretrain/pb/wb/sweep_mlm_rtf.yaml
-# run_sweep gh18_sbatch <entity>/PB-PT-Aug/<sweep_id>
+# run_sweep gh200_sbatch TmlmR serena-chan-/PB-PT-Aug/nonpnhym
 
 program: scripts/pretrain/pb/mlm.jl
 project: PB-PT-Aug
-name: mlm_rtf_sweep
+name: TPB_mlm_rtf_sweep
 method: bayes
 metric:
-  # name: test_loss
   name: val_loss
   goal: minimize
 parameters:
@@ -18,7 +17,6 @@ parameters:
     value: "online"
   # constant params
   max_steps:
-    # value: 160000
     value: 40000
   n_epochs:
     value: 0
@@ -31,11 +29,11 @@ parameters:
   n_layers:
     value: 2
   batch_size:
-    value: 100
+    value: 300
   # sweep params
   lr:
-    # min: 0.0005
-    min: 0.001
+    distribution: log_uniform_values
+    min: 0.0005
     max: 0.005
   drop_prob:
     min: 0.05

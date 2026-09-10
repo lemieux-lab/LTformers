@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_rmlp_lvl1.yaml
-# run_sweep gh18_sbatch rmlp_lvl1 <entity>/PB-FT-Aug/<sweep_id>
+# run_sweep gh18_sbatch TPB_rmlp_lvl1 serena-chan-/PB-FT-Aug/as61l5lq
 
 program: scripts/finetune/pb/no_pretrain/rmlp.jl
 project: PB-FT-Aug
@@ -16,13 +16,13 @@ parameters:
   level:
     value: "lvl1"
   data_format:
-    value: "lincs"
+    value: "tahoe"
   # wandb_mode: follows local.toml
     # value: "online"
   n_epochs:
     value: 0
   max_ft_steps:
-    value: 80000
+    value: 40000
   batch_size:
     value: 100
   # swept params

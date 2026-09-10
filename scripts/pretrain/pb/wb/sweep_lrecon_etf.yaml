@@ -3,7 +3,7 @@
 
 program: scripts/pretrain/pb/lrecon.jl
 project: PB-PT-Aug
-name: lrecon_etf_sweep
+name: TPB_lrecon_etf_sweep
 method: bayes
 metric:
   # name: test_loss
@@ -36,15 +36,15 @@ parameters:
     value: 100
   # sweep params
   lr:
-    # min: 0.0005
-    min: 0.001
+    distribution: log_uniform_values
+    min: 0.0005
     max: 0.005
   drop_prob:
     min: 0.1
     max: 0.2
   mask_ratio:
     min: 0.1
-    max: 0.3
+    max: 0.5
   ema_decay:
     min: 0.8
     # max: 0.99

@@ -3,7 +3,7 @@
 
 program: scripts/pretrain/pb/mlm.jl
 project: PB-PT-Aug
-name: mlm_etf_sweep
+name: TPB_mlm_etf_sweep
 method: bayes
 metric:
   # name: test_loss
@@ -34,8 +34,8 @@ parameters:
     value: 100
   # sweep params
   lr:
-    # min: 0.0005
-    min: 0.001
+    distribution: log_uniform_values
+    min: 0.0005
     max: 0.005
   drop_prob:
     min: 0.05
