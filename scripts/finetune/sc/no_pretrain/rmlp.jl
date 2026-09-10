@@ -67,9 +67,12 @@ function sc_inverse_ranks(X_rtf::Matrix{Int32}, n_coding::Int)
 end
 
 println("converting RTF tokens to inverse ranks (n_coding=$n_coding)...")
-X_train = sc_inverse_ranks(d.X_train, n_coding)
-X_val   = sc_inverse_ranks(d.X_val, n_coding)
-X_test  = sc_inverse_ranks(d.X_test, n_coding)
+# X_train = sc_inverse_ranks(d.X_train, n_coding)
+# X_val   = sc_inverse_ranks(d.X_val, n_coding)
+# X_test  = sc_inverse_ranks(d.X_test, n_coding)
+X_train = sc_inverse_ranks(d.X_train, n_coding) ./ Float32(n_coding)
+X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)
+X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
 n_genes = n_coding  # MLP input dim = full gene space
 n_classifications = d.n_classifications
 y_train, y_val, y_test = d.y_train, d.y_val, d.y_test

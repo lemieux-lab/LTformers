@@ -324,7 +324,8 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     elseif config["modeltype"] == "rmlp"
         gene_medians = vec(median(X, dims=2)) .+ 1f-10
         X_ranked = rank_genes_fn(X, gene_medians)
-        X_inv = inverse_ranks_fn(X_ranked)
+        # X_inv = inverse_ranks_fn(X_ranked)
+        X_inv = Float32.(inverse_ranks_fn(X_ranked)) ./ Float32(n_genes)
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_inv, 0.1f0, 0.1f0)
