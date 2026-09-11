@@ -48,11 +48,19 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
+[finetune.w_pretrain.rtf.mlm.lvl3]
+lr = 0.0
+drop_prob = 0.0
+
 [finetune.w_pretrain.rtf.erecon.lvl1]
 lr = 0.0
 drop_prob = 0.0
 
 [finetune.w_pretrain.rtf.erecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.rtf.erecon.lvl3]
 lr = 0.0
 drop_prob = 0.0
 
@@ -64,11 +72,19 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
+[finetune.w_pretrain.rtf.lrecon.lvl3]
+lr = 0.0
+drop_prob = 0.0
+
 [finetune.w_pretrain.etf.mlm.lvl1]
 lr = 0.0
 drop_prob = 0.0
 
 [finetune.w_pretrain.etf.mlm.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.mlm.lvl3]
 lr = 0.0
 drop_prob = 0.0
 
@@ -80,11 +96,19 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
+[finetune.w_pretrain.etf.erecon.lvl3]
+lr = 0.0
+drop_prob = 0.0
+
 [finetune.w_pretrain.etf.lrecon.lvl1]
 lr = 0.0
 drop_prob = 0.0
 
 [finetune.w_pretrain.etf.lrecon.lvl2]
+lr = 0.0
+drop_prob = 0.0
+
+[finetune.w_pretrain.etf.lrecon.lvl3]
 lr = 0.0
 drop_prob = 0.0
 
@@ -100,6 +124,10 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
+[finetune.no_pretrain.rtf.lvl3]
+lr = 0.0
+drop_prob = 0.0
+
 [finetune.no_pretrain.etf.lvl1]
 lr = 0.0
 drop_prob = 0.0
@@ -108,22 +136,36 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
-[finetune.no_pretrain.rmlp.lvl1]
+[finetune.no_pretrain.etf.lvl3]
 lr = 0.0
 drop_prob = 0.0
-n_layers = 0
+
+[finetune.no_pretrain.rmlp.lvl1]
+lr = 0.000001
+drop_prob = 0.01
+n_layers = 8
 
 [finetune.no_pretrain.rmlp.lvl2]
+lr = 0.000001
+drop_prob = 0.02
+n_layers = 8
+
+[finetune.no_pretrain.rmlp.lvl3]
 lr = 0.0
 drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
+lr = 0.0005
+drop_prob = 0.08
+n_layers = 2
+
+[finetune.no_pretrain.emlp.lvl2]
 lr = 0.001
 drop_prob = 0.02
 n_layers = 6
 
-[finetune.no_pretrain.emlp.lvl2]
+[finetune.no_pretrain.emlp.lvl3]
 lr = 0.0
 drop_prob = 0.0
 n_layers = 0

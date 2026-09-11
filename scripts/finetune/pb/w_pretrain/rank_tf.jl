@@ -12,6 +12,7 @@ args = load_finetune_args()
 config = load_config(args["config"], args)
 resolve_data_path!(config)
 resolve_model_dir!(config)
+resolve_lvl3_cells!(config)
 
 # seed
 seed = get(config, "seed", nothing)
@@ -68,8 +69,10 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
+# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
+#                     "rtf", config["task"], "e2e", timestamp)
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    "rtf", config["task"], "e2e", timestamp)
+                    config["modeltype"], config["task"], "e2e", timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 

@@ -364,18 +364,38 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
                         break
                     end
                 end
-                if !isnothing(dose_col) && !isnothing(sample_col)
+                # fallback: parse dose from drugname_drugconc column (format "DrugName_Conc")
+                drugconc_col = nothing
+                if isnothing(dose_col) && "drugname_drugconc" in cols
+                    drugconc_col = "drugname_drugconc"
+                    println("[SC lvl3] no dedicated dose column; parsing dose from drugname_drugconc")
+                end
+                if !isnothing(sample_col) && (!isnothing(dose_col) || !isnothing(drugconc_col))
                     n_rows = convert(Int, t.num_rows)
                     sample_arr = t.column(sample_col)
-                    dose_arr = t.column(dose_col)
                     dose_val = parse(Float64, dose)
                     sample_dose_map = Dict{String, Bool}()
-                    for i in 0:(n_rows - 1)
-                        s = string(sample_arr[i].as_py())
-                        d = dose_arr[i].as_py()
-                        d_float = isa(d, Number) ? Float64(d) : tryparse(Float64, string(d))
-                        if !isnothing(d_float)
-                            sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
+                    if !isnothing(dose_col)
+                        dose_arr = t.column(dose_col)
+                        for i in 0:(n_rows - 1)
+                            s = string(sample_arr[i].as_py())
+                            d = dose_arr[i].as_py()
+                            d_float = isa(d, Number) ? Float64(d) : tryparse(Float64, string(d))
+                            if !isnothing(d_float)
+                                sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
+                            end
+                        end
+                    else
+                        # parse dose from drugname_drugconc: take last underscore-separated token
+                        dc_arr = t.column(drugconc_col)
+                        for i in 0:(n_rows - 1)
+                            s = string(sample_arr[i].as_py())
+                            dc = string(dc_arr[i].as_py())
+                            last_under = findlast('_', dc)
+                            d_float = isnothing(last_under) ? nothing : tryparse(Float64, dc[last_under+1:end])
+                            if !isnothing(d_float)
+                                sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
+                            end
                         end
                     end
                     n_matching = count(values(sample_dose_map))

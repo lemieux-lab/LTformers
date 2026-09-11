@@ -41,11 +41,13 @@ level = "lvl2"
 max_ft_steps = 0
 label_path = ""
 
-# lvl3 references/targets
-source_cell = "MCF7"
-target_cell = "PC3"
-# target_gene = "IGFBP3"  # replaced by PCA-based prediction
-dose = ""  # dose filter: "5.0" for Tahoe, "10" for LINCS; empty = no filter
+# lvl3 per-dataset cell line pairs (resolve_lvl3_cells! sets source_cell/target_cell/dose from these)
+lincs_source_cell = "JURKAT"
+lincs_target_cell = "SKB"
+lincs_dose = "10"
+tahoe_source_cell = "CVCL_0218"
+tahoe_target_cell = "CVCL_1577"
+tahoe_dose = "5.0"
 
 # misc
 wandb_mode = "online"

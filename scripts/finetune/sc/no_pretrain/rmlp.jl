@@ -13,6 +13,7 @@ using LoadSC, ProcessSC
 args = load_sc_finetune_args()
 config = load_config(args["config"], args)
 config["data_format"] = "tahoe_sc"
+resolve_lvl3_cells!(config)
 # resolve_model_dir!(config)  # no pretrain weights needed
 
 # seed
@@ -23,8 +24,9 @@ if !isnothing(seed)
     println("Random seed: $seed")
 end
 
-is_regression = false  # SC finetune: lvl1/lvl2 classification only
-use_oversmpl = config["level"] == "lvl2"
+# is_regression = false  # SC finetune: lvl1/lvl2 classification only
+is_regression = config["level"] == "lvl3"
+use_oversmpl = config["level"] == "lvl2" && !is_regression
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
@@ -96,7 +98,8 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "rmlp", timestamp)
+# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "rmlp", timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
@@ -108,8 +111,8 @@ wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 train_losses = Float32[]
 val_losses = Float32[]
 test_losses = Float32[]
-all_preds = Int[]
-all_trues = Int[]
+all_preds = is_regression ? Float32[] : Int[]
+all_trues = is_regression ? Float32[] : Int[]
 
 global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
@@ -149,7 +152,7 @@ for epoch in ProgressBar(1:n_total_epochs)
 
         lv, grads = Flux.withgradient(model) do m
             preds = m(x_gpu)
-            Flux.logitcrossentropy(preds, y_gpu)
+            is_regression ? Flux.mse(preds, y_gpu) : Flux.logitcrossentropy(preds, y_gpu)
         end
         Flux.update!(opt, model, grads[1])
         push!(epoch_losses, Float32(cpu(lv)))
@@ -169,12 +172,18 @@ for epoch in ProgressBar(1:n_total_epochs)
         x_gpu = cu(X_val[:, s:e])
         y_gpu = cu(y_val[:, s:e])
         logits = model(x_gpu)
-        push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+        if is_regression
+            push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+        else
+            push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+        end
     end
     push!(val_losses, mean(val_eval_losses))
 
     # test eval (final epoch only)
     is_last = is_last || done
+    epoch_preds = is_regression ? Float32[] : Int[]
+    epoch_trues = is_regression ? Float32[] : Int[]
 
     if is_last
         eval_losses = Float32[]
@@ -184,11 +193,19 @@ for epoch in ProgressBar(1:n_total_epochs)
             x_gpu = cu(X_test[:, s:e])
             y_gpu = cu(y_test[:, s:e])
             logits = model(x_gpu)
-            push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-            append!(all_preds, Flux.onecold(cpu(logits)))
-            append!(all_trues, Flux.onecold(cpu(y_gpu)))
+            if is_regression
+                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                append!(epoch_preds, vec(cpu(logits)))
+                append!(epoch_trues, vec(cpu(y_gpu)))
+            else
+                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                append!(epoch_preds, Flux.onecold(cpu(logits)))
+                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+            end
         end
         push!(test_losses, mean(eval_losses))
+        append!(all_preds, epoch_preds)
+        append!(all_trues, epoch_trues)
     end
 
     if val_losses[end] < best_val_loss
@@ -197,12 +214,18 @@ for epoch in ProgressBar(1:n_total_epochs)
         best_dir = joinpath(save_dir, "best")
         mkpath(best_dir)
         log_model(model, best_dir)
-        plot_loss(length(train_losses), train_losses, val_losses, best_dir, "CE")
+        plot_loss(length(train_losses), train_losses, val_losses, best_dir, is_regression ? "MSE" : "CE")
         jldsave(joinpath(best_dir, "losses.jld2"); epochs=1:epoch,
                 train_losses=train_losses, val_losses=val_losses)
-        log_params(config, gpu_info, 0, 0, best_dir;
-            skip=mlp_skip, total_steps=global_step,
-            best_epoch=best_epoch, best_val_loss=best_val_loss)
+        if is_regression
+            log_params(config, gpu_info, 0, 0, best_dir;
+                skip=mlp_skip,
+                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
+        else
+            log_params(config, gpu_info, 0, 0, best_dir;
+                skip=mlp_skip, total_steps=global_step,
+                best_epoch=best_epoch, best_val_loss=best_val_loss)
+        end
     end
 
     if wb !== nothing
@@ -222,7 +245,7 @@ if wb !== nothing
 end
 
 # log
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "CE")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "CE")
 
 log_model(model, save_dir)
 log_info(; save_dir=save_dir, train_indices=train_idx, val_indices=val_idx, test_indices=test_idx,
@@ -235,7 +258,17 @@ run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)
 run_hours, run_minutes = div(total_minutes, 60), rem(total_minutes, 60)
 
-acc = mean(all_preds .== all_trues)
-log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-           skip=mlp_skip, accuracy=acc, total_steps=global_step,
-           best_epoch=best_epoch, best_val_loss=best_val_loss)
+if is_regression
+    r2 = 1.0 - sum((all_preds .- all_trues) .^ 2) / sum((all_trues .- mean(all_trues)) .^ 2)
+    pearson = cor(all_preds, all_trues)
+    rmse = sqrt(mean((all_preds .- all_trues) .^ 2))
+    println("R² = $(round(r2, digits=4)), Pearson r = $(round(pearson, digits=4)), RMSE = $(round(rmse, digits=4))")
+    log_params(config, gpu_info, run_hours, run_minutes, save_dir;
+               skip=mlp_skip, r2=r2, pearson=pearson, rmse=rmse,
+               total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
+else
+    acc = mean(all_preds .== all_trues)
+    log_params(config, gpu_info, run_hours, run_minutes, save_dir;
+               skip=mlp_skip, accuracy=acc, total_steps=global_step,
+               best_epoch=best_epoch, best_val_loss=best_val_loss)
+end

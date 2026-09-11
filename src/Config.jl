@@ -2,7 +2,7 @@ module Config
 
 using TOML, PyCall
 
-export load_config, gpu_lr, init_wandb, resolve_model_dir!, resolve_data_path!
+export load_config, gpu_lr, init_wandb, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
 
 
 # dataset -> swept-HP config file (relative to repo root)
@@ -225,6 +225,34 @@ function resolve_data_path!(config::Dict)
         println("resolved label_path: $lpath")
     end
 
+    return config
+end
+
+
+"""
+    resolve_lvl3_cells!(config)
+
+When `level == "lvl3"`, set `source_cell`, `target_cell`, and `dose`
+from the per-dataset defaults in `default.toml` (e.g. `lincs_source_cell`,
+`tahoe_source_cell`) based on `data_format`.  CLI / sweep overrides that
+already set these keys are preserved.
+"""
+function resolve_lvl3_cells!(config::Dict)
+    get(config, "level", "") != "lvl3" && return config
+
+    fmt = get(config, "data_format", "tahoe")
+    prefix = fmt == "lincs" ? "lincs" : "tahoe"  # tahoe and tahoe_sc share the same pair
+
+    for field in ("source_cell", "target_cell", "dose")
+        dataset_key = "$(prefix)_$(field)"
+        dataset_val = get(config, dataset_key, "")
+        current_val = get(config, field, "")
+        # only override if the current value is empty (no CLI/sweep override)
+        if dataset_val != "" && current_val == ""
+            config[field] = dataset_val
+        end
+    end
+    println("resolved lvl3 cells: source=$(config["source_cell"]), target=$(config["target_cell"]), dose=$(config["dose"])")
     return config
 end
 

@@ -1,9 +1,9 @@
-# .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_etf_lvl1.yaml
-# run_sweep gh18_sbatch TPB_etf_lvl1 serena-chan-/PB-FT-Aug/j6x8jtqy
+# .venv-x86_64/bin/wandb sweep scripts/finetune/sc/w_pretrain/wb/sweep_etf_mlm_lvl3.yaml
+# run_sweep gh18_sbatch etf_mlm_lvl3 <entity>/SC-FT-Aug/<sweep_id>
 
-program: scripts/finetune/pb/no_pretrain/exp_tf.jl
-project: PB-FT-Aug
-name: etf_nopt_lvl1_sweep
+program: scripts/finetune/sc/w_pretrain/exp_tf.jl
+project: SC-FT-Aug
+name: etf_mlm_lvl3_sweep
 method: bayes
 metric:
   name: best_val_loss
@@ -13,24 +13,20 @@ parameters:
     value: "etf"
   mode:
     value: "e2e"
+  task:
+    value: "mlm"
   level:
-    value: "lvl1"
-  data_format:
-    value: "tahoe"
+    value: "lvl3"
+  # wandb_mode: follows local.toml
+    # value: "online"
   n_epochs:
     value: 0
   max_ft_steps:
-    value: 10000
+    value: 40000
   batch_size:
     value: 100
-  embed_dim:
-    value: 128
-  hidden_dim:
-    value: 128
-  n_heads:
-    value: 2
-  n_layers:
-    value: 2
+  subset_shards:
+    value: 100
   # swept params
   lr:
     distribution: log_uniform_values

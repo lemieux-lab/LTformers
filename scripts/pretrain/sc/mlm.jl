@@ -295,15 +295,32 @@ for epoch in ProgressBar(1:n_total_epochs)
     _phase("val eval (epoch $epoch)")
     Flux.testmode!(model)
     val_eval_losses = Float32[]
-    for cached in val_cache
+    for (bi, cached) in enumerate(val_cache)
         x_gpu = CuArray(cached.x)
         y_gpu = CuArray(cached.y)
         loss_val, _, _ = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
-        push!(val_eval_losses, loss_val)
+        CUDA.synchronize()  # ensure GPU loss scalar is ready before reading
+        lv = Float32(loss_val isa CUDA.CuArray ? CUDA.@allowscalar(loss_val[]) : loss_val)
+        if isnan(lv) || isinf(lv)
+            if bi <= 3
+                println("  ⚠ val batch $bi: loss=$lv (x range=$(extrema(cached.x)), y unique=$(length(unique(cached.y))))")
+            end
+        end
+        push!(val_eval_losses, lv)
         CUDA.unsafe_free!(x_gpu)
         CUDA.unsafe_free!(y_gpu)
     end
-    push!(val_losses, mean(val_eval_losses))
+    # NaN-safe mean: skip NaN/Inf batches if any
+    valid_val = filter(x -> !isnan(x) && !isinf(x), val_eval_losses)
+    if isempty(valid_val)
+        push!(val_losses, NaN32)
+        println("  ⚠ ALL $(length(val_eval_losses)) val batches produced NaN/Inf loss")
+    else
+        if length(valid_val) < length(val_eval_losses)
+            println("  ⚠ $(length(val_eval_losses) - length(valid_val))/$(length(val_eval_losses)) val batches had NaN/Inf loss (excluded from mean)")
+        end
+        push!(val_losses, mean(valid_val))
+    end
     # reclaim GPU memory after val eval to avoid OOM at epoch boundary
     GC.gc(true)
     CUDA.reclaim()
@@ -357,7 +374,9 @@ for epoch in ProgressBar(1:n_total_epochs)
                         y_gpu = CuArray(ym)
                     end
                     loss_val, logits_masked, y_targets = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
-                    push!(eval_losses, loss_val)
+                    CUDA.synchronize()
+                    lv = Float32(loss_val isa CUDA.CuArray ? CUDA.@allowscalar(loss_val[]) : loss_val)
+                    push!(eval_losses, lv)
 
                     if !isnothing(y_targets)
                         errs = gpu_rank_errors(logits_masked, y_targets)
@@ -398,7 +417,9 @@ for epoch in ProgressBar(1:n_total_epochs)
                 x_gpu = CuArray(cached.x)
                 y_gpu = CuArray(cached.y)
                 loss_val, logits_masked, y_targets = sc_masked_loss(model, x_gpu, y_gpu, n_classes)
-                push!(eval_losses, loss_val)
+                CUDA.synchronize()
+                lv = Float32(loss_val isa CUDA.CuArray ? CUDA.@allowscalar(loss_val[]) : loss_val)
+                push!(eval_losses, lv)
 
                 if !isnothing(y_targets)
                     errs = gpu_rank_errors(logits_masked, y_targets)
@@ -411,11 +432,15 @@ for epoch in ProgressBar(1:n_total_epochs)
                         n_cached_preds += 1
                     end
                 end
+                CUDA.unsafe_free!(x_gpu)
+                CUDA.unsafe_free!(y_gpu)
             end
         end
 
         if !isempty(eval_losses)
-            push!(test_losses, mean(eval_losses))
+            valid_test = filter(x -> !isnan(x) && !isinf(x), eval_losses)
+            # push!(test_losses, mean(eval_losses))
+            push!(test_losses, isempty(valid_test) ? NaN32 : mean(valid_test))
             push!(test_rank_errors, isempty(epoch_rank_errors) ? NaN32 : mean(Float32.(epoch_rank_errors)))
         end
 

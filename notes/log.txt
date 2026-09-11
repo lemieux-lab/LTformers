@@ -1035,7 +1035,8 @@ a1
 -- pre-train
     -- TODO sweeps
 -- fine-tune
-    -- TODO lvl3 implement
+    -- done lvl3 implement
+        -- RUNNING test of emlp on lvl3 (1)
     -- TODO no-pt sweeps
         -- RUNNING rmlp sweep on lvl1, lvl2 since normalization change (2)
             -- reviewed test on rmlp
@@ -1062,7 +1063,8 @@ a2
         -- TODO sweeps
 -- fine-tune
     -- pb
-        -- TODO lvl3 implement
+        -- done lvl3 implement
+            -- RUNNING test of emlp on lvl3 (1)
         -- TODO no-pt sweeps
             -- RUNNING rmlp sweep on lvl1, lvl2 since normalization change (2)
                 -- reviewed test on rmlp
@@ -1076,7 +1078,8 @@ a2
             -- RUNNING emlp sweep on lvl2 (1)
         -- TODO pt sweeps
     -- sc
-        -- TODO lvl3 implement
+        -- done lvl3 implement
+            -- RUNNING test of emlp on lvl3 (1)
         -- TODO no-pt sweeps
             -- REVIEW test on rmlp
                 -- CLI arg error, RUNNING rmlp test 5ep 32bs again (1)
@@ -1123,18 +1126,107 @@ re: lvl3 (more detailed analysis)
             -- bimodality: 0.572
             -- PC1 corr: 0.966
             -- PC2 corr: 0.930
+    -- doing dose filtering, is that ok???
+        -- using 5.0 for tahoe and 10 for lincs
 
-    JOBID                      NAME  ST  TIME_LEFT NODES CPUS TRES_PER_N MIN_MEM NODELIST (REASON)
-8097778        test_rmlp_tahoe_sc   R 1-22:01:37     1   32 gres:gpu:1    200G majsrv6 (None)
-8097844                   lvl3_cl   R   23:56:39     1   32        N/A    100G binslv26 (None)
-8097821    TPB_rmlp_lvl1_as61l5lq  PD 7-00:00:00     1   10 gres:gpu:1     80G  (Resources)
-8097823    TPB_rmlp_lvl2_oghmlz4k  PD 7-00:00:00     1   64 gres:gpu:G    500G  (Priority)
-8097829            TmlmR_nonpnhym  PD 7-00:00:00     1   64 gres:gpu:G    500G  (Priority)
-8096550            TmlmE_1xweiku5   R 1-19:27:45     1   10 gres:gpu:1     80G balrog (None)
-8096552             TerE_jbyj1vlp   R 3-06:14:36     1   10 gres:gpu:1     80G balrog (None)
-8096553             TerR_0krnhz7p   R 4-07:27:47     1   10 gres:gpu:1     80G balrog (None)
-8096554           TlrecE_5pmy94pl   R 5-05:34:30     1   10 gres:gpu:1     80G balrog (None)
-8096555           TlrecR_sgp9tsem   R 5-05:42:53     1   10 gres:gpu:1     80G balrog (None)
-8097818    TPB_emlp_lvl2_pg4lh7h3   R 6-22:12:46     1   10 gres:gpu:1     80G balrog (None)
-8097820      L_rmlp_lvl1_6fmomrxw   R 6-22:22:24     1   10 gres:gpu:1     80G balrog (None)
-8097822      L_rmlp_lvl2_e9jpewie   R 6-22:24:27     1   64 gres:gpu:G    500G balrog (None)
+-----------------------------------------------------------------------------------------------------------
+
+### sep 11 2026 ###
+
+-- should also have linear MLP head and a nonlinear MLP head to compare, or maybe just linreg as well as a comparison?
+-- i feel like i should be running the sweeps for longer... (till the end rather than stopping partway?)
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 testing
+        -- reviewed test of rmlp on lvl3
+        -- working correctly, need to run for longer to see if possible to acc learn
+        -- 1min/100steps, bs=32
+        -- ran longer on emlp
+            -- not doing well w/ US0S -> VCAP currently
+                -- pearson=-0.234, val_loss=62.24, very spiky loss
+                -- could also just not do this task in LINCS...
+            -- reviewed different ones:
+                -- JURKAT -> SKB: convergence but spiky
+                -- HFL1 -> VCAP: ok but spiky
+                -- ASC -> JURKAT: not good
+                -- SKB -> U2OS: slight conergence but spiky
+            -- best is JURKAT -> SKB, can also use HFL1 -> VCAP if want to not use SKB
+            -- RUNNING same eval testing but on emlp this time!(5)
+    -- TODO no-pt sweeps
+        -- done rmlp sweep on lvl1, lvl2 since normalization change
+            -- rmlp LR ranges are hugely different (much smaller than emlp...)
+            -- lvl1 best: rmlp_nopt_lincs_lvl1_2026-09-10_14-13
+                -- lr=0.000001, drop_prob=0.01, n_layers=8
+            -- lvl2 best: rmlp_nopt_lincs_lvl2_2026-09-11_08-31
+                -- lr=0.000001, drop_prob=0.02, n_layers=8
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+                -- PENDING RTF sweep! (can probably scancel the rmlp lvl2 sweeps for lincs/tahoe if fast)
+    -- sc
+        -- TODO sweeps
+            -- done mini sweeps (6:1-2, CQ)
+                -- reviewed
+                    -- issue w/ val, outputting NaN in mlm etf
+                        -- fixed; issue was converting sc_masked_loss to Float32[] without cpu()
+                            -- should work now???
+                    -- about 1.5s per step, thus 40k steps would take about 20 hours
+            -- need to git pull any updates from kraken then run larger sweeps!
+            -- also try incr batch size
+            -- !RE-RUN mini runs w/o sweep
+-- fine-tune
+    -- pb
+        -- TODO lvl3 testing
+            -- reviewed test of rmlp on lvl3
+            -- working correctly, need to run for longer
+            -- 2mins/100steps, bs=32
+            -- ran longer on rmlp 
+                -- good! pearson=0.989! isnt this a little too hihg?
+            -- RUNNING longer on emlp (1)
+            -- also would be worth to try instead changing the task to predicting the full expression profile
+                -- this doesnt quite align with single cell resolution tho...
+                -- issue w/ this was that i need a drug structure embedding...
+                -- so is it cooked for lvl3 overall? ask seb...........
+        -- TODO no-pt sweeps
+            -- done rmlp sweep on lvl1 since normalization change
+            -- RUNNING rmlp sweep on lvl2 (1)
+                -- lvl1 best: rmlp_nopt_tahoe_lvl1_2026-09-11_10-18
+                    -- lr=0.0000003, drop_prob=0.1, n_layers=2
+            -- RUNNING etf, rtf sweep on lvl1 (2)
+    -- sc
+        -- done lvl3 implement
+            -- !RE-RUN test of rmlp on lvl3 (1)
+                -- OOM error + bug in filtering for dose
+                -- dose is embedding in drugname, not its own column - fixed!
+                -- just realized that we pseudobulk profiles for fine-tuning, thus this is essentially the same as pb eval
+                -- only difference is that tpb is bulked via alpha filtering, etc. here, we just take the mean across all cells per pair
+                -- traditional scFMs always eval perturbation/drug response at the bulk level
+                -- if we wanted to keep at sc level, could have each source cell predict its compounds's PC
+                    -- compute PCA on pb profiles, then project each individual cell into PCA space
+                    -- then each source cell predicts the PC1 distribution of its compound in the target
+                    -- but each target cell has a slightly different PC1 score
+                -- alternatively, create multiple pbs per compound by subsampling cells
+                    -- each sub pb is a different view (aka bootstrap pseudobulking)
+                -- check w/ seb!
+        -- TODO no-pt sweeps
+            -- reviewed test on rmlp
+                -- prev. 32bs had OOM error
+                -- RUNNING rmlp test 100steps, 16bs
+                -- still getting OOM error??? might have to only test on cq?
+
+*** to transfer files from cq to here: ssh muninn then run:
+rsync -azh --partial --info=progress2 \
+    chans@rorqual.alliancecan.ca:/home/chans/links/scratch/transformers/out/ \
+    /home/golem/scratch/chans/transformers/cq/out/ && \
+
+rsync -azh --partial --info=progress2 \
+    chans@rorqual.alliancecan.ca:/home/chans/links/scratch/transformers/results/ \
+    /home/golem/scratch/chans/transformers/cq/results/ 
+
+^see how to do w/o needing to input password, duo push, etc twice

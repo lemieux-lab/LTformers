@@ -12,6 +12,7 @@ args = load_finetune_args()
 config = load_config(args["config"], args)
 resolve_data_path!(config)
 resolve_model_dir!(config)
+resolve_lvl3_cells!(config)
 
 # seed
 seed = get(config, "seed", nothing)
