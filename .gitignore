@@ -6,6 +6,7 @@ wandb/
 scripts/analyses/sandbox/
 notes/prev/
 notes/wip/
+tmp/
 
 # environments
 aarch64/

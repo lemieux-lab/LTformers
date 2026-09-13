@@ -40,7 +40,18 @@ coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], conf
 all_shards = list_shards(config["data_dir"])
 
 top_k = get(config, "top_k", 1024)
-d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
+# d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
+#                            pb_data_path=get(config, "pb_data_path", ""),
+#                            subset_shards=get(config, "subset_shards", 0),
+#                            process_cell_topk_flat_fn=process_cell_topk_flat,
+#                            cell_to_dense_flat_fn=cell_to_dense_flat!,
+#                            oversmpl_fn=oversmpl,
+#                            source_cell=get(config, "source_cell", ""),
+#                            target_cell=get(config, "target_cell", ""),
+#                            dose=get(config, "dose", ""),
+#                            meta_dir=get(config, "meta_dir", ""),
+#                            regression_pairs_fn=get_regression_pairs_pca)
+d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
                            pb_data_path=get(config, "pb_data_path", ""),
                            subset_shards=get(config, "subset_shards", 0),
                            process_cell_topk_flat_fn=process_cell_topk_flat,
@@ -51,6 +62,7 @@ d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, t
                            dose=get(config, "dose", ""),
                            meta_dir=get(config, "meta_dir", ""),
                            regression_pairs_fn=get_regression_pairs_pca)
+is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 # convert RTF gene-id tokens to inverse ranks (position g = rank of gene g)
 # X_rtf is (top_k, n_samples) Int32 matrix where X_rtf[rank, sample] = gene_id
@@ -68,19 +80,25 @@ function sc_inverse_ranks(X_rtf::Matrix{Int32}, n_coding::Int)
     return inv
 end
 
-println("converting RTF tokens to inverse ranks (n_coding=$n_coding)...")
-# X_train = sc_inverse_ranks(d.X_train, n_coding)
-# X_val   = sc_inverse_ranks(d.X_val, n_coding)
-# X_test  = sc_inverse_ranks(d.X_test, n_coding)
-X_train = sc_inverse_ranks(d.X_train, n_coding) ./ Float32(n_coding)
-X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)
-X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
+# for streaming: train inverse ranks computed per-batch via sc_inverse_ranks_batch()
+# for non-streaming (lvl3): compute upfront on materialized data
+if is_streaming
+    println("streaming mode: train inverse ranks computed per-batch")
+    X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)
+    X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
+    X_train = nothing  # not materialized
+else
+    println("converting RTF tokens to inverse ranks (n_coding=$n_coding)...")
+    X_train = sc_inverse_ranks(d.X_train, n_coding) ./ Float32(n_coding)
+    X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)
+    X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
+end
 n_genes = n_coding  # MLP input dim = full gene space
 n_classifications = d.n_classifications
-y_train, y_val, y_test = d.y_train, d.y_val, d.y_test
+y_val, y_test = d.y_val, d.y_test
 train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
-cidx_dict, cs = d.cidx_dict, d.cs
-println("inverse ranks done: input dim = $n_genes, n_train=$(size(X_train, 2))")
+# cidx_dict, cs = d.cidx_dict, d.cs  # oversampling handled per-shard in streaming mode
+println("inverse ranks done: input dim = $n_genes")
 
 # model — MLP with linearly interpolated layer sizes
 sizes = [round(Int, n_genes + (n_classifications - n_genes) * i / (config["n_layers"] + 1))
@@ -121,7 +139,11 @@ done = false
 best_val_loss = Inf32
 best_epoch = 0
 n_total_epochs = if use_max_steps
-    bpe = div(size(X_train, 2), config["batch_size"])
+    if is_streaming
+        bpe = cld(d.n_train_cells, config["batch_size"])
+    else
+        bpe = div(size(X_train, 2), config["batch_size"])
+    end
     cld(ft_step_limit, max(bpe, 1))
 else
     config["n_epochs"]
@@ -134,31 +156,67 @@ for epoch in ProgressBar(1:n_total_epochs)
     # train epoch
     Flux.trainmode!(model)
     epoch_losses = Float32[]
-    n_train = size(X_train, 2)
-    num_batches = div(n_train, config["batch_size"])
-    perm = use_oversmpl ? nothing : randperm(n_train)
 
-    for i in 1:num_batches
-        if use_oversmpl
-            batch_idx = [rand(cidx_dict[rand(cs)]) for _ in 1:config["batch_size"]]
-        else
+    if is_streaming
+        # shard-level streaming training with per-batch inverse rank conversion
+        shuffled_shards = shuffle(d.train_shard_paths)
+        for (si, shard_path) in enumerate(shuffled_shards)
+            done && break
+            cell_indices, cell_labels = d.train_shard_map[shard_path]
+            batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                   token_to_idx, n_coding, top_k,
+                                                   config["batch_size"], "rtf", n_classifications;
+                                                   hvg_idx=nothing, use_oversmpl=use_oversmpl,
+                                                   process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                   cell_to_dense_flat_fn=cell_to_dense_flat!)
+            for (x_batch, y_batch) in batches
+                # convert RTF gene IDs to inverse ranks per batch
+                x_inv = sc_inverse_ranks_batch(x_batch, n_coding)
+                x_gpu = CuArray(x_inv)
+                y_gpu = CuArray(y_batch)
+
+                lv, grads = Flux.withgradient(model) do m
+                    preds = m(x_gpu)
+                    is_regression ? Flux.mse(preds, y_gpu) : Flux.logitcrossentropy(preds, y_gpu)
+                end
+                Flux.update!(opt, model, grads[1])
+                CUDA.unsafe_free!(x_gpu)
+                CUDA.unsafe_free!(y_gpu)
+                push!(epoch_losses, Float32(cpu(lv)))
+                global global_step += 1
+                if use_max_steps && global_step >= ft_step_limit
+                    global done = true; break
+                end
+            end
+            if si % 100 == 0
+                println("  epoch $epoch shard $si/$(length(shuffled_shards)) step=$global_step")
+                flush(stdout)
+            end
+        end
+    else
+        # non-streaming path (lvl3 pseudo-bulked data)
+        n_train = size(X_train, 2)
+        num_batches = div(n_train, config["batch_size"])
+        perm = randperm(n_train)
+
+        for i in 1:num_batches
             s = (i - 1) * config["batch_size"] + 1
             e = min(s + config["batch_size"] - 1, n_train)
             batch_idx = perm[s:e]
-        end
 
-        x_gpu = cu(X_train[:, batch_idx])
-        y_gpu = cu(y_train[:, batch_idx])
+            x_gpu = cu(X_train[:, batch_idx])
+            y_gpu = cu(d.y_train[:, batch_idx])
 
-        lv, grads = Flux.withgradient(model) do m
-            preds = m(x_gpu)
-            is_regression ? Flux.mse(preds, y_gpu) : Flux.logitcrossentropy(preds, y_gpu)
-        end
-        Flux.update!(opt, model, grads[1])
-        push!(epoch_losses, Float32(cpu(lv)))
-        global global_step += 1
-        if use_max_steps && global_step >= ft_step_limit
-            global done = true; break
+            lv, grads = Flux.withgradient(model) do m
+                preds = m(x_gpu)
+                is_regression ? Flux.mse(preds, y_gpu) : Flux.logitcrossentropy(preds, y_gpu)
+            end
+            Flux.update!(opt, model, grads[1])
+            push!(epoch_losses, Float32(cpu(lv)))
+            global global_step += 1
+            if use_max_steps && global_step >= ft_step_limit
+                global done = true; break
+            end
         end
     end
     push!(train_losses, mean(epoch_losses))

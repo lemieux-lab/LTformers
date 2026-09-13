@@ -5,6 +5,9 @@ using CSV, DataFrames, Random, PyCall, SparseArrays, JLD2, Flux, StatsBase
 export load_gene_vocab, list_shards, shard_train_test_split, load_shard_split
 export shard_train_val_test_split, load_shard_val_split
 export load_shard_pyarrow, load_shard_metadata, load_sc_finetune_data
+export sc_finetune_metadata_scan, materialize_finetune_split
+export prepare_shard_cell_map, finetune_batches_from_shard
+export load_sc_finetune_data_streaming
 
 const _pq = PyNULL()
 const _np = PyNULL()
@@ -546,6 +549,387 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
               n_classifications=1,
               train_idx, val_idx, test_idx,
               cidx_dict=nothing, cs=nothing)
+end
+
+
+"""
+    sc_finetune_metadata_scan(all_shards, level; pb_data_path, subset_shards)
+
+Pass 1 of SC finetune: scan shard metadata to identify valid cells, build labels,
+and perform sample-level 80/10/10 train/val/test split.
+
+Returns:
+  `(; train_cells, val_cells, test_cells, label_to_id, n_cls, valid_drugs)`
+where each cell record is `(shard_path, cell_idx_in_shard, label, sample_id)`.
+"""
+function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
+                                    pb_data_path::String = "",
+                                    subset_shards::Int = 0)
+
+    # -- determine valid labels --
+    valid_drugs = nothing
+    if level == "lvl2"
+        pb_data_path == "" && error("sc_finetune_metadata_scan: pb_data_path required for lvl2")
+        pb_df = JLD2.load(pb_data_path)["df"]
+        pb_drugs = String.(pb_df.drug)
+        non_dmso = filter(d -> d != "DMSO", pb_drugs)
+        counts = countmap(non_dmso)
+        valid_drugs = Set(k for (k, v) in counts if v >= 100)
+        println("lvl2: $(length(valid_drugs)) valid drugs from PB data (≥100 PB samples, non-DMSO)")
+    end
+
+    # -- pass 1: metadata scan --
+    shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
+    println("[pass 1] scanning metadata from $(length(shards_to_scan)) shards...")
+    flush(stdout)
+
+    # cell_records: (shard_path, cell_idx_in_shard, label, sample_id)
+    cell_records = Tuple{String, Int, String, String}[]
+    for (si, sp) in enumerate(shards_to_scan)
+        meta = load_shard_metadata(sp)
+        for i in 1:meta.n_cells
+            if level == "lvl1"
+                label = meta.cell_line_id[i]
+            else  # lvl2
+                label = meta.drug[i]
+                (label == "DMSO" || !(label in valid_drugs)) && continue
+            end
+            push!(cell_records, (sp, i, label, meta.sample[i]))
+        end
+        if si % 500 == 0
+            println("  scanned $si / $(length(shards_to_scan)) shards, $(length(cell_records)) valid cells so far")
+            flush(stdout)
+        end
+    end
+    println("[pass 1] done: $(length(cell_records)) valid cells from $(length(shards_to_scan)) shards")
+    flush(stdout)
+
+    # -- sample-level split --
+    unique_samples = unique(r[4] for r in cell_records)
+    shuffle!(unique_samples)
+    n_test = floor(Int, length(unique_samples) * 0.1)
+    n_val  = floor(Int, length(unique_samples) * 0.1)
+    test_samples  = Set(unique_samples[1:n_test])
+    val_samples   = Set(unique_samples[n_test+1:n_test+n_val])
+    train_samples = Set(unique_samples[n_test+n_val+1:end])
+    println("sample split: $(length(train_samples)) train, $(length(val_samples)) val, $(length(test_samples)) test samples")
+
+    train_cells = filter(r -> r[4] in train_samples, cell_records)
+    val_cells   = filter(r -> r[4] in val_samples, cell_records)
+    test_cells  = filter(r -> r[4] in test_samples, cell_records)
+    println("cell split: $(length(train_cells)) train, $(length(val_cells)) val, $(length(test_cells)) test cells")
+    flush(stdout)
+
+    # -- process labels --
+    all_labels = [r[3] for r in cell_records]
+    unique_labels = sort(unique(all_labels))
+    label_to_id = Dict(l => i for (i, l) in enumerate(unique_labels))
+    n_cls = length(unique_labels)
+    println("n_classifications: $n_cls")
+
+    return (; train_cells, val_cells, test_cells, label_to_id, n_cls, valid_drugs)
+end
+
+
+"""
+    materialize_finetune_split(cells, label_to_id, n_cls, token_to_idx, n_coding, top_k, modeltype, hvg_idx; ...)
+
+Materialize a set of cell records into a dense feature matrix + one-hot label matrix.
+Used for val/test splits (which remain fully materialized).
+"""
+function materialize_finetune_split(cells, label_to_id::Dict, n_cls::Int,
+                                     token_to_idx::Dict{Int,Int}, n_coding::Int,
+                                     top_k::Int, modeltype::String,
+                                     hvg_idx::Union{Vector{Int}, Nothing};
+                                     process_cell_topk_flat_fn = nothing,
+                                     cell_to_dense_flat_fn = nothing)
+    n = length(cells)
+    n == 0 && error("materialize_finetune_split: empty split")
+
+    # determine feature dimension
+    if modeltype == "rtf"
+        feat_dim = top_k
+        X = Matrix{Int32}(undef, feat_dim, n)
+    elseif !isnothing(hvg_idx)
+        feat_dim = length(hvg_idx)
+        X = Matrix{Float32}(undef, feat_dim, n)
+    else
+        feat_dim = n_coding
+        X = Matrix{Float32}(undef, feat_dim, n)
+    end
+
+    # one-hot labels
+    label_ids = [label_to_id[r[3]] for r in cells]
+    y_oh = Flux.onehotbatch(label_ids, 1:n_cls)
+
+    # group cells by shard for efficient loading
+    by_shard = Dict{String, Vector{Tuple{Int, Int}}}()  # shard_path => [(cell_idx_in_shard, col_in_X)]
+    for (j, (sp, ci, _, _)) in enumerate(cells)
+        push!(get!(by_shard, sp, Tuple{Int,Int}[]), (ci, j))
+    end
+
+    n_shards_done = 0
+    for (sp, pairs) in by_shard
+        shard = load_shard_pyarrow(sp)
+        dense = Vector{Float32}(undef, n_coding)
+        for (ci, j) in pairs
+            if modeltype == "rtf"
+                gene_ids, _ = process_cell_topk_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                                         shard.expr_flat, ci, token_to_idx, n_coding, top_k)
+                X[:, j] = gene_ids
+            elseif !isnothing(hvg_idx)
+                cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                       shard.expr_flat, ci, token_to_idx)
+                X[:, j] = dense[hvg_idx]
+            else
+                cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                       shard.expr_flat, ci, token_to_idx)
+                X[:, j] = dense
+            end
+        end
+        n_shards_done += 1
+        if n_shards_done % 200 == 0
+            println("  materialized $n_shards_done / $(length(by_shard)) shards")
+            flush(stdout)
+        end
+    end
+    return X, y_oh
+end
+
+
+"""
+    prepare_shard_cell_map(train_cells, label_to_id)
+
+Build a mapping from shard_path → (cell_indices_in_shard, integer_labels)
+for the training split. Lightweight structure used during streaming training.
+"""
+function prepare_shard_cell_map(train_cells, label_to_id::Dict)
+    shard_map = Dict{String, Tuple{Vector{Int}, Vector{Int}}}()
+    for (sp, ci, label, _) in train_cells
+        lid = label_to_id[label]
+        if !haskey(shard_map, sp)
+            shard_map[sp] = (Int[], Int[])
+        end
+        push!(shard_map[sp][1], ci)
+        push!(shard_map[sp][2], lid)
+    end
+    return shard_map
+end
+
+
+"""
+    finetune_batches_from_shard(shard_path, cell_indices, cell_labels, ...)
+
+Load a shard, extract features for specified cells, build (X_batch, y_batch) tuples
+and yield via Channel. Analogous to batches_from_shard() but with label awareness
+and cell filtering for finetuning.
+
+For lvl2 (use_oversmpl=true): within-shard class-balanced sampling.
+For lvl1: sequential shuffled batching.
+"""
+function finetune_batches_from_shard(shard_path::String,
+                                      cell_indices::Vector{Int},
+                                      cell_labels::Vector{Int},
+                                      token_to_idx::Dict{Int,Int}, n_coding::Int,
+                                      top_k::Int, batch_size::Int, modeltype::String,
+                                      n_cls::Int;
+                                      hvg_idx::Union{Vector{Int}, Nothing} = nothing,
+                                      use_oversmpl::Bool = false,
+                                      process_cell_topk_flat_fn = nothing,
+                                      cell_to_dense_flat_fn = nothing)
+
+    shard = load_shard_pyarrow(shard_path)
+    n_valid = length(cell_indices)
+    n_valid == 0 && return Channel{Any}(0)
+
+    return Channel{Any}(1) do ch
+        if use_oversmpl
+            # within-shard class-balanced sampling
+            # build local class → indices mapping (indices into cell_indices/cell_labels arrays)
+            local_cls_map = Dict{Int, Vector{Int}}()
+            for (i, lid) in enumerate(cell_labels)
+                push!(get!(local_cls_map, lid, Int[]), i)
+            end
+            local_classes = collect(keys(local_cls_map))
+            # number of batches = same as if we iterated all cells once
+            n_batches = cld(n_valid, batch_size)
+            for _ in 1:n_batches
+                # sample batch_size cells with class balancing
+                bs = batch_size
+                sampled_local = Int[rand(local_cls_map[rand(local_classes)]) for _ in 1:bs]
+                sampled_ci = cell_indices[sampled_local]
+                sampled_labels = cell_labels[sampled_local]
+
+                # build features
+                X_batch = _build_ft_batch(shard, sampled_ci, token_to_idx, n_coding,
+                                           top_k, modeltype, hvg_idx,
+                                           process_cell_topk_flat_fn, cell_to_dense_flat_fn)
+                y_batch = Flux.onehotbatch(sampled_labels, 1:n_cls)
+                put!(ch, (X_batch, y_batch))
+            end
+        else
+            # shuffled sequential batching
+            perm = shuffle(1:n_valid)
+            for start_idx in 1:batch_size:n_valid
+                end_idx = min(start_idx + batch_size - 1, n_valid)
+                local_idx = perm[start_idx:end_idx]
+                ci = cell_indices[local_idx]
+                labels = cell_labels[local_idx]
+
+                X_batch = _build_ft_batch(shard, ci, token_to_idx, n_coding,
+                                           top_k, modeltype, hvg_idx,
+                                           process_cell_topk_flat_fn, cell_to_dense_flat_fn)
+                y_batch = Flux.onehotbatch(labels, 1:n_cls)
+                put!(ch, (X_batch, y_batch))
+            end
+        end
+    end
+end
+
+
+"""
+    _build_ft_batch(shard, cell_indices, ...) -> X_batch matrix
+
+Internal helper: build a feature matrix for a batch of cell indices from a loaded shard.
+Dispatches on modeltype (rtf / etf / etf-hvg).
+"""
+function _build_ft_batch(shard, cell_indices::AbstractVector{Int},
+                          token_to_idx::Dict{Int,Int}, n_coding::Int,
+                          top_k::Int, modeltype::String,
+                          hvg_idx::Union{Vector{Int}, Nothing},
+                          process_cell_topk_flat_fn, cell_to_dense_flat_fn)
+    bs = length(cell_indices)
+    if modeltype == "rtf"
+        # returns Matrix{Int32}(top_k, bs)
+        batch = Matrix{Int32}(undef, top_k, bs)
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            gene_ids, _ = process_cell_topk_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                                     shard.expr_flat, ci, token_to_idx, n_coding, top_k)
+            batch[:, j] = gene_ids
+        end
+        return batch
+    elseif !isnothing(hvg_idx)
+        # ETF-HVG: returns Matrix{Float32}(n_hvg, bs)
+        n_hvg = length(hvg_idx)
+        batch = Matrix{Float32}(undef, n_hvg, bs)
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                   shard.expr_flat, ci, token_to_idx)
+            batch[:, j] = dense[hvg_idx]
+        end
+        return batch
+    else
+        # ETF: returns Matrix{Float32}(n_coding, bs)
+        batch = Matrix{Float32}(undef, n_coding, bs)
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                   shard.expr_flat, ci, token_to_idx)
+            batch[:, j] = copy(dense)
+        end
+        return batch
+    end
+end
+
+
+"""
+    load_sc_finetune_data_streaming(all_shards, level, token_to_idx, n_coding, top_k, modeltype; ...)
+
+Streaming variant of load_sc_finetune_data(). Instead of materializing all training data
+into memory, returns a shard map for shard-by-shard streaming during training.
+Val/test splits are still fully materialized (small, needed every epoch).
+
+For lvl3: delegates to _load_sc_lvl3 (pseudo-bulks to small matrix, no streaming needed).
+
+Returns a named tuple:
+  `(; X_val, X_test, y_val, y_test, n_genes, n_classifications, label_to_id,
+     train_shard_map, train_shard_paths, n_train_cells, use_oversmpl)`
+"""
+function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::String,
+                                          token_to_idx::Dict{Int,Int}, n_coding::Int,
+                                          top_k::Int, modeltype::String;
+                                          pb_data_path::String = "",
+                                          hvg_idx::Union{Vector{Int}, Nothing} = nothing,
+                                          subset_shards::Int = 0,
+                                          process_cell_topk_flat_fn = nothing,
+                                          cell_to_dense_flat_fn = nothing,
+                                          oversmpl_fn = nothing,
+                                          source_cell::String = "",
+                                          target_cell::String = "",
+                                          dose::String = "",
+                                          meta_dir::String = "",
+                                          regression_pairs_fn = nothing)
+
+    # validate required function parameters
+    if modeltype == "rtf" && isnothing(process_cell_topk_flat_fn)
+        error("load_sc_finetune_data_streaming: process_cell_topk_flat_fn required for rtf modeltype")
+    end
+    if modeltype != "rtf" && isnothing(cell_to_dense_flat_fn)
+        error("load_sc_finetune_data_streaming: cell_to_dense_flat_fn required for etf/mlp modeltype")
+    end
+
+    # -- lvl3: pseudo-bulk then PCA regression (no streaming needed, result is small) --
+    if level == "lvl3"
+        (source_cell == "" || target_cell == "") && error("load_sc_finetune_data_streaming lvl3: source_cell and target_cell required")
+        isnothing(regression_pairs_fn) && error("load_sc_finetune_data_streaming lvl3: regression_pairs_fn required")
+        isnothing(cell_to_dense_flat_fn) && error("load_sc_finetune_data_streaming lvl3: cell_to_dense_flat_fn required")
+        d = _load_sc_lvl3(all_shards, token_to_idx, n_coding, top_k, modeltype,
+                           source_cell, target_cell, dose, meta_dir,
+                           cell_to_dense_flat_fn, process_cell_topk_flat_fn,
+                           regression_pairs_fn;
+                           subset_shards=subset_shards, hvg_idx=hvg_idx)
+        # wrap lvl3 result in streaming-compatible shape (no streaming needed, but consistent interface)
+        return (; X_train=d.X_train, X_val=d.X_val, X_test=d.X_test,
+                  y_train=d.y_train, y_val=d.y_val, y_test=d.y_test,
+                  n_genes=d.n_genes, n_classifications=d.n_classifications,
+                  label_to_id=nothing,
+                  train_shard_map=nothing, train_shard_paths=nothing,
+                  n_train_cells=size(d.X_train, 2), use_oversmpl=false,
+                  cidx_dict=nothing, cs=nothing,
+                  train_idx=d.train_idx, val_idx=d.val_idx, test_idx=d.test_idx)
+    end
+
+    # -- pass 1: metadata scan + split --
+    scan = sc_finetune_metadata_scan(all_shards, level;
+                                      pb_data_path=pb_data_path,
+                                      subset_shards=subset_shards)
+
+    # -- materialize val and test (small, needed every epoch) --
+    println("[streaming] materializing val split...")
+    flush(stdout)
+    X_val, y_val = materialize_finetune_split(scan.val_cells, scan.label_to_id, scan.n_cls,
+                                               token_to_idx, n_coding, top_k, modeltype, hvg_idx;
+                                               process_cell_topk_flat_fn=process_cell_topk_flat_fn,
+                                               cell_to_dense_flat_fn=cell_to_dense_flat_fn)
+    println("  val: $(size(X_val))")
+
+    println("[streaming] materializing test split...")
+    flush(stdout)
+    X_test, y_test = materialize_finetune_split(scan.test_cells, scan.label_to_id, scan.n_cls,
+                                                 token_to_idx, n_coding, top_k, modeltype, hvg_idx;
+                                                 process_cell_topk_flat_fn=process_cell_topk_flat_fn,
+                                                 cell_to_dense_flat_fn=cell_to_dense_flat_fn)
+    println("  test: $(size(X_test))")
+
+    # -- build shard map for streaming training --
+    train_shard_map = prepare_shard_cell_map(scan.train_cells, scan.label_to_id)
+    train_shard_paths = collect(keys(train_shard_map))
+    n_train_cells = length(scan.train_cells)
+    println("[streaming] train: $n_train_cells cells across $(length(train_shard_paths)) shards (not materialized)")
+    flush(stdout)
+
+    n_genes = modeltype == "rtf" ? n_coding : size(X_val, 1)
+    _use_oversmpl = level == "lvl2"
+
+    return (; X_val, X_test, y_val, y_test,
+              n_genes, n_classifications=scan.n_cls, label_to_id=scan.label_to_id,
+              train_shard_map, train_shard_paths, n_train_cells, use_oversmpl=_use_oversmpl,
+              cidx_dict=nothing, cs=nothing,
+              train_idx=collect(1:size(X_val, 2)),
+              val_idx=collect(1:size(X_val, 2)),
+              test_idx=collect(1:size(X_test, 2)))
 end
 
 

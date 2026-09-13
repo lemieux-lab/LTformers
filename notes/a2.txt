@@ -12,7 +12,7 @@ DATA ANALYSIS #####
     -- tsne/umap by cell line, compound?
 
 PRE-TRAIN
--- PB
+-- PB [RUNNING]
     -- RTF
         -- mlm 
         -- erecon
@@ -35,12 +35,12 @@ FINE-TUNE
 -- PB
     -- w/o-pt
         -- RMLP
-            -- lvl1:
-            -- lvl2:
+            -- lvl1 [DONE]
+            -- lvl2 [DONE]
             -- lvl3:
         -- EMLP
-            -- lvl1:
-            -- lvl2:
+            -- lvl1 [DONE]
+            -- lvl2 [DONE]
             -- lvl3:
         -- RTF
             -- lvl1:

@@ -1317,8 +1317,14 @@ a2
         -- TODO sweeps
             -- ran mlm rtf - 10steps, 500bs, 300G mem
                 -- works, 7mins/10steps
-                -- trying 550 bs, trying 400G mem (2, CQ)
-            -- !RUNNING mlm rtf sweep - 10steps, 500bs, 300G mem (1:1-2, CQ)
+                -- tried 550 bs, tried 500G mem
+                    -- 600 bs too large
+                    -- no difference in for memory allocated
+            -- ran mlm rtf sweep - 10steps, 500bs, 300G mem
+                -- failed?? why can 500bs run on non-sweep?
+                -- done ^same but w/ 400bs
+                -- sometimes for higher mask ratio, the tensors are larger thus cannot do 500bs
+                -- RUNNING mlm rtf sweep - 10k steps, 400bs, 300G mem (1:1-10%5, CQ)
 -- fine-tune
     -- pb
         -- TODO lvl3 testing
@@ -1336,4 +1342,10 @@ a2
                     -- issue is CPU RAM!!! mem=500 worked!!!
                     -- either way, it took 5hrs to do the preprocessing...
                     -- can try implementing streaming if needed? like pretraining does?
+                    -- attempted implementation, testing now!
+                        -- added streaming into all finetuning scripts
+                            -- lvl3 uses pseudobulked so not implemented for that
+                        -- for emb.jl, using embedding extraction ? doubel check this
+                    -- ran test 5shard subset using tmp/ config on etf, rtf, emlp, rmlp lvl1, lvl2
+                        -- works!! pushed to cq to run on rorqual
             -- TODO rtf, etf

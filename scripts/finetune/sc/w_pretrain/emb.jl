@@ -50,7 +50,19 @@ if config["modeltype"] == "etf"
 end
 
 top_k = get(config, "top_k", 1024)
-d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, config["modeltype"];
+# d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, config["modeltype"];
+#                            pb_data_path=get(config, "pb_data_path", ""),
+#                            hvg_idx=hvg_idx,
+#                            subset_shards=get(config, "subset_shards", 0),
+#                            process_cell_topk_flat_fn=process_cell_topk_flat,
+#                            cell_to_dense_flat_fn=cell_to_dense_flat!,
+#                            oversmpl_fn=oversmpl,
+#                            source_cell=get(config, "source_cell", ""),
+#                            target_cell=get(config, "target_cell", ""),
+#                            dose=get(config, "dose", ""),
+#                            meta_dir=get(config, "meta_dir", ""),
+#                            regression_pairs_fn=get_regression_pairs_pca)
+d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n_coding, top_k, config["modeltype"];
                            pb_data_path=get(config, "pb_data_path", ""),
                            hvg_idx=hvg_idx,
                            subset_shards=get(config, "subset_shards", 0),
@@ -62,8 +74,10 @@ d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, t
                            dose=get(config, "dose", ""),
                            meta_dir=get(config, "meta_dir", ""),
                            regression_pairs_fn=get_regression_pairs_pca)
+is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
-X_train, X_val, X_test = d.X_train, d.X_val, d.X_test
+# X_train, X_val, X_test = d.X_train, d.X_val, d.X_test
+X_val, X_test = d.X_val, d.X_test
 
 if config["modeltype"] == "rtf"
     # RTF: data is Int32 gene IDs, top_k truncated
@@ -71,15 +85,146 @@ if config["modeltype"] == "rtf"
     n_genes_for_model = d.n_genes  # n_coding — full vocab for embedding lookup
 else
     # ETF: data is Float32 expression, HVG already applied in load
-    seq_len = size(X_train, 1)  # n_hvg or n_coding
+    seq_len = size(X_val, 1)  # n_hvg or n_coding (use X_val, always materialized)
     n_genes_for_model = n_coding  # pretrained vocab size for weight loading
 end
 
-# build embedding-only model
-ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
-                                                n_genes_for_model, d.n_classifications; X_val=X_val,
-                                                seq_len=seq_len)
-opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+if is_streaming
+    # streaming embedding extraction: build pretrained encoder, extract embeddings shard-by-shard
+    # then train MLP on the embedding matrix (fits in RAM ~10GB for 256d × 10M cells)
+
+    # 1) build pretrained encoder (same logic as build_embm but without running on X_train)
+    ac = FTModels._load_arch_config(config["model_dir"], config)
+    state = JLD2.load("$(config["model_dir"])/model_state.jld2")["model_state"]
+
+    # select embedding extraction function based on modeltype/task
+    if config["modeltype"] == "etf"
+        embed_fn = get_embeds_exp
+    elseif config["task"] in ("lrecon", "erecon")
+        embed_fn = get_embeds_lrecon
+    else
+        embed_fn = get_embeds
+    end
+
+    # build and load pretrained model
+    if config["modeltype"] == "etf" && config["task"] == "lrecon"
+        pt_model = ExpLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    elseif config["modeltype"] == "etf" && config["task"] == "erecon"
+        pt_model = ExpEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    elseif config["modeltype"] == "etf" && config["task"] == "mlm"
+        pt_model = ExpModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_classes=n_genes_for_model,
+            n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
+            dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
+        pt_model = RankLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
+        pt_model = RankEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    else  # rtf + mlm
+        pt_model = RankModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            n_layers=ac["n_layers"], n_classes=n_genes_for_model,
+            n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
+            dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    end
+    Flux.loadmodel!(pt_model, FTModels._clean_state(state, pt_model))
+    pt_model = fix_gpu_dropout(cu(pt_model))
+    Flux.testmode!(pt_model)
+
+    # 2) extract val/test embeddings from materialized data
+    val_input = embed_fn(pt_model, X_val, config["batch_size"])
+    test_input = embed_fn(pt_model, X_test, config["batch_size"])
+
+    # 3) stream-extract train embeddings: iterate shards, extract features, run encoder
+    embed_dim = ac["embed_dim"]
+    n_train = d.n_train_cells
+    train_input = zeros(Float32, embed_dim, n_train)
+    y_train = zeros(Float32, d.n_classifications, n_train)
+    col_offset = 0
+
+    println("streaming embedding extraction: $(n_train) cells into ($(embed_dim), $(n_train)) matrix...")
+    for (si, shard_path) in enumerate(d.train_shard_paths)
+        cell_indices, cell_labels = d.train_shard_map[shard_path]
+        # use finetune_batches_from_shard to load & process features for this shard's cells
+        batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                               token_to_idx, n_coding, top_k,
+                                               config["batch_size"], config["modeltype"], d.n_classifications;
+                                               hvg_idx=hvg_idx, use_oversmpl=false,
+                                               process_cell_topk_flat_fn=process_cell_topk_flat,
+                                               cell_to_dense_flat_fn=cell_to_dense_flat!)
+        for (x_batch, y_batch) in batches
+            bs = size(x_batch, 2)
+            # run through pretrained encoder on GPU
+            if config["modeltype"] == "etf"
+                x_gpu = cu(Float32.(x_batch))
+                x3d = reshape(x_gpu, 1, size(x_gpu)...)
+                projected = pt_model.proj(x3d)
+                gene_ids = cu(Int32.(1:size(x_batch, 1)))
+                combined = projected .+ pt_model.pos_emb(gene_ids)
+                dropped = pt_model.emb_dropout(combined)
+                transformed = pt_model.transformer(dropped)
+                emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
+                CUDA.unsafe_free!(x_gpu)
+            else
+                x_gpu = cu(Int32.(x_batch))
+                if config["task"] in ("lrecon", "erecon")
+                    embedded = pt_model.embedding(x_gpu)
+                    pos_ids = cu(Int32.(1:size(embedded, 2)))
+                    encoded = embedded .+ pt_model.pos_emb(pos_ids)
+                    dropped = pt_model.emb_dropout(encoded)
+                    transformed = pt_model.transformer(dropped)
+                    emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
+                else
+                    emb = cpu(dropdims(mean(encode(pt_model, x_gpu), dims=2), dims=2))
+                end
+                CUDA.unsafe_free!(x_gpu)
+            end
+            # store into pre-allocated matrix
+            train_input[:, col_offset+1:col_offset+bs] .= emb
+            y_train[:, col_offset+1:col_offset+bs] .= y_batch
+            col_offset += bs
+        end
+        if si % 50 == 0
+            println("  embed extraction: shard $si/$(length(d.train_shard_paths)), cells=$col_offset/$n_train")
+            flush(stdout)
+        end
+    end
+    println("embedding extraction complete: $(col_offset) cells extracted")
+    # trim if fewer cells than expected (rounding)
+    if col_offset < n_train
+        train_input = train_input[:, 1:col_offset]
+        y_train = y_train[:, 1:col_offset]
+    end
+
+    # free pretrained model from GPU
+    pt_model = nothing
+    GC.gc(true)
+    CUDA.reclaim()
+
+    # 4) build MLP head
+    ft_model = Flux.Chain(
+        Flux.Dense(embed_dim => config["hidden_dim"], gelu),
+        Flux.LayerNorm(config["hidden_dim"]),
+        Flux.Dropout(config["drop_prob"]),
+        Flux.Dense(config["hidden_dim"] => d.n_classifications))
+    ft_model = fix_gpu_dropout(cu(ft_model))
+    opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+else
+    # non-streaming path: use build_embm as before (lvl3 pseudo-bulked data)
+    X_train = d.X_train
+    ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
+                                                    n_genes_for_model, d.n_classifications; X_val=X_val,
+                                                    seq_len=seq_len)
+    y_train = d.y_train
+    opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+end
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
@@ -105,6 +250,21 @@ use_max_steps = ft_step_limit > 0
 done = false
 best_val_loss = Inf32
 best_epoch = 0
+# build oversampling indices from y_train if needed (for streaming, d.cidx_dict not available)
+if use_oversmpl
+    if is_streaming
+        # build class→indices dict from y_train one-hot matrix
+        cidx_dict = Dict{Int, Vector{Int}}()
+        for j in 1:size(y_train, 2)
+            cls = argmax(y_train[:, j])
+            push!(get!(cidx_dict, cls, Int[]), j)
+        end
+        cs = collect(keys(cidx_dict))
+    else
+        cidx_dict, cs = d.cidx_dict, d.cs
+    end
+end
+
 n_total_epochs = if use_max_steps
     bpe = div(size(train_input, 2), config["batch_size"])
     cld(ft_step_limit, max(bpe, 1))
@@ -125,7 +285,7 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     for i in 1:num_batches
         if use_oversmpl
-            batch_idx = [rand(d.cidx_dict[rand(d.cs)]) for _ in 1:config["batch_size"]]
+            batch_idx = [rand(cidx_dict[rand(cs)]) for _ in 1:config["batch_size"]]
         else
             s = (i - 1) * config["batch_size"] + 1
             e = min(s + config["batch_size"] - 1, n_train)
@@ -133,7 +293,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
 
         x_gpu = cu(train_input[:, batch_idx])
-        y_gpu = cu(d.y_train[:, batch_idx])
+        y_gpu = cu(y_train[:, batch_idx])
 
         lv, grads = Flux.withgradient(ft_model) do m
             preds = m(x_gpu)

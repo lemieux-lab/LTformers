@@ -8,6 +8,7 @@ export batches_from_shard_data
 export sc_mask_input!, sc_mask_input_exp!, sc_mask_input_exp_rank!, sc_mask_input_erecon!, sc_masked_loss
 export cell_to_dense_flat!, process_cell_topk_flat
 export gpu_rank_errors
+export sc_inverse_ranks_batch
 
 
 # cell processing
@@ -352,6 +353,28 @@ function gpu_rank_errors(logits_masked::CuArray{Float32, 2}, y_targets::CuArray;
         errors[start:stop] = Int.(cpu(chunk_errs))
     end
     return errors
+end
+
+
+"""
+    sc_inverse_ranks_batch(X_rtf_batch, n_coding) -> Matrix{Float32}
+
+Per-batch version of sc_inverse_ranks for streaming rmlp finetuning.
+Converts RTF gene-id tokens to inverse ranks normalized by n_coding.
+X_rtf_batch: (top_k, bs) Int32 matrix where X[rank, sample] = gene_id
+Returns: (n_coding, bs) Float32 matrix where out[gene_id, sample] = rank / n_coding
+"""
+function sc_inverse_ranks_batch(X_rtf_batch::Matrix{Int32}, n_coding::Int)
+    inv = zeros(Float32, n_coding, size(X_rtf_batch, 2))
+    @inbounds for j in axes(X_rtf_batch, 2)
+        for r in axes(X_rtf_batch, 1)
+            g = X_rtf_batch[r, j]
+            if g > 0 && g <= n_coding
+                inv[g, j] = Float32(r) / Float32(n_coding)
+            end
+        end
+    end
+    return inv
 end
 
 

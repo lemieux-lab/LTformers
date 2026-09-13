@@ -24,12 +24,12 @@ PRE-TRAIN
 FINE-TUNE
 -- w/o-pt
     -- RMLP
-        -- lvl1:
-        -- lvl2:
+        -- lvl1 [DONE]
+        -- lvl2 [DONE]
         -- lvl3:
     -- EMLP
-        -- lvl1:
-        -- lvl2:
+        -- lvl1 [DONE]
+        -- lvl2 [DONE]
         -- lvl3:
     -- RTF
         -- lvl1:
