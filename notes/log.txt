@@ -1154,7 +1154,9 @@ a1
                 -- ASC -> JURKAT: not good
                 -- SKB -> U2OS: slight conergence but spiky
             -- best is JURKAT -> SKB, can also use HFL1 -> VCAP if want to not use SKB
-            -- RUNNING same eval testing but on emlp this time!(5)
+            -- ran same eval testing but on emlp this time!
+                -- pretty muhc the same result, jurkat -> skb is best but nothing else works...
+            -- might just completely ditch this ngl... (at least for lincs?)
     -- TODO no-pt sweeps
         -- done rmlp sweep on lvl1, lvl2 since normalization change
             -- rmlp LR ranges are hugely different (much smaller than emlp...)
@@ -1177,9 +1179,12 @@ a2
                         -- fixed; issue was converting sc_masked_loss to Float32[] without cpu()
                             -- should work now???
                     -- about 1.5s per step, thus 40k steps would take about 20 hours
-            -- need to git pull any updates from kraken then run larger sweeps!
-            -- also try incr batch size
-            -- !RE-RUN mini runs w/o sweep
+            -- done to git pull any updates from kraken then run larger sweeps!
+            -- done mini mlm rtf w/o sweep (1)
+                -- tried 500 bs on CQ, takes 44mins for 100k steps
+                -- failed 600bs! so 500 bs is the max for pre-training runs on full h100
+                -- so how does a mini mlm rtf sweep run w/ 500bs? 
+                -- RUNNING (1:1-2, CQ) mlm rtf for 1000 steps, 500bs
 -- fine-tune
     -- pb
         -- TODO lvl3 testing
@@ -1188,7 +1193,7 @@ a2
             -- 2mins/100steps, bs=32
             -- ran longer on rmlp 
                 -- good! pearson=0.989! isnt this a little too hihg?
-            -- RUNNING longer on emlp (1)
+            -- ran longer on emlp 
             -- also would be worth to try instead changing the task to predicting the full expression profile
                 -- this doesnt quite align with single cell resolution tho...
                 -- issue w/ this was that i need a drug structure embedding...
@@ -1201,7 +1206,7 @@ a2
             -- RUNNING etf, rtf sweep on lvl1 (2)
     -- sc
         -- done lvl3 implement
-            -- !RE-RUN test of rmlp on lvl3 (1)
+            -- RE-RUN test of rmlp on lvl3
                 -- OOM error + bug in filtering for dose
                 -- dose is embedding in drugname, not its own column - fixed!
                 -- just realized that we pseudobulk profiles for fine-tuning, thus this is essentially the same as pb eval
@@ -1213,12 +1218,15 @@ a2
                     -- but each target cell has a slightly different PC1 score
                 -- alternatively, create multiple pbs per compound by subsampling cells
                     -- each sub pb is a different view (aka bootstrap pseudobulking)
+                -- or predict the top k pc's (so not as easy as just predicting pc1?)
                 -- check w/ seb!
         -- TODO no-pt sweeps
             -- reviewed test on rmlp
                 -- prev. 32bs had OOM error
                 -- RUNNING rmlp test 100steps, 16bs
                 -- still getting OOM error??? might have to only test on cq?
+                -- RUNNING tests on cq for rmlp, emlp lvl2 (2)
+            -- RUNNING tests on cq for rtf, etf lvl2 (2)
 
 *** to transfer files from cq to here: ssh muninn then run:
 rsync -azh --partial --info=progress2 \
@@ -1230,3 +1238,102 @@ rsync -azh --partial --info=progress2 \
     /home/golem/scratch/chans/transformers/cq/results/ 
 
 ^see how to do w/o needing to input password, duo push, etc twice
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 12 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 testing
+        -- ASK SEB
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+                -- mlm etf completed (ish, 40 runs which is prolly sufficient)
+                    -- best: mlm_tahoe_etf_2026-09-10_07-52
+                        -- lr=0.00286, drop_prob=0.125, mask_ratio=0.17
+                -- rest are to be completed in ~1-3 days
+    -- sc
+        -- TODO sweeps
+            -- RUNNING (1:1-2, CQ) mlm rtf for 1000 steps, 500bs (1)
+                -- not sure why this was cancelled, re-running (just to check if can incr batchsize)
+-- fine-tune
+    -- pb
+        -- TODO lvl3 testing
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- done rmlp sweep on lvl2 (1)
+                -- best: rmlp_nopt_tahoe_lvl2_2026-09-11_15-58
+                    -- lr=0.000001, drop_prob=0.05, n_layers=2
+            -- RUNNING etf, rtf sweep on lvl1 (2)
+                -- lowkey rtf is taking quite a long time, i'm not really sure how this is gna work
+                -- fackkkk accidentally did on lincs dataset, this should be on tahoe!!!
+                    -- also was using way too many steps, changed to 10k
+                -- re-starting the rtf run...
+            -- RUNNING etf, rtf sweep on lvl2 (2)
+                -- PENDING rtf sweep on lvl2 (resources)
+    -- sc
+        -- done lvl3 implement
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- reviewed tests for rmlp, emlp lvl2 (2, CQ)
+                -- still OOM, issue is supposedly CPU RAM issue
+                -- RUNNING emlp 100step w/ bs=300 mem=300, emlp 100step w/bs=300 mem=500 (2)
+            -- reviewed tests for rtf, etf lvl2 (2, CQ)
+                -- still OOM, same issue as abvoe^
+            -- going to try to also implement streaming like how pre-training does?
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 13 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 testing
+        -- ASK SEB
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (6)
+                -- mlm etf completed (ish, 40 runs which is prolly sufficient)
+                    -- best: mlm_tahoe_etf_2026-09-10_07-52
+                        -- lr=0.00286, drop_prob=0.125, mask_ratio=0.17
+                -- rest are to be completed in ~1-3 days
+    -- sc
+        -- TODO sweeps
+            -- ran mlm rtf - 10steps, 500bs, 300G mem
+                -- works, 7mins/10steps
+                -- trying 550 bs, trying 400G mem (2, CQ)
+            -- !RUNNING mlm rtf sweep - 10steps, 500bs, 300G mem (1:1-2, CQ)
+-- fine-tune
+    -- pb
+        -- TODO lvl3 testing
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- RUNNING etf, rtf sweep on lvl1 (2)
+            -- RUNNING etf, rtf sweep on lvl2 (2)
+                -- PENDING rtf sweep on lvl2 (resources)
+    -- sc
+        -- done lvl3 implement
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- !TODO rmlp, emlp
+                -- ran emlp 100step w/ bs=300 mem=300, emlp 100step w/bs=300 mem=500
+                    -- issue is CPU RAM!!! mem=500 worked!!!
+                    -- either way, it took 5hrs to do the preprocessing...
+                    -- can try implementing streaming if needed? like pretraining does?
+            -- TODO rtf, etf
