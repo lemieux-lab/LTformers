@@ -1337,7 +1337,7 @@ a2
         -- done lvl3 implement
             -- ASK SEB
         -- TODO no-pt sweeps
-            -- !TODO rmlp, emlp
+            -- TODO rmlp, emlp
                 -- ran emlp 100step w/ bs=300 mem=300, emlp 100step w/bs=300 mem=500
                     -- issue is CPU RAM!!! mem=500 worked!!!
                     -- either way, it took 5hrs to do the preprocessing...
@@ -1348,4 +1348,56 @@ a2
                         -- for emb.jl, using embedding extraction ? doubel check this
                     -- ran test 5shard subset using tmp/ config on etf, rtf, emlp, rmlp lvl1, lvl2
                         -- works!! pushed to cq to run on rorqual
+                -- RUNNING rmlp, rtf test (sweep + non-sweep) (2, 2:1-2, CQ)
+                    -- 500 bs
+            -- TODO rtf, etf
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 14 2026 ###
+
+a1
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 testing
+        -- ASK SEB
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING sweeps (4)
+                -- erecon etf completed 16 runs, not sure why so little ngl
+                    -- best: lrecon_tahoe_etf_2026-09-13_01-57
+                        -- lr=0.002, drop_prob=0.11, ema_decay=0.93, mask_ratio=0.13
+                -- rest are to be completed in ~1 day
+            -- PENDING long runs of completed sweeps (mlm etf, lrecon etf)
+                -- fixed .toml hyperparameter loadings 
+
+    -- sc
+        -- TODO sweeps
+            -- reviewed mlm rtf sweep - 10k steps, 400bs, 300G mem
+                -- working! mostly dependent on LR (where higher LR is better)
+                -- RUNNING same thing on all configs, then can narrow down ranges? (5:1-10, CQ)
+-- fine-tune
+    -- pb
+        -- TODO lvl3 testing
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- RUNNING etf, rtf sweep on lvl1 (2)
+                -- could prolly finish by tmo, 9 runs rn for rtf and 15 for etf
+            -- RUNNING etf, rtf sweep on lvl2 (2)
+                -- could prolly finish by wed, 5 runs for rtf and 9 for etf
+    -- sc
+        -- done lvl3 implement
+            -- ASK SEB
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- reviewed rmlp, rtf test (sweep + non-sweep)
+                    -- 500 bs, OOM error because val/test loading
+                    -- implementing streaming for val/test as well! testing rn to see if works
+                    -- working! pushed to git for cq
             -- TODO rtf, etf

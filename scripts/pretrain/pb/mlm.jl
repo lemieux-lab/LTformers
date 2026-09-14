@@ -9,7 +9,9 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 
 args = load_pretrain_args()
-config = load_config(args["config"], args)
+# config = load_config(args["config"], args)
+config = load_config(args["config"], args;
+                     hp_section=["pretrain", "mlm", args["modeltype"]])
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())

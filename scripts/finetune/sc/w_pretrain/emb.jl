@@ -77,7 +77,7 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 # X_train, X_val, X_test = d.X_train, d.X_val, d.X_test
-X_val, X_test = d.X_val, d.X_test
+# X_val, X_test = d.X_val, d.X_test  # no longer materialized in streaming mode
 
 if config["modeltype"] == "rtf"
     # RTF: data is Int32 gene IDs, top_k truncated
@@ -85,7 +85,8 @@ if config["modeltype"] == "rtf"
     n_genes_for_model = d.n_genes  # n_coding — full vocab for embedding lookup
 else
     # ETF: data is Float32 expression, HVG already applied in load
-    seq_len = size(X_val, 1)  # n_hvg or n_coding (use X_val, always materialized)
+    # seq_len = size(X_val, 1)  # no longer materialized in streaming mode
+    seq_len = d.n_genes  # n_hvg or n_coding
     n_genes_for_model = n_coding  # pretrained vocab size for weight loading
 end
 
@@ -138,69 +139,103 @@ if is_streaming
     pt_model = fix_gpu_dropout(cu(pt_model))
     Flux.testmode!(pt_model)
 
-    # 2) extract val/test embeddings from materialized data
-    val_input = embed_fn(pt_model, X_val, config["batch_size"])
-    test_input = embed_fn(pt_model, X_test, config["batch_size"])
+    # # 2) extract val/test embeddings from materialized data
+    # val_input = embed_fn(pt_model, X_val, config["batch_size"])
+    # test_input = embed_fn(pt_model, X_test, config["batch_size"])
 
-    # 3) stream-extract train embeddings: iterate shards, extract features, run encoder
     embed_dim = ac["embed_dim"]
+
+    # helper: extract embedding from a batch through pretrained encoder
+    function _encode_batch(x_batch, pt_model, modeltype, task)
+        if modeltype == "etf"
+            x_gpu = cu(Float32.(x_batch))
+            x3d = reshape(x_gpu, 1, size(x_gpu)...)
+            projected = pt_model.proj(x3d)
+            gene_ids = cu(Int32.(1:size(x_batch, 1)))
+            combined = projected .+ pt_model.pos_emb(gene_ids)
+            dropped = pt_model.emb_dropout(combined)
+            transformed = pt_model.transformer(dropped)
+            emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
+            CUDA.unsafe_free!(x_gpu)
+        else
+            x_gpu = cu(Int32.(x_batch))
+            if task in ("lrecon", "erecon")
+                embedded = pt_model.embedding(x_gpu)
+                pos_ids = cu(Int32.(1:size(embedded, 2)))
+                encoded = embedded .+ pt_model.pos_emb(pos_ids)
+                dropped = pt_model.emb_dropout(encoded)
+                transformed = pt_model.transformer(dropped)
+                emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
+            else
+                emb = cpu(dropdims(mean(encode(pt_model, x_gpu), dims=2), dims=2))
+            end
+            CUDA.unsafe_free!(x_gpu)
+        end
+        return emb
+    end
+
+    # helper: stream-extract embeddings from shard maps into pre-allocated matrix
+    function _stream_extract_embeddings!(output_mat, output_labels, shard_paths, shard_map,
+                                          pt_model, n_total, label; n_cls=d.n_classifications)
+        col_offset = 0
+        for (si, shard_path) in enumerate(shard_paths)
+            cell_indices, cell_labels = shard_map[shard_path]
+            batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                   token_to_idx, n_coding, top_k,
+                                                   config["batch_size"], config["modeltype"], n_cls;
+                                                   hvg_idx=hvg_idx, use_oversmpl=false,
+                                                   process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                   cell_to_dense_flat_fn=cell_to_dense_flat!)
+            for (x_batch, y_batch) in batches
+                bs = size(x_batch, 2)
+                emb = _encode_batch(x_batch, pt_model, config["modeltype"], config["task"])
+                output_mat[:, col_offset+1:col_offset+bs] .= emb
+                output_labels[:, col_offset+1:col_offset+bs] .= y_batch
+                col_offset += bs
+            end
+            if si % 50 == 0
+                println("  $label embed extraction: shard $si/$(length(shard_paths)), cells=$col_offset/$n_total")
+                flush(stdout)
+            end
+        end
+        println("$label embedding extraction complete: $col_offset cells")
+        return col_offset
+    end
+
+    # 2) stream-extract train embeddings
     n_train = d.n_train_cells
     train_input = zeros(Float32, embed_dim, n_train)
     y_train = zeros(Float32, d.n_classifications, n_train)
-    col_offset = 0
-
-    println("streaming embedding extraction: $(n_train) cells into ($(embed_dim), $(n_train)) matrix...")
-    for (si, shard_path) in enumerate(d.train_shard_paths)
-        cell_indices, cell_labels = d.train_shard_map[shard_path]
-        # use finetune_batches_from_shard to load & process features for this shard's cells
-        batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
-                                               token_to_idx, n_coding, top_k,
-                                               config["batch_size"], config["modeltype"], d.n_classifications;
-                                               hvg_idx=hvg_idx, use_oversmpl=false,
-                                               process_cell_topk_flat_fn=process_cell_topk_flat,
-                                               cell_to_dense_flat_fn=cell_to_dense_flat!)
-        for (x_batch, y_batch) in batches
-            bs = size(x_batch, 2)
-            # run through pretrained encoder on GPU
-            if config["modeltype"] == "etf"
-                x_gpu = cu(Float32.(x_batch))
-                x3d = reshape(x_gpu, 1, size(x_gpu)...)
-                projected = pt_model.proj(x3d)
-                gene_ids = cu(Int32.(1:size(x_batch, 1)))
-                combined = projected .+ pt_model.pos_emb(gene_ids)
-                dropped = pt_model.emb_dropout(combined)
-                transformed = pt_model.transformer(dropped)
-                emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
-                CUDA.unsafe_free!(x_gpu)
-            else
-                x_gpu = cu(Int32.(x_batch))
-                if config["task"] in ("lrecon", "erecon")
-                    embedded = pt_model.embedding(x_gpu)
-                    pos_ids = cu(Int32.(1:size(embedded, 2)))
-                    encoded = embedded .+ pt_model.pos_emb(pos_ids)
-                    dropped = pt_model.emb_dropout(encoded)
-                    transformed = pt_model.transformer(dropped)
-                    emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
-                else
-                    emb = cpu(dropdims(mean(encode(pt_model, x_gpu), dims=2), dims=2))
-                end
-                CUDA.unsafe_free!(x_gpu)
-            end
-            # store into pre-allocated matrix
-            train_input[:, col_offset+1:col_offset+bs] .= emb
-            y_train[:, col_offset+1:col_offset+bs] .= y_batch
-            col_offset += bs
-        end
-        if si % 50 == 0
-            println("  embed extraction: shard $si/$(length(d.train_shard_paths)), cells=$col_offset/$n_train")
-            flush(stdout)
-        end
+    println("streaming train embedding extraction: $(n_train) cells into ($(embed_dim), $(n_train)) matrix...")
+    col_train = _stream_extract_embeddings!(train_input, y_train, d.train_shard_paths, d.train_shard_map,
+                                             pt_model, n_train, "train")
+    if col_train < n_train
+        train_input = train_input[:, 1:col_train]
+        y_train = y_train[:, 1:col_train]
     end
-    println("embedding extraction complete: $(col_offset) cells extracted")
-    # trim if fewer cells than expected (rounding)
-    if col_offset < n_train
-        train_input = train_input[:, 1:col_offset]
-        y_train = y_train[:, 1:col_offset]
+
+    # 3) stream-extract val embeddings
+    n_val = d.n_val_cells
+    val_input = zeros(Float32, embed_dim, n_val)
+    y_val = zeros(Float32, d.n_classifications, n_val)
+    println("streaming val embedding extraction: $(n_val) cells...")
+    col_val = _stream_extract_embeddings!(val_input, y_val, d.val_shard_paths, d.val_shard_map,
+                                           pt_model, n_val, "val")
+    if col_val < n_val
+        val_input = val_input[:, 1:col_val]
+        y_val = y_val[:, 1:col_val]
+    end
+
+    # 4) stream-extract test embeddings
+    n_test = d.n_test_cells
+    test_input = zeros(Float32, embed_dim, n_test)
+    y_test = zeros(Float32, d.n_classifications, n_test)
+    println("streaming test embedding extraction: $(n_test) cells...")
+    col_test = _stream_extract_embeddings!(test_input, y_test, d.test_shard_paths, d.test_shard_map,
+                                            pt_model, n_test, "test")
+    if col_test < n_test
+        test_input = test_input[:, 1:col_test]
+        y_test = y_test[:, 1:col_test]
     end
 
     # free pretrained model from GPU
@@ -219,10 +254,13 @@ if is_streaming
 else
     # non-streaming path: use build_embm as before (lvl3 pseudo-bulked data)
     X_train = d.X_train
+    X_val, X_test = d.X_val, d.X_test
     ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
                                                     n_genes_for_model, d.n_classifications; X_val=X_val,
                                                     seq_len=seq_len)
     y_train = d.y_train
+    y_val = d.y_val
+    y_test = d.y_test
     opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 end
 
@@ -315,7 +353,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     for s in 1:config["batch_size"]:n_val
         e = min(s + config["batch_size"] - 1, n_val)
         x_gpu = cu(val_input[:, s:e])
-        y_gpu = cu(d.y_val[:, s:e])
+        y_gpu = cu(y_val[:, s:e])
         logits = ft_model(x_gpu)
         if is_regression
             push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
@@ -336,7 +374,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         for s in 1:config["batch_size"]:n_test
             e = min(s + config["batch_size"] - 1, n_test)
             x_gpu = cu(test_input[:, s:e])
-            y_gpu = cu(d.y_test[:, s:e])
+            y_gpu = cu(y_test[:, s:e])
             logits = ft_model(x_gpu)
             if is_regression
                 push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))

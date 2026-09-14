@@ -886,7 +886,12 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                   n_genes=d.n_genes, n_classifications=d.n_classifications,
                   label_to_id=nothing,
                   train_shard_map=nothing, train_shard_paths=nothing,
-                  n_train_cells=size(d.X_train, 2), use_oversmpl=false,
+                  n_train_cells=size(d.X_train, 2),
+                  val_shard_map=nothing, val_shard_paths=nothing,
+                  n_val_cells=size(d.X_val, 2),
+                  test_shard_map=nothing, test_shard_paths=nothing,
+                  n_test_cells=size(d.X_test, 2),
+                  use_oversmpl=false,
                   cidx_dict=nothing, cs=nothing,
                   train_idx=d.train_idx, val_idx=d.val_idx, test_idx=d.test_idx)
     end
@@ -896,40 +901,54 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                                       pb_data_path=pb_data_path,
                                       subset_shards=subset_shards)
 
-    # -- materialize val and test (small, needed every epoch) --
-    println("[streaming] materializing val split...")
-    flush(stdout)
-    X_val, y_val = materialize_finetune_split(scan.val_cells, scan.label_to_id, scan.n_cls,
-                                               token_to_idx, n_coding, top_k, modeltype, hvg_idx;
-                                               process_cell_topk_flat_fn=process_cell_topk_flat_fn,
-                                               cell_to_dense_flat_fn=cell_to_dense_flat_fn)
-    println("  val: $(size(X_val))")
+    # # -- materialize val and test (small, needed every epoch) --
+    # println("[streaming] materializing val split...")
+    # flush(stdout)
+    # X_val, y_val = materialize_finetune_split(scan.val_cells, scan.label_to_id, scan.n_cls,
+    #                                            token_to_idx, n_coding, top_k, modeltype, hvg_idx;
+    #                                            process_cell_topk_flat_fn=process_cell_topk_flat_fn,
+    #                                            cell_to_dense_flat_fn=cell_to_dense_flat_fn)
+    # println("  val: $(size(X_val))")
+    #
+    # println("[streaming] materializing test split...")
+    # flush(stdout)
+    # X_test, y_test = materialize_finetune_split(scan.test_cells, scan.label_to_id, scan.n_cls,
+    #                                              token_to_idx, n_coding, top_k, modeltype, hvg_idx;
+    #                                              process_cell_topk_flat_fn=process_cell_topk_flat_fn,
+    #                                              cell_to_dense_flat_fn=cell_to_dense_flat_fn)
+    # println("  test: $(size(X_test))")
 
-    println("[streaming] materializing test split...")
-    flush(stdout)
-    X_test, y_test = materialize_finetune_split(scan.test_cells, scan.label_to_id, scan.n_cls,
-                                                 token_to_idx, n_coding, top_k, modeltype, hvg_idx;
-                                                 process_cell_topk_flat_fn=process_cell_topk_flat_fn,
-                                                 cell_to_dense_flat_fn=cell_to_dense_flat_fn)
-    println("  test: $(size(X_test))")
-
-    # -- build shard map for streaming training --
+    # -- build shard maps for all splits (val/test streamed like train) --
     train_shard_map = prepare_shard_cell_map(scan.train_cells, scan.label_to_id)
     train_shard_paths = collect(keys(train_shard_map))
     n_train_cells = length(scan.train_cells)
-    println("[streaming] train: $n_train_cells cells across $(length(train_shard_paths)) shards (not materialized)")
+
+    val_shard_map = prepare_shard_cell_map(scan.val_cells, scan.label_to_id)
+    val_shard_paths = collect(keys(val_shard_map))
+    n_val_cells = length(scan.val_cells)
+
+    test_shard_map = prepare_shard_cell_map(scan.test_cells, scan.label_to_id)
+    test_shard_paths = collect(keys(test_shard_map))
+    n_test_cells = length(scan.test_cells)
+
+    println("[streaming] train: $n_train_cells cells across $(length(train_shard_paths)) shards")
+    println("[streaming] val: $n_val_cells cells across $(length(val_shard_paths)) shards")
+    println("[streaming] test: $n_test_cells cells across $(length(test_shard_paths)) shards")
+    println("[streaming] all splits use shard-level streaming (no materialization)")
     flush(stdout)
 
-    n_genes = modeltype == "rtf" ? n_coding : size(X_val, 1)
+    n_genes = modeltype == "rtf" ? n_coding : (!isnothing(hvg_idx) ? length(hvg_idx) : n_coding)
     _use_oversmpl = level == "lvl2"
 
-    return (; X_val, X_test, y_val, y_test,
-              n_genes, n_classifications=scan.n_cls, label_to_id=scan.label_to_id,
-              train_shard_map, train_shard_paths, n_train_cells, use_oversmpl=_use_oversmpl,
+    return (; n_genes, n_classifications=scan.n_cls, label_to_id=scan.label_to_id,
+              train_shard_map, train_shard_paths, n_train_cells,
+              val_shard_map, val_shard_paths, n_val_cells,
+              test_shard_map, test_shard_paths, n_test_cells,
+              use_oversmpl=_use_oversmpl,
               cidx_dict=nothing, cs=nothing,
-              train_idx=collect(1:size(X_val, 2)),
-              val_idx=collect(1:size(X_val, 2)),
-              test_idx=collect(1:size(X_test, 2)))
+              train_idx=collect(1:n_train_cells),
+              val_idx=collect(1:n_val_cells),
+              test_idx=collect(1:n_test_cells))
 end
 
 

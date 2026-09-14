@@ -31,10 +31,10 @@ mask_ratio = 0.0
 ema_decay = 0.0
 
 [pretrain.lrecon.etf]
-lr = 0.0
-drop_prob = 0.0
-mask_ratio = 0.0
-ema_decay = 0.0
+lr = 0.002
+drop_prob = 0.11
+mask_ratio = 0.13
+ema_decay = 0.93
 
 # ──────────────────────────────────────────────
 # finetune — with pretrain

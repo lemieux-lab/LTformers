@@ -197,16 +197,39 @@ for epoch in ProgressBar(1:n_total_epochs)
     # val eval (every epoch for checkpt selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
-    n_val = size(d.X_val, 2)
-    for s in 1:config["batch_size"]:n_val
-        e = min(s + config["batch_size"] - 1, n_val)
-        x_gpu = cu(d.X_val[:, s:e])
-        y_gpu = cu(d.y_val[:, s:e])
-        logits = model(x_gpu)
-        if is_regression
-            push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-        else
-            push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+    if is_streaming
+        for shard_path in d.val_shard_paths
+            cell_indices, cell_labels = d.val_shard_map[shard_path]
+            batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                   token_to_idx, n_coding, top_k,
+                                                   config["batch_size"], "etf", d.n_classifications;
+                                                   hvg_idx=hvg_idx, use_oversmpl=false,
+                                                   process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                   cell_to_dense_flat_fn=cell_to_dense_flat!)
+            for (x_batch, y_batch) in batches
+                x_gpu = CuArray(x_batch)
+                y_gpu = CuArray(y_batch)
+                logits = model(x_gpu)
+                if is_regression
+                    push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                else
+                    push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                end
+                CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
+            end
+        end
+    else
+        # n_val = size(d.X_val, 2)
+        for s in 1:config["batch_size"]:size(d.X_val, 2)
+            e = min(s + config["batch_size"] - 1, size(d.X_val, 2))
+            x_gpu = cu(d.X_val[:, s:e])
+            y_gpu = cu(d.y_val[:, s:e])
+            logits = model(x_gpu)
+            if is_regression
+                push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+            else
+                push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+            end
         end
     end
     push!(val_losses, mean(val_eval_losses))
@@ -218,20 +241,47 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     if is_last
         eval_losses = Float32[]
-        n_test = size(d.X_test, 2)
-        for s in 1:config["batch_size"]:n_test
-            e = min(s + config["batch_size"] - 1, n_test)
-            x_gpu = cu(d.X_test[:, s:e])
-            y_gpu = cu(d.y_test[:, s:e])
-            logits = model(x_gpu)
-            if is_regression
-                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                append!(epoch_preds, vec(cpu(logits)))
-                append!(epoch_trues, vec(cpu(y_gpu)))
-            else
-                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                append!(epoch_preds, Flux.onecold(cpu(logits)))
-                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+        if is_streaming
+            for shard_path in d.test_shard_paths
+                cell_indices, cell_labels = d.test_shard_map[shard_path]
+                batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                       token_to_idx, n_coding, top_k,
+                                                       config["batch_size"], "etf", d.n_classifications;
+                                                       hvg_idx=hvg_idx, use_oversmpl=false,
+                                                       process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                       cell_to_dense_flat_fn=cell_to_dense_flat!)
+                for (x_batch, y_batch) in batches
+                    x_gpu = CuArray(x_batch)
+                    y_gpu = CuArray(y_batch)
+                    logits = model(x_gpu)
+                    if is_regression
+                        push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                        append!(epoch_preds, vec(cpu(logits)))
+                        append!(epoch_trues, vec(cpu(y_gpu)))
+                    else
+                        push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                        append!(epoch_preds, Flux.onecold(cpu(logits)))
+                        append!(epoch_trues, Flux.onecold(y_batch))
+                    end
+                    CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
+                end
+            end
+        else
+            # n_test = size(d.X_test, 2)
+            for s in 1:config["batch_size"]:size(d.X_test, 2)
+                e = min(s + config["batch_size"] - 1, size(d.X_test, 2))
+                x_gpu = cu(d.X_test[:, s:e])
+                y_gpu = cu(d.y_test[:, s:e])
+                logits = model(x_gpu)
+                if is_regression
+                    push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                    append!(epoch_preds, vec(cpu(logits)))
+                    append!(epoch_trues, vec(cpu(y_gpu)))
+                else
+                    push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                    append!(epoch_preds, Flux.onecold(cpu(logits)))
+                    append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+                end
             end
         end
         push!(test_losses, mean(eval_losses))
@@ -283,7 +333,7 @@ log_info(; save_dir=save_dir, train_indices=d.train_idx, val_indices=d.val_idx, 
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
-           X_test=d.X_test)
+           X_test=nothing)  # streaming: X_test not materialized
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

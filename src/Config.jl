@@ -67,14 +67,24 @@ function _merge_hp!(config::Dict, hp_section::Vector{String},
         node = node[key]
     end
 
+    n_merged = 0
     for (k, v) in node
         # skip if CLI explicitly set this key
         if !isnothing(args) && !isnothing(get(args, k, nothing))
             continue
         end
+        # skip placeholder zeros (sweep params not yet filled in)
+        if v isa Number && v == 0
+            continue
+        end
         config[k] = v
+        n_merged += 1
     end
-    println("merged hp config: $hp_rel [$(join(hp_section, "."))]")
+    if n_merged > 0
+        println("merged hp config: $hp_rel [$(join(hp_section, "."))] ($n_merged params)")
+    else
+        println("hp config: $hp_rel [$(join(hp_section, "."))] — all zeros, using defaults")
+    end
     return config
 end
 

@@ -11,7 +11,10 @@ using Preprocess, Models, Train, Log, Plot, Args, Config
 using LoadSC, ProcessSC
 
 args = load_pretrain_args()
-config = load_config(args["config"], args)
+# config = load_config(args["config"], args)
+config = load_config(args["config"], args;
+                     hp_section=["pretrain", "lrecon", args["modeltype"]],
+                     dataset="tahoe_sc")
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
