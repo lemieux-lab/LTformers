@@ -76,17 +76,24 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 # model — MLP with linearly interpolated layer sizes
-sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-         for i in 0:config["n_layers"]+1]
-layers = []
-for i in 1:length(sizes)-1
-    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-    if i < length(sizes) - 1
-        push!(layers, Flux.Dropout(config["drop_prob"]))
+if config["modeltype"] == "elog"
+    # logistic regression: single linear layer, no activation, no dropout
+    model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
+    model = cu(model)
+else
+    # nonlinear MLP: tapered layers with relu + dropout
+    sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
+             for i in 0:config["n_layers"]+1]
+    layers = []
+    for i in 1:length(sizes)-1
+        push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
+        if i < length(sizes) - 1
+            push!(layers, Flux.Dropout(config["drop_prob"]))
+        end
     end
+    model = Flux.Chain(layers...)
+    model = fix_gpu_dropout(cu(model))
 end
-model = Flux.Chain(layers...)
-model = fix_gpu_dropout(cu(model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
@@ -97,7 +104,7 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "SC-FT-Aug", "emlp_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "SC-FT-Aug", "$(config["modeltype"])_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
@@ -198,7 +205,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
-        for shard_path in d.val_shard_paths
+        println("  epoch $epoch: val eval ($(length(d.val_shard_paths)) shards)"); flush(stdout)
+        for (vi, shard_path) in enumerate(d.val_shard_paths)
             cell_indices, cell_labels = d.val_shard_map[shard_path]
             batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                    token_to_idx, n_coding, top_k,
@@ -217,6 +225,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                 end
                 CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
             end
+            if vi % 200 == 0; println("    val shard $vi/$(length(d.val_shard_paths))"); flush(stdout); end
         end
     else
         # n_val = size(d.X_val, 2)
@@ -242,7 +251,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     if is_last
         eval_losses = Float32[]
         if is_streaming
-            for shard_path in d.test_shard_paths
+            println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
+            for (ti, shard_path) in enumerate(d.test_shard_paths)
                 cell_indices, cell_labels = d.test_shard_map[shard_path]
                 batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                        token_to_idx, n_coding, top_k,
@@ -265,6 +275,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                     end
                     CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
                 end
+                if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
             end
         else
             # n_test = size(d.X_test, 2)

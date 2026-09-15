@@ -127,7 +127,7 @@ function load_finetune_args()
             arg_type = Int
             required = true
         "--modeltype", "-t"
-            help = "model type: rtf, emlp, rmlp, or etf"
+            help = "model type: rtf, etf, rmlp, emlp, rlog, or elog"
             arg_type = String
             required = true
         "--batch_size", "-b"
@@ -225,7 +225,7 @@ function load_sc_finetune_args()
             arg_type = Int
             required = true
         "--modeltype", "-t"
-            help = "model type: rtf, emlp, rmlp, or etf"
+            help = "model type: rtf, etf, rmlp, emlp, rlog, or elog"
             arg_type = String
             required = true
         "--batch_size", "-b"

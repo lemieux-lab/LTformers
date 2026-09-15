@@ -199,7 +199,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
-        for shard_path in d.val_shard_paths
+        println("  epoch $epoch: val eval ($(length(d.val_shard_paths)) shards)"); flush(stdout)
+        for (vi, shard_path) in enumerate(d.val_shard_paths)
             cell_indices, cell_labels = d.val_shard_map[shard_path]
             batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                    token_to_idx, n_coding, top_k,
@@ -218,6 +219,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                 end
                 CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
             end
+            if vi % 200 == 0; println("    val shard $vi/$(length(d.val_shard_paths))"); flush(stdout); end
         end
     else
         for s in 1:config["batch_size"]:size(d.X_val, 2)
@@ -242,7 +244,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     if is_last
         eval_losses = Float32[]
         if is_streaming
-            for shard_path in d.test_shard_paths
+            println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
+            for (ti, shard_path) in enumerate(d.test_shard_paths)
                 cell_indices, cell_labels = d.test_shard_map[shard_path]
                 batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                        token_to_idx, n_coding, top_k,
@@ -265,6 +268,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                     end
                     CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
                 end
+                if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
             end
         else
             for s in 1:config["batch_size"]:size(d.X_test, 2)

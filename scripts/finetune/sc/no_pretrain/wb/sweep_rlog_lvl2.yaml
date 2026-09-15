@@ -1,0 +1,44 @@
+# .venv-x86_64/bin/wandb sweep scripts/finetune/sc/no_pretrain/wb/sweep_rlog_lvl2.yaml
+# run_sweep gh18_sbatch TSC_rlog_lvl2 serena-chan-/SC-FT-Aug/<sweep_id>
+
+program: scripts/finetune/sc/no_pretrain/rmlp.jl
+project: SC-FT-Aug
+name: rlog_nopt_lvl2_sweep
+method: bayes
+metric:
+  name: best_val_loss
+  goal: minimize
+parameters:
+  modeltype:
+    value: "rlog"
+  mode:
+    value: "e2e"
+  level:
+    value: "lvl2"
+  n_epochs:
+    value: 0
+  max_ft_steps:
+    value: 20000
+  batch_size:
+    value: 100
+  subset_shards:
+    value: 100
+  # swept params — logistic regression: only lr matters
+  lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  drop_prob:
+    value: 0.0
+  n_layers:
+    value: 0
+early_terminate:
+  type: hyperband
+  min_iter: 3
+  eta: 3
+  s: 3
+command:
+  - ${env}
+  - julia
+  - ${program}
+  - ${args}

@@ -23,6 +23,12 @@ PRE-TRAIN
 
 FINE-TUNE
 -- w/o-pt
+    -- RLOG
+        -- lvl1:
+        -- lvl2:
+    -- ELOG
+        -- lvl1:
+        -- lvl2:
     -- RMLP
         -- lvl1 [DONE]
         -- lvl2 [DONE]

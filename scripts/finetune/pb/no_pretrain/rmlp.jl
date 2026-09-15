@@ -61,17 +61,24 @@ d = dsplit(data_expr, config;
            inverse_ranks_fn=inverse_ranks)
 
 # model
-sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-         for i in 0:config["n_layers"]+1]
-layers = []
-for i in 1:length(sizes)-1
-    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-    if i < length(sizes) - 1
-        push!(layers, Flux.Dropout(config["drop_prob"]))
+if config["modeltype"] == "rlog"
+    # logistic regression: single linear layer, no activation, no dropout
+    model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
+    model = cu(model)
+else
+    # nonlinear MLP: tapered layers with relu + dropout
+    sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
+             for i in 0:config["n_layers"]+1]
+    layers = []
+    for i in 1:length(sizes)-1
+        push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
+        if i < length(sizes) - 1
+            push!(layers, Flux.Dropout(config["drop_prob"]))
+        end
     end
+    model = Flux.Chain(layers...)
+    model = fix_gpu_dropout(cu(model))
 end
-model = Flux.Chain(layers...)
-model = fix_gpu_dropout(cu(model))
 # opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
@@ -83,7 +90,7 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "PB-FT-Aug", "rmlp_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train

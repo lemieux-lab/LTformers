@@ -140,6 +140,26 @@ drop_prob = 0.0
 lr = 0.0
 drop_prob = 0.0
 
+[finetune.no_pretrain.rlog.lvl1]
+lr = 0.001
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.rlog.lvl2]
+lr = 0.001
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.elog.lvl1]
+lr = 0.001
+drop_prob = 0.0
+n_layers = 0
+
+[finetune.no_pretrain.elog.lvl2]
+lr = 0.001
+drop_prob = 0.0
+n_layers = 0
+
 [finetune.no_pretrain.rmlp.lvl1]
 lr = 0.000001
 drop_prob = 0.01
