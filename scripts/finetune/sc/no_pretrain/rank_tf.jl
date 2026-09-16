@@ -51,6 +51,19 @@ top_k = get(config, "top_k", 1024)
 #                            dose=get(config, "dose", ""),
 #                            meta_dir=get(config, "meta_dir", ""),
 #                            regression_pairs_fn=get_regression_pairs_pca)
+# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
+sc_lvl3_percell = get(config, "sc_lvl3_percell", false)
+pb_expr_for_percell = nothing
+pb_df_for_percell = nothing
+if sc_lvl3_percell && config["level"] == "lvl3"
+    pb_path = get(config, "pb_data_path", "")
+    pb_path == "" && error("sc_lvl3_percell requires pb_data_path in config")
+    println("loading PB data for per-cell SC lvl3 targets: $pb_path")
+    pb_data = load(pb_path)["df"]
+    pb_expr_for_percell = Float32.(reduce(hcat, pb_data.expr))
+    pb_df_for_percell = pb_data
+end
+
 d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
                            pb_data_path=get(config, "pb_data_path", ""),
                            subset_shards=get(config, "subset_shards", 0),
@@ -61,7 +74,11 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            target_cell=get(config, "target_cell", ""),
                            dose=get(config, "dose", ""),
                            meta_dir=get(config, "meta_dir", ""),
-                           regression_pairs_fn=get_regression_pairs_pca)
+                           regression_pairs_fn=get_regression_pairs_pca,
+                           sc_lvl3_percell=sc_lvl3_percell,
+                           pb_expr=pb_expr_for_percell,
+                           pb_df=pb_df_for_percell,
+                           actual_modeltype=config["modeltype"])
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 n_genes = d.n_genes

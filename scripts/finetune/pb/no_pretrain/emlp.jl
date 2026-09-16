@@ -9,7 +9,8 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src"))
 using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, FTModels
 
 args = load_finetune_args()
-config = load_config(args["config"], args)
+config = load_config(args["config"], args,
+                     hp_section=["finetune", "no_pretrain", args["modeltype"], args["level"]])
 resolve_data_path!(config)
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
@@ -61,6 +62,7 @@ d = dsplit(data_expr, config;
 # model
 if config["modeltype"] == "elog"
     # logistic regression: single linear layer, no activation, no dropout
+    config["lr"] = 0.001
     model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
     model = cu(model)
 else

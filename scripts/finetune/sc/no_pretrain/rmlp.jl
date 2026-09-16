@@ -11,7 +11,9 @@ using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, FTModel
 using LoadSC, ProcessSC
 
 args = load_sc_finetune_args()
-config = load_config(args["config"], args)
+config = load_config(args["config"], args,
+                     hp_section=["finetune", "no_pretrain", args["modeltype"], args["level"]],
+                     dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
 # resolve_model_dir!(config)  # no pretrain weights needed
@@ -51,6 +53,19 @@ top_k = get(config, "top_k", 1024)
 #                            dose=get(config, "dose", ""),
 #                            meta_dir=get(config, "meta_dir", ""),
 #                            regression_pairs_fn=get_regression_pairs_pca)
+# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
+sc_lvl3_percell = get(config, "sc_lvl3_percell", false)
+pb_expr_for_percell = nothing
+pb_df_for_percell = nothing
+if sc_lvl3_percell && config["level"] == "lvl3"
+    pb_path = get(config, "pb_data_path", "")
+    pb_path == "" && error("sc_lvl3_percell requires pb_data_path in config")
+    println("loading PB data for per-cell SC lvl3 targets: $pb_path")
+    pb_data = load(pb_path)["df"]
+    pb_expr_for_percell = Float32.(reduce(hcat, pb_data.expr))
+    pb_df_for_percell = pb_data
+end
+
 d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
                            pb_data_path=get(config, "pb_data_path", ""),
                            subset_shards=get(config, "subset_shards", 0),
@@ -61,7 +76,11 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            target_cell=get(config, "target_cell", ""),
                            dose=get(config, "dose", ""),
                            meta_dir=get(config, "meta_dir", ""),
-                           regression_pairs_fn=get_regression_pairs_pca)
+                           regression_pairs_fn=get_regression_pairs_pca,
+                           sc_lvl3_percell=sc_lvl3_percell,
+                           pb_expr=pb_expr_for_percell,
+                           pb_df=pb_df_for_percell,
+                           actual_modeltype=config["modeltype"])
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 # convert RTF gene-id tokens to inverse ranks (position g = rank of gene g)
@@ -87,6 +106,12 @@ if is_streaming
     # X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)  # removed: val/test no longer materialized
     # X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
     X_train = nothing  # not materialized
+elseif eltype(d.X_train) == Float32
+    # lvl3 percell/pseudo-bulk: data is already Float32 ranks, just normalize
+    println("lvl3 mode: data already ranked, normalizing by n_coding=$n_coding")
+    X_train = d.X_train ./ Float32(n_coding)
+    X_val   = d.X_val   ./ Float32(n_coding)
+    X_test  = d.X_test  ./ Float32(n_coding)
 else
     println("converting RTF tokens to inverse ranks (n_coding=$n_coding)...")
     X_train = sc_inverse_ranks(d.X_train, n_coding) ./ Float32(n_coding)
@@ -96,6 +121,11 @@ end
 n_genes = n_coding  # MLP input dim = full gene space
 n_classifications = d.n_classifications
 # y_val, y_test = d.y_val, d.y_test  # no longer materialized in streaming mode
+if !is_streaming
+    y_val = d.y_val
+    y_test = d.y_test
+    y_train = d.y_train
+end
 train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
 # cidx_dict, cs = d.cidx_dict, d.cs  # oversampling handled per-shard in streaming mode
 println("inverse ranks done: input dim = $n_genes")
@@ -103,6 +133,7 @@ println("inverse ranks done: input dim = $n_genes")
 # model — MLP with linearly interpolated layer sizes
 if config["modeltype"] == "rlog"
     # logistic regression: single linear layer, no activation, no dropout
+    config["lr"] = 0.001
     model = Flux.Chain(Flux.Dense(n_genes => n_classifications))
     model = cu(model)
 else

@@ -25,16 +25,16 @@ drop_prob = 0.11
 mask_ratio = 0.38
 
 [pretrain.lrecon.rtf]
-lr = 0.0
-drop_prob = 0.0
-mask_ratio = 0.0
-ema_decay = 0.0
+lr = 0.0024
+drop_prob = 0.1
+mask_ratio = 0.25
+ema_decay = 0.82
 
 [pretrain.lrecon.etf]
-lr = 0.0
-drop_prob = 0.0
-mask_ratio = 0.0
-ema_decay = 0.0
+lr = 0.0019
+drop_prob = 0.11
+mask_ratio = 0.13
+ema_decay = 0.93
 
 # ──────────────────────────────────────────────
 # finetune — with pretrain
@@ -121,8 +121,8 @@ lr = 0.00077
 drop_prob = 0.05
 
 [finetune.no_pretrain.rtf.lvl2]
-lr = 0.0
-drop_prob = 0.0
+lr = 0.0015
+drop_prob = 0.125
 
 [finetune.no_pretrain.rtf.lvl3]
 lr = 0.0
@@ -133,32 +133,32 @@ lr = 0.00034
 drop_prob = 0.085
 
 [finetune.no_pretrain.etf.lvl2]
-lr = 0.0
-drop_prob = 0.0
+lr = 0.00057
+drop_prob = 0.011
 
 [finetune.no_pretrain.etf.lvl3]
 lr = 0.0
 drop_prob = 0.0
 
-[finetune.no_pretrain.rlog.lvl1]
-lr = 0.001
-drop_prob = 0.0
-n_layers = 0
+# [finetune.no_pretrain.rlog.lvl1]
+# lr = 0.001
+# drop_prob = 0.0
+# n_layers = 0
 
-[finetune.no_pretrain.rlog.lvl2]
-lr = 0.001
-drop_prob = 0.0
-n_layers = 0
+# [finetune.no_pretrain.rlog.lvl2]
+# lr = 0.001
+# drop_prob = 0.0
+# n_layers = 0
 
-[finetune.no_pretrain.elog.lvl1]
-lr = 0.001
-drop_prob = 0.0
-n_layers = 0
+# [finetune.no_pretrain.elog.lvl1]
+# lr = 0.001
+# drop_prob = 0.0
+# n_layers = 0
 
-[finetune.no_pretrain.elog.lvl2]
-lr = 0.001
-drop_prob = 0.0
-n_layers = 0
+# [finetune.no_pretrain.elog.lvl2]
+# lr = 0.001
+# drop_prob = 0.0
+# n_layers = 0
 
 [finetune.no_pretrain.rmlp.lvl1]
 lr = 0.0000003

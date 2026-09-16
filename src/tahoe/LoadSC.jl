@@ -389,13 +389,15 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
                             end
                         end
                     else
-                        # parse dose from drugname_drugconc: take last underscore-separated token
+                        # drugname_drugconc: as_py() returns a string like "[('DrugName', 0.05, 'uM')]"
+                        # extract the float between first and second commas
                         dc_arr = t.column(drugconc_col)
+                        dose_re = r",\s*([\d.]+)\s*,"
                         for i in 0:(n_rows - 1)
                             s = string(sample_arr[i].as_py())
-                            dc = string(dc_arr[i].as_py())
-                            last_under = findlast('_', dc)
-                            d_float = isnothing(last_under) ? nothing : tryparse(Float64, dc[last_under+1:end])
+                            dc_str = string(dc_arr[i].as_py())
+                            m = match(dose_re, dc_str)
+                            d_float = isnothing(m) ? nothing : tryparse(Float64, m.captures[1])
                             if !isnothing(d_float)
                                 sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
                             end
@@ -546,6 +548,223 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
 
     return (; X_train, X_val, X_test, y_train, y_val, y_test,
               n_genes=modeltype == "rtf" ? n_coding : n_genes,
+              n_classifications=1,
+              train_idx, val_idx, test_idx,
+              cidx_dict=nothing, cs=nothing)
+end
+
+
+"""
+    _load_sc_lvl3_percell(all_shards, token_to_idx, n_coding, top_k, modeltype,
+                           source_cell, target_cell, dose, meta_dir,
+                           cell_to_dense_flat_fn, process_cell_topk_flat_fn;
+                           pb_expr, pb_df, regression_pairs_fn,
+                           subset_shards, hvg_idx)
+
+Per-cell SC lvl3: each individual source cell is an input sample, paired with the
+compound-level PC1 target computed from PB data. PCA is fit on PB target profiles
+so PC1 targets are identical to PB lvl3 for direct comparison.
+
+Unlike `_load_sc_lvl3` (which pseudo-bulks SC data first), this keeps individual
+cells as inputs — natural data augmentation from noisy single-cell profiles.
+Split is compound-level: all cells of the same compound go to the same split.
+"""
+function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
+                                n_coding::Int, top_k::Int, modeltype::String,
+                                source_cell::String, target_cell::String,
+                                dose::String, meta_dir::String,
+                                cell_to_dense_flat_fn, process_cell_topk_flat_fn;
+                                pb_expr::Matrix{Float32},
+                                pb_df::DataFrame,
+                                regression_pairs_fn,
+                                subset_shards::Int = 0,
+                                hvg_idx::Union{Vector{Int}, Nothing} = nothing)
+
+    println("[SC lvl3 percell] per-cell mode: individual source cells → PB PC1 targets")
+    flush(stdout)
+
+    shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
+
+    # -- step 1: compute PC1 targets from PB data --
+    println("[SC lvl3 percell] computing PC1 targets from PB data...")
+    src_sym = Symbol(source_cell)
+    tgt_sym = Symbol(target_cell)
+    src_mask = BitVector(pb_df.cell_line .== src_sym)
+    tgt_mask = BitVector(pb_df.cell_line .== tgt_sym)
+
+    # dose filter on PB data
+    if dose != ""
+        dose_sym = Symbol("$(dose) uM")
+        dose_mask = BitVector(pb_df.dose .== dose_sym)
+        if sum(dose_mask) == 0
+            dose_sym = Symbol(dose)
+            dose_mask = BitVector(pb_df.dose .== dose_sym)
+        end
+        src_mask .&= dose_mask
+        tgt_mask .&= dose_mask
+        println("  PB dose filter: $(dose_sym) → source=$(sum(src_mask)), target=$(sum(tgt_mask)) samples")
+    end
+
+    println("  PB source $(source_cell): $(sum(src_mask)) samples")
+    println("  PB target $(target_cell): $(sum(tgt_mask)) samples")
+
+    # get_regression_pairs_pca returns (X_paired, y_paired, shared_perts, pca_model)
+    _, y_pb, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
+                                                            pb_df.drug, pb_df.drug)
+
+    # build drug → PC1 lookup
+    drug_to_pc1 = Dict{String, Float32}()
+    for (i, pert) in enumerate(shared_perts)
+        drug_to_pc1[string(pert)] = y_pb[1, i]
+    end
+    shared_drug_set = Set(string.(shared_perts))
+    println("  PC1 targets for $(length(drug_to_pc1)) shared compounds")
+    flush(stdout)
+
+    # SC dose filtering skipped for percell: PB PCA targets are already dose-filtered,
+    # and SC shards use different dose levels (0.05/0.5/5.0 uM per compound across samples).
+    # All SC cells matching shared compounds contribute as augmented inputs to the same PC1 target.
+    sample_dose_map = nothing
+    if dose != ""
+        println("[SC lvl3 percell] note: dose=$dose applied to PB targets only; SC cells use all doses for shared compounds")
+    end
+
+    # -- step 3: scan SC shards for source cells with shared compounds --
+    println("[SC lvl3 percell] scanning shards for source cells ($(source_cell))...")
+    flush(stdout)
+
+    # cell_records: (shard_path, cell_idx_in_shard, drug)
+    cell_records = Tuple{String, Int, String}[]
+    for (si, sp) in enumerate(shards_to_scan)
+        meta = load_shard_metadata(sp)
+        for i in 1:meta.n_cells
+            cl = meta.cell_line_id[i]
+            cl != source_cell && continue
+            drug = meta.drug[i]
+            !(drug in shared_drug_set) && continue
+
+            # dose filter
+            if !isnothing(sample_dose_map)
+                sample_id = meta.sample[i]
+                dose_ok = get(sample_dose_map, sample_id, false)
+                !dose_ok && continue
+            end
+
+            push!(cell_records, (sp, i, drug))
+        end
+        if si % 500 == 0
+            println("  scanned $si / $(length(shards_to_scan)) shards, $(length(cell_records)) source cells")
+            flush(stdout)
+        end
+    end
+    n_cells = length(cell_records)
+    println("[SC lvl3 percell] found $n_cells source cells across $(length(unique(r[3] for r in cell_records))) compounds")
+    flush(stdout)
+    n_cells < 5 && error("too few source cells ($n_cells) for per-cell SC lvl3")
+
+    # -- step 4: materialize per-cell data --
+    println("[SC lvl3 percell] materializing $n_cells cells...")
+    flush(stdout)
+
+    y = Matrix{Float32}(undef, 1, n_cells)
+    cell_drugs = Vector{String}(undef, n_cells)
+
+    # group by shard for efficient I/O
+    by_shard = Dict{String, Vector{Tuple{Int, Int, String}}}()  # shard_path => [(cell_idx_in_shard, col_in_X, drug)]
+    for (col, (sp, ci, drug)) in enumerate(cell_records)
+        push!(get!(by_shard, sp, Tuple{Int,Int,String}[]), (ci, col, drug))
+    end
+
+    # RTF transformer needs (top_k, n_cells) Int32 token sequences;
+    # all other models get (n_coding or n_hvg, n_cells) Float32 expression/rank vectors
+    n_genes = n_coding
+    if modeltype == "rtf" && !isnothing(process_cell_topk_flat_fn)
+        # RTF transformer path: produce top-k gene ID sequences
+        X = Matrix{Int32}(undef, top_k, n_cells)
+        dense = Vector{Float32}(undef, n_coding)
+        n_shards_done = 0
+        for (sp, entries) in by_shard
+            shard = load_shard_pyarrow(sp)
+            for (ci, col, drug) in entries
+                gene_ids, _ = process_cell_topk_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                                         shard.expr_flat, ci, token_to_idx, n_coding, top_k)
+                X[:, col] = gene_ids
+                y[1, col] = drug_to_pc1[drug]
+                cell_drugs[col] = drug
+            end
+            n_shards_done += 1
+            if n_shards_done % 200 == 0; println("  loaded $n_shards_done / $(length(by_shard)) shards"); flush(stdout); end
+        end
+        n_genes = n_coding  # RTF embedding vocab size
+    else
+        # MLP/ETF path: produce dense expression vectors
+        X = Matrix{Float32}(undef, n_coding, n_cells)
+        dense = Vector{Float32}(undef, n_coding)
+        n_shards_done = 0
+        for (sp, entries) in by_shard
+            shard = load_shard_pyarrow(sp)
+            for (ci, col, drug) in entries
+                cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                      shard.expr_flat, ci, token_to_idx)
+                X[:, col] = dense
+                y[1, col] = drug_to_pc1[drug]
+                cell_drugs[col] = drug
+            end
+            n_shards_done += 1
+            if n_shards_done % 200 == 0; println("  loaded $n_shards_done / $(length(by_shard)) shards"); flush(stdout); end
+        end
+
+        # -- step 5: model-specific transforms (MLP/ETF only) --
+        if modeltype in ("rmlp", "rlog")
+            # rank transform for rank-based MLPs (inv[gene, sample] = rank)
+            gene_medians = vec(median(X, dims=2)) .+ 1f-10
+            for j in axes(X, 2)
+                X[:, j] ./= gene_medians
+                perm = sortperm(view(X, :, j); rev=true)
+                for (r, g) in enumerate(perm)
+                    X[g, j] = Float32(r)
+                end
+            end
+        elseif !isnothing(hvg_idx)
+            X = X[hvg_idx, :]
+            n_genes = size(X, 1)
+        end
+    end
+    println("[SC lvl3 percell] materialized: $(size(X))")
+
+    # -- step 6: compound-level train/val/test split --
+    unique_drugs = unique(cell_drugs)
+    n_compounds = length(unique_drugs)
+    perm = shuffle(1:n_compounds)
+    n_test_c = max(1, floor(Int, n_compounds * 0.1))
+    n_val_c  = max(1, floor(Int, n_compounds * 0.1))
+    test_compounds  = Set(unique_drugs[perm[1:n_test_c]])
+    val_compounds   = Set(unique_drugs[perm[n_test_c+1:n_test_c+n_val_c]])
+    train_compounds = Set(unique_drugs[perm[n_test_c+n_val_c+1:end]])
+
+    train_idx = Int[]; val_idx = Int[]; test_idx = Int[]
+    for i in 1:n_cells
+        drug = cell_drugs[i]
+        if drug in test_compounds
+            push!(test_idx, i)
+        elseif drug in val_compounds
+            push!(val_idx, i)
+        else
+            push!(train_idx, i)
+        end
+    end
+
+    X_train = X[:, train_idx]; y_train = y[:, train_idx]
+    X_val   = X[:, val_idx];   y_val   = y[:, val_idx]
+    X_test  = X[:, test_idx];  y_test  = y[:, test_idx]
+
+    println("[SC lvl3 percell] compound-level split:")
+    println("  train: $(length(train_idx)) cells, $(length(train_compounds)) compounds")
+    println("  val:   $(length(val_idx)) cells, $(length(val_compounds)) compounds")
+    println("  test:  $(length(test_idx)) cells, $(length(test_compounds)) compounds")
+
+    return (; X_train, X_val, X_test, y_train, y_val, y_test,
+              n_genes=n_genes,
               n_classifications=1,
               train_idx, val_idx, test_idx,
               cidx_dict=nothing, cs=nothing)
@@ -860,7 +1079,11 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                                           target_cell::String = "",
                                           dose::String = "",
                                           meta_dir::String = "",
-                                          regression_pairs_fn = nothing)
+                                          regression_pairs_fn = nothing,
+                                          sc_lvl3_percell::Bool = false,
+                                          pb_expr::Union{Matrix{Float32}, Nothing} = nothing,
+                                          pb_df::Union{DataFrame, Nothing} = nothing,
+                                          actual_modeltype::String = "")
 
     # validate required function parameters
     if modeltype == "rtf" && isnothing(process_cell_topk_flat_fn)
@@ -870,16 +1093,30 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
         error("load_sc_finetune_data_streaming: cell_to_dense_flat_fn required for etf/mlp modeltype")
     end
 
-    # -- lvl3: pseudo-bulk then PCA regression (no streaming needed, result is small) --
+    # -- lvl3: PCA regression (no streaming needed, result is small) --
     if level == "lvl3"
         (source_cell == "" || target_cell == "") && error("load_sc_finetune_data_streaming lvl3: source_cell and target_cell required")
         isnothing(regression_pairs_fn) && error("load_sc_finetune_data_streaming lvl3: regression_pairs_fn required")
         isnothing(cell_to_dense_flat_fn) && error("load_sc_finetune_data_streaming lvl3: cell_to_dense_flat_fn required")
-        d = _load_sc_lvl3(all_shards, token_to_idx, n_coding, top_k, modeltype,
-                           source_cell, target_cell, dose, meta_dir,
-                           cell_to_dense_flat_fn, process_cell_topk_flat_fn,
-                           regression_pairs_fn;
-                           subset_shards=subset_shards, hvg_idx=hvg_idx)
+        if sc_lvl3_percell
+            # per-cell SC lvl3: individual source cells → PB PC1 targets
+            isnothing(pb_expr) && error("load_sc_finetune_data_streaming lvl3 percell: pb_expr required")
+            isnothing(pb_df) && error("load_sc_finetune_data_streaming lvl3 percell: pb_df required")
+            percell_mt = actual_modeltype != "" ? actual_modeltype : modeltype
+            d = _load_sc_lvl3_percell(all_shards, token_to_idx, n_coding, top_k, percell_mt,
+                                       source_cell, target_cell, dose, meta_dir,
+                                       cell_to_dense_flat_fn, process_cell_topk_flat_fn;
+                                       pb_expr=pb_expr, pb_df=pb_df,
+                                       regression_pairs_fn=regression_pairs_fn,
+                                       subset_shards=subset_shards, hvg_idx=hvg_idx)
+        else
+            # default: pseudo-bulk SC then PCA regression
+            d = _load_sc_lvl3(all_shards, token_to_idx, n_coding, top_k, modeltype,
+                               source_cell, target_cell, dose, meta_dir,
+                               cell_to_dense_flat_fn, process_cell_topk_flat_fn,
+                               regression_pairs_fn;
+                               subset_shards=subset_shards, hvg_idx=hvg_idx)
+        end
         # wrap lvl3 result in streaming-compatible shape (no streaming needed, but consistent interface)
         return (; X_train=d.X_train, X_val=d.X_val, X_test=d.X_test,
                   y_train=d.y_train, y_val=d.y_val, y_test=d.y_test,

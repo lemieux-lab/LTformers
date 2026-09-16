@@ -1410,7 +1410,7 @@ a2
 a1
 -- baselines
     -- added + tested to be working
-    -- !TODO runs
+    -- TODO runs
 -- pre-train
     -- TODO sweeps
 -- fine-tune
@@ -1435,10 +1435,14 @@ a2
                 -- mlm rtf, etf done
                 -- lrecon rtf currently running
                 -- lrecon etf, erecon rtf, etf pending
+                -- not sure if these are gna be affected by the added progress printing below for ft stuff
 -- fine-tune
     -- baselines
         -- added + tested to be working
-        -- !TODO runs
+        -- no need for sweeps, lr=0.001 is usually sufficient and the point is to be a baseline!
+        -- maybe should change it to be its own script tho? isntead of within mlp script...
+        -- RUNNING elog, rlog for 20k steps lvl1 on pb to see! (2)
+        -- TODO sc runs
     -- pb
         -- TODO lvl3 testing
             -- ASK SEB
@@ -1457,8 +1461,76 @@ a2
         -- TODO no-pt sweeps
             -- TODO rmlp, emlp
                 -- reviewed rmlp, rtf test (sweep + non-sweep)
-                -- ran sweeps to test on rmlp, rtf (2:1-2, CQ)
+                -- ran sweeps to test on rmlp, rtf 
                 -- both failed due to time limit???
                 -- not quite sure whats going on, added progress printing
                 -- RUNNING rmlp sweep + non sweep (2, CQ)
             -- TODO rtf, etf
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 16 2026 ###
+
+a1
+-- baselines
+    -- TODO runs
+        -- RUNNING elog, rlog lvl1, lvl2
+        -- need rmlp, emlp, rtf, etf on lvl1, lvl2!
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 cl choice
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- mlm rtf sweep running (1)
+            -- reviewed lrecon etf, rtf sweeps (2)
+                -- etf best: lrecon_tahoe_etf_2026-09-13_01-57
+                    -- lr=0.0019, drop_prob=0.11, mask_ratio=0.13, ema_decay=0.93
+                -- rtf best: lrecon_tahoe_rtf_2026-09-11_01-59
+                    -- lr=0.0024, drop_prob=0.1, mask_ratio=0.25, ema_decay=0.82
+            -- RUNNING long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
+    -- sc
+        -- TODO sweeps
+            -- RUNNING same test sweep on all configs, then can narrow down ranges? (5:1-10, CQ)
+                -- 10k steps, 400bs, 300G mem
+                -- mlm rtf, etf, lrecon rtf, etf done
+                -- erecon rtf running
+                -- erecon etf pending
+                -- not sure if these are gna be affected by the added progress printing below for ft stuff
+                -- check results later? or now?
+-- fine-tune
+    -- baselines
+        -- done elog, rlog for 20k steps lvl1 on pb
+            -- 80% on elog, 24% on rlog accuracy for lvl1
+            -- rlog: results/tahoe/pb/finetune/no_pretrain/lvl1/rlog/2026-09-15_13-33 
+            -- elog: results/tahoe/pb/finetune/no_pretrain/lvl1/elog/2026-09-15_13-39
+        -- done elog, rlog for 20k steps lvl2 on pb
+            -- 0.32% for rlog, 0.37% for elog
+            -- rlog: results/tahoe/pb/finetune/no_pretrain/lvl2/rlog/2026-09-16_15-34
+            -- elog: results/tahoe/pb/finetune/no_pretrain/lvl2/elog/2026-09-16_15-34
+        -- TODO sc runs
+    -- pb
+        -- TODO no-pt sweeps
+            -- done etf, rtf sweep on lvl2 
+                -- etf best: etf_nopt_tahoe_lvl2_2026-09-14_10-00
+                    -- lr=0.00057, drop_prob=0.011
+                -- rtf best: rtf_nopt_tahoe_lvl2_2026-09-15_18-10
+                    -- lr=0.0015, drop_prob=0.125
+            -- done all lvl1, lvl2 just need emlp, rmlp, etf, rtf lvl3
+        -- TODO lvl3 CL choice
+    -- sc
+        -- done lvl3 implement
+            -- fixed, implemented as discussed w/ seb: all examples of cell for input, output is 1 value PC1
+            -- tested!
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- reviewed rmlp sweep + non sweep
+                -- working!
+                -- RUNNING rmlp, emlp on lvl1 sweeps (2)
+            -- TODO rtf, etf
+                -- RUNNING rtf, etf on lvl1 sweeps (2)
