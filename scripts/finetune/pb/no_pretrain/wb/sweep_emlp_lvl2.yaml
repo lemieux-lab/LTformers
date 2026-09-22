@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_emlp_lvl2.yaml
-# run_sweep gh18_sbatch TPB_emlp_lvl2 serena-chan-/PB-FT-Aug/pg4lh7h3
+# run_sweep gh18_sbatch L_emlp_lvl2 serena-chan-/PB-FT-Aug/7867b4tk
 
 program: scripts/finetune/pb/no_pretrain/emlp.jl
 project: PB-FT-Aug
@@ -16,9 +16,7 @@ parameters:
   level:
     value: "lvl2"
   data_format:
-    value: "tahoe"
-  # wandb_mode: follows local.toml
-    # value: "online"
+    value: "lincs"
   n_epochs:
     value: 0
   max_ft_steps:

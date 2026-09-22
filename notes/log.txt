@@ -1474,12 +1474,14 @@ a2
 a1
 -- baselines
     -- TODO runs
-        -- RUNNING elog, rlog lvl1, lvl2
+        -- !REVIEW elog, rlog lvl1, lvl2
         -- need rmlp, emlp, rtf, etf on lvl1, lvl2!
+        -- RUNNING rmlp, emlp lvl1 sweeps
+        -- !TO-RUN rtf, etf lvl1 sweeps
 -- pre-train
     -- TODO sweeps
 -- fine-tune
-    -- TODO lvl3 cl choice
+    -- !TODO lvl3 cl choice
     -- TODO no-pt sweeps
         -- will do etf, rtf later (not a priority rn)
 
@@ -1522,7 +1524,7 @@ a2
                 -- rtf best: rtf_nopt_tahoe_lvl2_2026-09-15_18-10
                     -- lr=0.0015, drop_prob=0.125
             -- done all lvl1, lvl2 just need emlp, rmlp, etf, rtf lvl3
-        -- TODO lvl3 CL choice
+        -- !TODO lvl3 CL choice
     -- sc
         -- done lvl3 implement
             -- fixed, implemented as discussed w/ seb: all examples of cell for input, output is 1 value PC1
@@ -1531,6 +1533,269 @@ a2
             -- TODO rmlp, emlp
                 -- reviewed rmlp sweep + non sweep
                 -- working!
-                -- RUNNING rmlp, emlp on lvl1 sweeps (2)
+                -- !TO-RUN rmlp, emlp on lvl1 sweeps (2)
             -- TODO rtf, etf
-                -- RUNNING rtf, etf on lvl1 sweeps (2)
+                -- !TO-RUN rtf, etf on lvl1 sweeps (2)
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 17 2026 ###
+
+a1
+-- baselines
+    -- TODO runs
+        -- reviewed elog, rlog lvl1, lvl2
+            -- lvl1:
+                -- rlog: 25%, results/lincs/finetune/no_pretrain/lvl1/rlog/2026-09-16_16-23
+                -- elog: 22.7%, results/lincs/finetune/no_pretrain/lvl1/elog/2026-09-16_16-23
+            -- lvl2:
+                -- rlog: 1.7%, results/lincs/finetune/no_pretrain/lvl2/rlog/2026-09-16_16-26
+                -- elog: 1.2%, results/lincs/finetune/no_pretrain/lvl2/elog/2026-09-16_16-26
+        -- ran rmlp, emlp lvl1 sweeps
+            -- rmlp best: rmlp_nopt_lincs_lvl1_2026-09-16_22-50
+                -- lr=0.000001, drop_prob=0.015, n_layers=2
+            -- emlp best: emlp_nopt_lincs_lvl1_2026-09-16_17-44
+                -- lr=0.00005, drop_prob=0.014, n_layers=2
+        -- RUNNING rmlp, emlp on lvl2 (2)
+        -- TODO rtf, etf lvl1, lvl2 sweeps
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- !TODO lvl3 cl choice
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- mlm rtf sweep running (1)
+            -- RUNNING long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
+    -- sc
+        -- TODO sweeps
+            -- RUNNING same test sweep on all configs, then can narrow down ranges? (3:1-10, CQ)
+                -- 10k steps, 400bs, 300G mem
+                -- lrecon etf, erecon rtf, erecon etf still running
+            -- reviewed mlm rtf, mlm etf, lrecon rtf
+                -- mlm rtf only got 4 runs, higher lr better
+                    -- could run another sweep w/ higher lr?
+                    -- RUNNING again w/ different range: lr=(0.001,0.01) (1)
+                -- mlm etf 
+                    -- ok, middle lr better, prolly dont need to re-run with different ranges
+                -- lrecon rtf
+                    -- finished, lower lr better, lower ema_decay better
+                    -- RUNNING again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+-- fine-tune
+    -- !TODO lvl3 CL choice
+        -- testing now
+    -- baselines
+        -- TODO sc runs, pb runs completed!!! (or need longer runs of rmlp, emlp, rtf, etf?)
+    -- pb
+        -- TODO no-pt sweeps
+            -- TODO emlp, rmlp, etf, rtf lvl3
+    -- sc
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- running rmlp, emlp on lvl1 sweeps (2)
+            -- TODO rtf, etf
+                -- !TO-RUN rtf, etf on lvl1 sweeps
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 18 2026 ###
+
+-- from seb meeting:
+    -- for regression task, the baseline should be linear regression rather than logistic regression
+        -- added identity baseline? lvl3 baseline already includes linear regression
+    -- extend sparsity analyses beyond zero counts
+        -- RUNNING pb, sc entvec for comparsion.jl (2)
+    --- for lvl3 selection, ensured:
+        -- lincs has at least 1k shared compounds between cell lines
+        -- compute PCA on target CL, then project the reference CL onto same PCA and this is the correlation for the prediction task
+        -- RUNNING cl choices on lincs (1)
+
+a1
+-- baselines
+    -- TODO runs
+        -- RUNNING rmlp, emlp on lvl2 (2)
+        -- TODO rtf, etf lvl1, lvl2 sweeps
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- !TODO lvl3 cl choice
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- mlm rtf sweep running (1)
+            -- RUNNING long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
+    -- sc
+        -- TODO sweeps
+            -- RUNNING same test sweep on all configs, then can narrow down ranges? (3:1-10, CQ)
+            -- reviewed mlm rtf, mlm etf, lrecon rtf
+                -- mlm rtf RUNNING again w/ different range: lr=(0.001,0.01) (1)
+                -- mlm etf ok
+                -- lrecon RUNNING again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+-- fine-tune
+    -- !TODO lvl3 CL choice
+        -- testing now
+    -- baselines
+        -- TODO sc runs, pb runs completed!!! (or need longer runs of rmlp, emlp, rtf, etf?)
+    -- pb
+        -- TODO no-pt sweeps
+            -- TODO emlp, rmlp, etf, rtf lvl3
+    -- sc
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- running rmlp, emlp on lvl1 sweeps (2)
+            -- TODO rtf, etf
+                -- !TO-RUN rtf, etf on lvl1 sweeps
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 21 2026 ###
+
+-- from seb meeting:
+    -- for regression task, the baseline should be linear regression rather than logistic regression
+        -- added identity baseline? lvl3 baseline already includes linear regression
+    -- extend sparsity analyses beyond zero counts
+        -- RUNNING sc entvec for comparsion.jl (1)
+            -- finished pb ent re-run
+    --- for lvl3 selection, ensured:
+        -- lincs has at least 1k shared compounds between cell lines
+        -- compute PCA on target CL, then project the reference CL onto same PCA and this is the correlation for the prediction task
+        -- RUNNING cl choices eval on LINCS and Tahoe (2)
+
+a1
+-- baselines
+    -- TODO runs
+        -- reviewed rmlp, emlp on lvl2
+            -- rmlp best: rmlp_nopt_lincs_lvl2_2026-09-21_16-43
+                -- lr=0.000001, drop_prob=0.03, n_layers=6
+            -- emlp best: emlp_nopt_lincs_lvl2_2026-09-21_03-40
+                -- lr=0.00011, drop_prob=0.014, n_layers=6
+        -- TODO rtf, etf lvl1, lvl2 sweeps
+            -- RUNNING rtf, etf lvl1, lvl2 sweeps (4)
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 cl choice
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- reviewed mlm rtf sweep done
+                -- best: mlm_tahoe_rtf_2026-09-14_02-31
+                    -- lr=0.0038, drop_prob=0.083, mask_ratio=0.12
+            -- RUNNING mlm rtf long run (1)
+            -- reviewed long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
+                -- good! located at:
+                -- mlm etf: results/tahoe/pb/pretrain/mlm/etf/2026-09-14_21-54 
+                -- erecon rtf: results/tahoe/pb/pretrain/erecon/rtf/2026-09-15_11-22
+                -- erecon etf: results/tahoe/pb/pretrain/erecon/etf/2026-09-15_11-22
+                -- lrecon rtf: results/tahoe/pb/pretrain/lrecon/rtf/2026-09-16_15-33
+                -- lrecon etf: results/tahoe/pb/pretrain/lrecon/etf/2026-09-16_15-33
+    -- sc
+        -- TODO sweeps
+            -- RUNNING same test sweep on all configs, then can narrow down ranges? (3:1-10, CQ)
+            -- done mlm etf
+            -- running mlm rtf, lrecon rtf (2)
+                -- mlm rtf RUNNING again w/ different range: lr=(0.001,0.01) (1)
+                -- lrecon RUNNING again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+            -- reviewed lrecon etf, erecon rtf, erecon etf
+                -- erecon rtf good, erecom etf good, lrecon etf needs higher EMA ranges
+                -- lrecon etf RUNNING again w/ different rages: ema_decay=(0.95,0.999) (1)
+
+-- fine-tune
+    -- TODO lvl3 CL choice
+    -- baselines
+        -- TODO sc runs, pb runs completed!!! (or need longer runs of rmlp, emlp, rtf, etf?)
+    -- pb
+        -- TODO no-pt sweeps
+            -- TODO emlp, rmlp, etf, rtf lvl3
+    -- sc
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- !TO-RE-RUN rmlp, emlp on lvl1 sweeps (2)
+                    -- fixed filename mappings, added seed, added echo of command for debugging
+                    -- !to-push git
+            -- TODO rtf, etf
+                -- !TO-RUN rtf, etf on lvl1 sweeps
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 22 2026 ###
+
+-- from seb meeting:
+    -- extend sparsity analyses beyond zero counts
+        -- RUNNING sc entvec for comparsion.jl (1)
+            -- finished pb ent re-run
+    --- for lvl3 selection, ensured:
+        -- lincs has at least 1k shared compounds between cell lines
+        -- compute PCA on target CL, then project the reference CL onto same PCA and this is the correlation for the prediction task
+        -- RUNNING cl choices eval on LINCS and Tahoe (2)
+
+a1
+-- baselines
+    -- TODO runs
+        -- reviewed rmlp, emlp on lvl2
+            -- rmlp best: rmlp_nopt_lincs_lvl2_2026-09-21_16-43
+                -- lr=0.000001, drop_prob=0.03, n_layers=6
+            -- emlp best: emlp_nopt_lincs_lvl2_2026-09-21_03-40
+                -- lr=0.00011, drop_prob=0.014, n_layers=6
+        -- TODO rtf, etf lvl1, lvl2 sweeps
+            -- RUNNING rtf, etf lvl1, lvl2 sweeps (4)
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- TODO lvl3 cl choice
+    -- TODO no-pt sweeps
+        -- will do etf, rtf later (not a priority rn)
+
+a2
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- reviewed mlm rtf sweep done
+                -- best: mlm_tahoe_rtf_2026-09-14_02-31
+                    -- lr=0.0038, drop_prob=0.083, mask_ratio=0.12
+            -- RUNNING mlm rtf long run (1)
+            -- reviewed long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
+                -- good! located at:
+                -- mlm etf: results/tahoe/pb/pretrain/mlm/etf/2026-09-14_21-54 
+                -- erecon rtf: results/tahoe/pb/pretrain/erecon/rtf/2026-09-15_11-22
+                -- erecon etf: results/tahoe/pb/pretrain/erecon/etf/2026-09-15_11-22
+                -- lrecon rtf: results/tahoe/pb/pretrain/lrecon/rtf/2026-09-16_15-33
+                -- lrecon etf: results/tahoe/pb/pretrain/lrecon/etf/2026-09-16_15-33
+    -- sc
+        -- TODO sweeps
+            -- RUNNING same test sweep on all configs, then can narrow down ranges? (3:1-10, CQ)
+            -- done mlm etf
+            -- running mlm rtf, lrecon rtf (2)
+                -- mlm rtf RUNNING again w/ different range: lr=(0.001,0.01) (1)
+                -- lrecon RUNNING again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+            -- reviewed lrecon etf, erecon rtf, erecon etf
+                -- erecon rtf good, erecom etf good, lrecon etf needs higher EMA ranges
+                -- lrecon etf RUNNING again w/ different rages: ema_decay=(0.95,0.999) (1)
+
+-- fine-tune
+    -- TODO lvl3 CL choice
+    -- baselines
+        -- TODO sc runs, pb runs completed!!! (or need longer runs of rmlp, emlp, rtf, etf?)
+    -- pb
+        -- TODO no-pt sweeps
+            -- TODO emlp, rmlp, etf, rtf lvl3
+    -- sc
+        -- TODO no-pt sweeps
+            -- TODO rmlp, emlp
+                -- !TO-RE-RUN rmlp, emlp on lvl1 sweeps (2)
+                    -- fixed filename mappings, added seed, added echo of command for debugging
+                    -- !to-push git
+            -- TODO rtf, etf
+                -- !TO-RUN rtf, etf on lvl1 sweeps

@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_rtf_lvl2.yaml
-# run_sweep gh18_sbatch TPB_rtf_lvl2 serena-chan-/PB-FT-Aug/bjcm175s
+# run_sweep gh18_sbatch L_rtf_lvl2 serena-chan-/PB-FT-Aug/bnreg5zz
 
 program: scripts/finetune/pb/no_pretrain/rank_tf.jl
 project: PB-FT-Aug
@@ -16,7 +16,7 @@ parameters:
   level:
     value: "lvl2"
   data_format:
-    value: "tahoe"
+    value: "lincs"
   n_epochs:
     value: 0
   max_ft_steps:

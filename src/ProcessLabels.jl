@@ -2,7 +2,7 @@ module ProcessLabels
 
 using Flux, JLD2, Random, StatsBase, Statistics, DataFrames, MultivariateStats
 
-export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca
+export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline
 
 
 function get_labels(data::Matrix{Float32}, level::String, label_path::String)
@@ -156,7 +156,8 @@ function get_regression_pairs(expr::Matrix{Float32}, inst::DataFrame, gene_df::D
 
     X, y, perts, pca = get_regression_pairs_pca(expr, src_mask, tgt_mask,
                                                   inst.pert_id, inst.pert_id)
-    return X, y, perts
+    # return X, y, perts
+    return X, y, perts, pca
 end
 
 # tahoe pseudobulk lvl3 (PCA-based)
@@ -184,8 +185,24 @@ function get_regression_pairs(expr::Matrix{Float32}, df::DataFrame,
 
     X, y, perts, pca = get_regression_pairs_pca(expr, src_mask, tgt_mask,
                                                   df.drug, df.drug)
-    return X, y, perts
+    # return X, y, perts
+    return X, y, perts, pca
 end
+
+
+function identity_baseline(X_test::Matrix{Float32}, y_test::Matrix{Float32}, pca_model)
+    isnothing(pca_model) && return (; r2=NaN, pearson=NaN, rmse=NaN)
+    src_pc = Float32.(MultivariateStats.transform(pca_model, Float64.(X_test)))
+    preds = src_pc[1, :]
+    trues = vec(y_test)
+    ss_res = sum((preds .- trues) .^ 2)
+    ss_tot = sum((trues .- mean(trues)) .^ 2)
+    r2 = 1.0 - ss_res / ss_tot
+    pearson = length(preds) > 1 ? cor(preds, trues) : NaN
+    rmse = sqrt(mean((preds .- trues) .^ 2))
+    return (; r2, pearson, rmse)
+end
+
 
 function process_labels(y)
     labels = unique(y)
@@ -263,10 +280,12 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         dose = get(config, "dose", "")
         if fmt == "lincs"
             isnothing(inst_df) && error("dsplit lvl3: inst_df required for LINCS regression")
-            X, y, shared_perts = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
+            # X, y, shared_perts = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
+            X, y, shared_perts, pca_model = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
         else  # tahoe PB
             isnothing(label_source) && error("dsplit lvl3: label_source (DataFrame) required for Tahoe PB regression")
-            X, y, shared_perts = get_regression_pairs(data, label_source, src, tgt; dose=dose)
+            # X, y, shared_perts = get_regression_pairs(data, label_source, src, tgt; dose=dose)
+            X, y, shared_perts, pca_model = get_regression_pairs(data, label_source, src, tgt; dose=dose)
         end
         n_genes = size(X, 1)
 
@@ -278,8 +297,10 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
         y_train, y_val, y_test = y[:, train_idx], y[:, val_idx], y[:, test_idx]
 
+        # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
+        #           n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing)
         return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-                  n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing)
+                  n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing, pca_model)
     end
 
     if fmt == "lincs"
@@ -354,8 +375,10 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
 
     cidx_dict, cs = config["level"] == "lvl2" ? oversmpl(y_train) : (nothing, nothing)
 
+    # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
+    #           n_genes, n_classifications=n_cls, cidx_dict, cs)
     return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-              n_genes, n_classifications=n_cls, cidx_dict, cs)
+              n_genes, n_classifications=n_cls, cidx_dict, cs, pca_model=nothing)
 end
 
 

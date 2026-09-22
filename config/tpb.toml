@@ -5,9 +5,9 @@
 # ──────────────────────────────────────────────
 
 [pretrain.mlm.rtf]
-lr = 0.0
-drop_prob = 0.0
-mask_ratio = 0.0
+lr = 0.0038
+drop_prob = 0.083
+mask_ratio = 0.12
 
 [pretrain.mlm.etf]
 lr = 0.003

@@ -213,26 +213,56 @@ begin
     hidespines!(ax_spar)
     hidexdecorations!(ax_spar)
 
-    # entropy: solid lines
+    # entropy: scatter (marker = metric type)
     scatter!(ax_ent, 1:n_genes, Float64.(tahoe_H),
-        markersize=4, alpha=0.5, color=Makie.wong_colors()[1], label="PB entropy")
+        markersize=4, alpha=0.5, color=Makie.wong_colors()[1])
     scatter!(ax_ent, 1:n_genes, Float64.(sc_H),
-        markersize=4, alpha=0.5, color=Makie.wong_colors()[2], label="SC entropy")
+        markersize=4, alpha=0.5, color=Makie.wong_colors()[2])
 
-    # sparsity: dotted lines (using lines! with linestyle)
+    # sparsity: dashed lines (linestyle = metric type)
     lines!(ax_spar, 1:n_genes, Float64.(pb_S),
-        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[1], label="PB sparsity")
+        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[1])
     lines!(ax_spar, 1:n_genes, Float64.(sc_S),
-        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[2], label="SC sparsity")
+        linewidth=3, linestyle=:dash, color=Makie.wong_colors()[2])
 
+    # legend: color = dataset, style = metric
     Legend(fig_overlay[0, 1],
         [MarkerElement(color=Makie.wong_colors()[1], marker=:circle, markersize=8),
          MarkerElement(color=Makie.wong_colors()[2], marker=:circle, markersize=8),
-         LineElement(color=Makie.wong_colors()[1], linestyle=:dash, linewidth=2),
-         LineElement(color=Makie.wong_colors()[2], linestyle=:dash, linewidth=2)],
-        ["PB entropy", "SC entropy", "PB sparsity", "SC sparsity"],
+         MarkerElement(color=:gray50, marker=:circle, markersize=8),
+         LineElement(color=:gray50, linestyle=:dash, linewidth=2)],
+        ["Pseudo-bulk", "Single cell", "Entropy", "Sparsity"],
         orientation=:horizontal, tellwidth=false, tellheight=true)
 
-        display(fig_overlay)
-    end
-    save("$fig_ent_dir/pb_vs_sc_entropy_sparsity.png", fig_overlay)
+    display(fig_overlay)
+end
+save("$fig_ent_dir/pb_vs_sc_entropy_sparsity.png", fig_overlay)
+
+#######################################################################################################################################
+
+# unique count diversity comparison (PB vs SC)
+
+pb_ud = load("results/tahoe/pb/data/entropies/pb_ranked_unique_diversity.jld2")
+sc_ud = load("results/tahoe/sc/data/entropies/ranked_sc_unique_diversity.jld2")
+
+pb_UD = pb_ud["unique_diversity_norm"]
+sc_UD = sc_ud["unique_diversity_norm"]
+
+begin
+    fig_ud = Figure(size=(700, 500))
+
+    ax_ud = Axis(fig_ud[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Normalized unique count diversity",
+        xtickformat=values -> [string(Int(round(v))) for v in values],
+        title="Unique count diversity per rank (PB vs SC)")
+
+    lines!(ax_ud, 1:length(pb_UD), Float64.(pb_UD),
+        linewidth=2, color=Makie.wong_colors()[1], label="Pseudo-bulk")
+    lines!(ax_ud, 1:length(sc_UD), Float64.(sc_UD),
+        linewidth=2, color=Makie.wong_colors()[2], label="Single cell")
+    axislegend(ax_ud, position=:rt)
+
+    display(fig_ud)
+end
+save("$fig_ent_dir/pb_vs_sc_unique_diversity.png", fig_ud)

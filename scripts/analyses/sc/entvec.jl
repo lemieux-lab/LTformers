@@ -7,6 +7,8 @@ pq = pyimport("pyarrow.parquet")
 np = pyimport("numpy")
 json_py = pyimport("json")
 
+n_parquets_to_use = 300
+
 # save_dir = "results/tahoe/sc/figures/vectors/sc"
 save_dir = "results/tahoe/sc/figures/vectors/$(n_parquets_to_use)_pqs"
 mkpath(save_dir)
@@ -94,12 +96,12 @@ end
 ### entropy per rank
 
 # n_parquets_to_use = n_parquets
-n_parquets_to_use = 300
 sampled_parquet_idx = sort(sample(1:n_parquets, min(n_parquets_to_use, n_parquets), replace=false))
 sampled_parquet_files = parquet_files[sampled_parquet_idx]
 
 rank_counts = [Dict{Int32,Int}() for _ in 1:n_coding]
 rank_zero_counts = zeros(Int, n_coding)   # count of zero-expression genes at each rank
+rank_unique_sums = zeros(Float64, n_coding)  # accumulate unique count diversity per rank
 total_cells_processed = 0
 
 println("Entropy: $n_parquets_to_use / $n_parquets parquets")
@@ -118,6 +120,13 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
             if dense[gene_idx] == 0.0f0
                 rank_zero_counts[rank_pos] += 1
             end
+        end
+
+        # unique count diversity: sweep from tail, count unique expression values at or below each rank
+        seen = Set{Float32}()
+        for r in n_coding:-1:1
+            push!(seen, dense[ranked[r]])
+            rank_unique_sums[r] += length(seen)
         end
     end
     global total_cells_processed += parquet.n_cells
@@ -147,6 +156,12 @@ println("Saved SC entropies to $sc_ent_dir/ranked_sc_entropies.jld2 ($(length(sc
 sc_sparsities = rank_zero_counts[1:max_populated_rank] ./ total_cells_processed
 jldsave("$sc_ent_dir/ranked_sc_sparsities.jld2"; sparsities=sc_sparsities)
 println("Saved SC sparsities to $sc_ent_dir/ranked_sc_sparsities.jld2")
+
+# unique count diversity per rank
+sc_unique_diversity = rank_unique_sums[1:max_populated_rank] ./ total_cells_processed
+sc_unique_diversity_norm = sc_unique_diversity ./ sc_unique_diversity[1]
+jldsave("$sc_ent_dir/ranked_sc_unique_diversity.jld2"; unique_diversity=sc_unique_diversity, unique_diversity_norm=sc_unique_diversity_norm)
+println("Saved SC unique diversity to $sc_ent_dir/ranked_sc_unique_diversity.jld2")
 
 begin
     fig_sc_ent = Figure(size=(600, 500))
@@ -188,6 +203,20 @@ begin
     display(fig_sc_overlay)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_sparsity.png", fig_sc_overlay)
+
+### unique count diversity plot (normalized)
+
+begin
+    fig_sc_ud = Figure(size=(600, 500))
+    ax_sc_ud = Axis(fig_sc_ud[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Normalized unique count diversity",
+        xtickformat=values -> [string(Int(round(v))) for v in values],
+        title="Tahoe SC unique count diversity per rank ($(n_parquets_to_use) parquets)")
+    lines!(ax_sc_ud, 1:max_populated_rank, sc_unique_diversity_norm, linewidth=2, color=:black)
+    display(fig_sc_ud)
+end
+save("$save_dir/sc_$(n_parquets_to_use)_rank_unique_diversity.png", fig_sc_ud)
 
 # zoomed entropy plots for top-1024 and top-2048
 begin

@@ -162,13 +162,13 @@ drop_prob = 0.0
 
 [finetune.no_pretrain.rmlp.lvl1]
 lr = 0.000001
-drop_prob = 0.01
-n_layers = 8
+drop_prob = 0.015
+n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
 lr = 0.000001
-drop_prob = 0.02
-n_layers = 8
+drop_prob = 0.03
+n_layers = 6
 
 [finetune.no_pretrain.rmlp.lvl3]
 lr = 0.0
@@ -176,13 +176,13 @@ drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
-lr = 0.0005
-drop_prob = 0.08
+lr = 0.00005
+drop_prob = 0.014
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
-lr = 0.001
-drop_prob = 0.02
+lr = 0.00011
+drop_prob = 0.014
 n_layers = 6
 
 [finetune.no_pretrain.emlp.lvl3]

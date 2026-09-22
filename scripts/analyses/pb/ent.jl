@@ -12,7 +12,8 @@ if dataset == "lincs"
     data_dir = "results/lincs/data/entropies"
     save_prefix = "lincs"
 elseif dataset == "tahoe"
-    df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
+    # df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
+    df = load("data/tahoe/filtered_pseudobulks_alpha_10000.jld2")["df"]
     expr = hcat(df.expr...)
     fig_dir = "results/tahoe/pb/figures/entropies"
     data_dir = "results/tahoe/pb/data/entropies"
@@ -92,6 +93,23 @@ end
 
 jldsave("$data_dir/$(save_prefix)_ranked_sparsities.jld2"; sparsities=sparsities)
 
+### unique count diversity per rank position
+# For each rank r, count unique expression values at positions r through n_genes
+# Averaged across samples, normalized by rank-1 value
+
+unique_diversity_sum = zeros(Float64, n_genes)
+for j in 1:N
+    seen = Set{Float32}()
+    for r in n_genes:-1:1
+        push!(seen, expr[ranked[r, j], j])
+        unique_diversity_sum[r] += length(seen)
+    end
+end
+unique_diversity = unique_diversity_sum ./ N
+unique_diversity_norm = unique_diversity ./ unique_diversity[1]
+
+jldsave("$data_dir/$(save_prefix)_ranked_unique_diversity.jld2"; unique_diversity=unique_diversity, unique_diversity_norm=unique_diversity_norm)
+
 ### entropy + sparsity overlay
 
 begin
@@ -120,6 +138,20 @@ begin
     display(fig_overlay)
 end
 save("$fig_dir/$(save_prefix)_rank_entropy_sparsity.png", fig_overlay)
+
+### unique count diversity plot (normalized)
+
+begin
+    fig_ud = Figure(size=(600, 500))
+    ax_ud = Axis(fig_ud[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Normalized unique count diversity",
+        xtickformat=values -> [string(Int(round(v))) for v in values],
+        title = dataset == "lincs" ? "LINCS L1000 unique count diversity per rank" : "Tahoe pseudo-bulk unique count diversity per rank")
+    lines!(ax_ud, 1:n_genes, unique_diversity_norm, linewidth=2, color=:black)
+    display(fig_ud)
+end
+save("$fig_dir/$(save_prefix)_rank_unique_diversity.png", fig_ud)
 
 ### mean expression per gene (sorted by mean expression)
 

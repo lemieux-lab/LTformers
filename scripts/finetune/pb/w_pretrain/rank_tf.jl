@@ -51,6 +51,10 @@ d = dsplit(data_expr, config;
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
+# identity baseline for lvl3
+id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
+    identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
+
 # top-k + truncation
 top_k = get(config, "top_k", 1024)
 if top_k < d.n_genes
@@ -241,8 +245,14 @@ if is_regression
     pearson = cor(all_preds, all_trues)
     rmse = sqrt(mean((all_preds .- all_trues) .^ 2))
     println("R² = $(round(r2, digits=4)), Pearson r = $(round(pearson, digits=4)), RMSE = $(round(rmse, digits=4))")
+    if !isnothing(id_baseline)
+        println("Identity baseline: R²=$(round(id_baseline.r2, digits=4)), Pearson=$(round(id_baseline.pearson, digits=4)), RMSE=$(round(id_baseline.rmse, digits=4))")
+    end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_skip, r2=r2, pearson=pearson, rmse=rmse,
+               id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
+               id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
+               id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
 else
     acc = mean(all_preds .== all_trues)
