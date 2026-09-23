@@ -134,3 +134,9 @@ FINE-TUNE
                 -- lvl1:
                 -- lvl2:
                 -- lvl3:
+
+for qh: can do single-cell pre-training/fine-tuning?
+-- rn finishing up the sweeps, need good runs of all models + verification of lr that its not collapse etc
+-- then need finetuning on all lvls
+-- also need rmlp, emlp, rtf, etf baselines
+-- re-run rlog, elog baselines

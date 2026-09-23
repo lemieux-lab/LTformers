@@ -65,7 +65,7 @@ function process_cell_to_ranked(genes_flat, offsets, expr_flat, cell_idx, token_
     return ranked
 end
 
-function cell_to_dense(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
+function cell_to_raw(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
     s = offsets[cell_idx] + 1
     e = offsets[cell_idx + 1]
     if expr_flat[s] < 0
@@ -78,6 +78,11 @@ function cell_to_dense(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n
         ci == 0 && continue
         vec[ci] = expr_flat[i]
     end
+    return vec
+end
+
+function cell_to_dense(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
+    vec = cell_to_raw(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
 
     # log-normalize
     total = sum(vec)
@@ -111,21 +116,33 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
     parquet = read_parquet(parquet_path)
 
     for ci in 1:parquet.n_cells
-        dense = cell_to_dense(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
-        ranked = process_cell_to_ranked(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
+        raw = cell_to_raw(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
+        dense = copy(raw)
+        total = sum(dense)
+        if total > 0
+            for i in 1:n_coding
+                if dense[i] > 0
+                    dense[i] = log1p(10000f0 * dense[i] / total)
+                end
+            end
+        end
+        noise = randn(Float32, n_coding) .* 1f-10
+        dense .+= noise
+        ranked = Vector{Int32}(undef, n_coding)
+        sortperm!(ranked, dense, rev=true)
 
         for (rank_pos, gene_idx) in enumerate(ranked)
             d = rank_counts[rank_pos]
             d[gene_idx] = get(d, gene_idx, 0) + 1
-            if dense[gene_idx] == 0.0f0
+            if raw[gene_idx] == 0.0f0
                 rank_zero_counts[rank_pos] += 1
             end
         end
 
-        # unique count diversity: sweep from tail, count unique expression values at or below each rank
+        # unique count diversity: sweep from tail using raw counts (not log-normalized)
         seen = Set{Float32}()
         for r in n_coding:-1:1
-            push!(seen, dense[ranked[r]])
+            push!(seen, raw[ranked[r]])
             rank_unique_sums[r] += length(seen)
         end
     end
@@ -147,7 +164,8 @@ for r in 1:max_populated_rank
     end
 end
 
-sc_ent_dir = "results/tahoe/sc/data/entropies/$(n_parquets_to_use)_pqs"
+# sc_ent_dir = "results/tahoe/sc/data/entropies/$(n_parquets_to_use)_pqs"
+sc_ent_dir = "results/tahoe/sc/data/entropies"
 mkpath(sc_ent_dir)
 jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies)
 println("Saved SC entropies to $sc_ent_dir/ranked_sc_entropies.jld2 ($(length(sc_entropies)) ranks)")

@@ -60,6 +60,19 @@ top_k = get(config, "top_k", 1024)
 #                            dose=get(config, "dose", ""),
 #                            meta_dir=get(config, "meta_dir", ""),
 #                            regression_pairs_fn=get_regression_pairs_pca)
+# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
+sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
+pb_expr_for_percell = nothing
+pb_df_for_percell = nothing
+if sc_lvl3_percell && config["level"] == "lvl3"
+    pb_path = get(config, "pb_data_path", "")
+    pb_path == "" && error("sc_lvl3_percell requires pb_data_path in config")
+    println("loading PB data for per-cell SC lvl3 targets: $pb_path")
+    pb_data = load(pb_path)["df"]
+    pb_expr_for_percell = Float32.(reduce(hcat, pb_data.expr))
+    pb_df_for_percell = pb_data
+end
+
 d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n_coding, top_k, "etf";
                            pb_data_path=get(config, "pb_data_path", ""),
                            hvg_idx=hvg_idx,
@@ -71,8 +84,14 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            target_cell=get(config, "target_cell", ""),
                            dose=get(config, "dose", ""),
                            meta_dir=get(config, "meta_dir", ""),
-                           regression_pairs_fn=get_regression_pairs_pca)
+                           regression_pairs_fn=get_regression_pairs_pca,
+                           sc_lvl3_percell=sc_lvl3_percell,
+                           pb_expr=pb_expr_for_percell,
+                           pb_df=pb_df_for_percell,
+                           identity_baseline_fn=identity_baseline)
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+
+id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
 
 # build e2e model from pre-trained
 # n_genes = n_coding (pretrained model's full vocab for weight loading)
@@ -344,8 +363,14 @@ if is_regression
     pearson = cor(all_preds, all_trues)
     rmse = sqrt(mean((all_preds .- all_trues) .^ 2))
     println("R² = $(round(r2, digits=4)), Pearson r = $(round(pearson, digits=4)), RMSE = $(round(rmse, digits=4))")
+    if !isnothing(id_baseline)
+        println("Identity baseline: R²=$(round(id_baseline.r2, digits=4)), Pearson=$(round(id_baseline.pearson, digits=4)), RMSE=$(round(id_baseline.rmse, digits=4))")
+    end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_skip, r2=r2, pearson=pearson, rmse=rmse,
+               id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
+               id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
+               id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
 else
     acc = mean(all_preds .== all_trues)

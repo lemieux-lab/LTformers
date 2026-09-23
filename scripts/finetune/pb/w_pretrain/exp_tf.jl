@@ -61,8 +61,9 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
 # identity baseline for lvl3
-id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
-    identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
+# id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
+#     identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
+id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 # build e2e model from pre-trained
 # n_genes_orig = pretrained model's vocab size

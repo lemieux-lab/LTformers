@@ -62,12 +62,13 @@ d = dsplit(data_expr, config;
            inverse_ranks_fn=inverse_ranks)
 
 # identity baseline for lvl3
-id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
-    identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
+# id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
+#     identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
+id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 # model
 if config["modeltype"] == "rlog"
-    # logistic regression: single linear layer, no activation, no dropout
+    # single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
     config["lr"] = 0.001
     model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
     model = cu(model)

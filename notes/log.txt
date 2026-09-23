@@ -1733,69 +1733,184 @@ a2
 ### sep 22 2026 ###
 
 -- from seb meeting:
-    -- extend sparsity analyses beyond zero counts
+    -- extend sparsity analyses beyond zero counts:
         -- RUNNING sc entvec for comparsion.jl (1)
-            -- finished pb ent re-run
-    --- for lvl3 selection, ensured:
-        -- lincs has at least 1k shared compounds between cell lines
-        -- compute PCA on target CL, then project the reference CL onto same PCA and this is the correlation for the prediction task
+            -- finished pb ent re-run already
+    --- for lvl3 selection:
         -- RUNNING cl choices eval on LINCS and Tahoe (2)
+        -- also fixed lvl3 implementation:
+            -- fit target PCA on only training compounds instead of all target incl test
+            -- changed sc per-cell lvl3 to have source cells come from only 5.0uM dose since targets are also 5.0uM dose
+            -- also sc per-cell is the defualt instead of the pseudobulked verison of sc lvl3
+            -- also accidnetally did not allow dsplit() to rank for rmlp and rlog, fixed
+    -- baselines reformulated to:
+        -- lvl3: identity, lin reg
+        -- lvl1/lvl2: log reg
 
 a1
+-- TODO lvl3 cl choice
 -- baselines
-    -- TODO runs
-        -- reviewed rmlp, emlp on lvl2
-            -- rmlp best: rmlp_nopt_lincs_lvl2_2026-09-21_16-43
-                -- lr=0.000001, drop_prob=0.03, n_layers=6
-            -- emlp best: emlp_nopt_lincs_lvl2_2026-09-21_03-40
-                -- lr=0.00011, drop_prob=0.014, n_layers=6
-        -- TODO rtf, etf lvl1, lvl2 sweeps
-            -- RUNNING rtf, etf lvl1, lvl2 sweeps (4)
+    -- done elog, rlog lvl1, lvl2
+        -- elog lvl1: 98.0%
+        -- rlog lvl1: 99.7%
+        -- elog lvl2: 36.9%
+        -- rlog lvl2: 54.0%
+    -- TODO etf, rtf lvl1, lvl2 sweeps
+        -- RUNNING etf, rtf lvl1, lvl2 sweeps (4)
 -- pre-train
     -- TODO sweeps
 -- fine-tune
-    -- TODO lvl3 cl choice
-    -- TODO no-pt sweeps
-        -- will do etf, rtf later (not a priority rn)
+    -- waiting on pre-train
 
 a2
+-- TODO lvl3 CL choice
+-- baselines
+    -- pb
+        -- done elog, rlog lvl1, lvl2
+            -- elog lvl1: 100%
+            -- rlog lvl1: 99.9%
+            -- elog lvl2: 76.4%
+            -- rlog lvl2: 63.9%
+        -- TODO emlp, rmlp, etf, rtf lvl3
+        -- ?TODO pb good runs of emlp, rmlp, etf, rtf?
+    -- sc
+        -- TODO elog, rlog lvl1, lvl2
+        -- TODO sweeps
+            -- RUNNING rmlp, emlp, rtf, etf on lvl1 sweeps (4, CQ)
 -- pre-train
     -- pb
         -- TODO good runs
-            -- reviewed mlm rtf sweep done
-                -- best: mlm_tahoe_rtf_2026-09-14_02-31
-                    -- lr=0.0038, drop_prob=0.083, mask_ratio=0.12
             -- RUNNING mlm rtf long run (1)
-            -- reviewed long runs of completed mlm etf, erecon etf, erecon rtf, lrecon etf, lrecon rtf sweeps (5)
-                -- good! located at:
-                -- mlm etf: results/tahoe/pb/pretrain/mlm/etf/2026-09-14_21-54 
-                -- erecon rtf: results/tahoe/pb/pretrain/erecon/rtf/2026-09-15_11-22
-                -- erecon etf: results/tahoe/pb/pretrain/erecon/etf/2026-09-15_11-22
-                -- lrecon rtf: results/tahoe/pb/pretrain/lrecon/rtf/2026-09-16_15-33
-                -- lrecon etf: results/tahoe/pb/pretrain/lrecon/etf/2026-09-16_15-33
     -- sc
         -- TODO sweeps
-            -- RUNNING same test sweep on all configs, then can narrow down ranges? (3:1-10, CQ)
-            -- done mlm etf
-            -- running mlm rtf, lrecon rtf (2)
-                -- mlm rtf RUNNING again w/ different range: lr=(0.001,0.01) (1)
-                -- lrecon RUNNING again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
-            -- reviewed lrecon etf, erecon rtf, erecon etf
-                -- erecon rtf good, erecom etf good, lrecon etf needs higher EMA ranges
-                -- lrecon etf RUNNING again w/ different rages: ema_decay=(0.95,0.999) (1)
-
+            -- RUNNING mlm rtf, lrecon rtf, lrecon etf (3, CQ)
+                -- mlm rtf again w/ different range: lr=(0.001,0.01)
+                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+        -- TODO good runs
 -- fine-tune
-    -- TODO lvl3 CL choice
-    -- baselines
-        -- TODO sc runs, pb runs completed!!! (or need longer runs of rmlp, emlp, rtf, etf?)
     -- pb
-        -- TODO no-pt sweeps
-            -- TODO emlp, rmlp, etf, rtf lvl3
+        -- TODO sweeps
     -- sc
-        -- TODO no-pt sweeps
-            -- TODO rmlp, emlp
-                -- !TO-RE-RUN rmlp, emlp on lvl1 sweeps (2)
-                    -- fixed filename mappings, added seed, added echo of command for debugging
-                    -- !to-push git
-            -- TODO rtf, etf
-                -- !TO-RUN rtf, etf on lvl1 sweeps
+        -- waiting on pre-train
+
+-- !graphs to make:
+    -- cosine/entropy/sparsity/jaccard between tahoe pb and sc [DONE]
+    -- pre-training results from tahoe pb [DONE]
+    -- baseline accuracies for lvl1 and lvl2 (logistic regression, mlp, transformer no pretrain) [DONE]
+-- !graphs to make if results finish on time:
+    -- cell-line pairs of MLP vs identity vs linear for tahoe and lincs
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 22 2026 ###
+
+-- from seb meeting:
+    -- extend sparsity analyses beyond zero counts:
+        -- RUNNING sc entvec for comparsion.jl 
+            -- finished pb ent re-run already
+    --- for lvl3 selection:
+        -- RUNNING cl choices eval on Tahoe (1)
+            -- reviewed LINCS completed
+                -- results at: results/lincs/analyses/lvl3_mlp_allpairs/2026-09-22_14-15/
+                -- lowest R^2 pairs: SKB-NPC, VCAP-NPC, MCF10A-A375 (but have low identity baselines too ~ 0.1ish)
+                -- if we look at >1k shared compounds, low bimodality, low correlation b/n cell lines, and low R^2 from MLP:
+                    - n_cmpd: shared compounds (all ≥1000, the only hard filter from the transcript)
+                    - n_src / n_tgt: total samples in source / target cell line at 10 µM
+                    - PC1%: variance explained by PC1 on target
+                    - BC: bimodality coefficient (>0.555 = possibly batch-driven PC1, but per the transcript this doesn't disqualify — MLP screen replaces that reasoning)
+                    - pca_lb: PC1 correlation between source and target projections (the "identity lower bound")
+                    - id_r: identity baseline Pearson (project source through target PCA, use PC1 as prediction)
+                    - lin_r: linear regression Pearson
+                --  Rank |   Source → Target   | n_cmpd |   n_src |   n_tgt |  PC1% |    BC |  pca_lb |   id_r |  lin_r |  mlp_r |  mlp_R²
+                    -----------------------------------------------------------------------------------------------------------------------------
+                        1 |      SKB → NPC      |   1681 |    3716 |    9582 |  13.4 |  0.29 |  -0.011 |  0.067 |  0.123 |  0.208 |  -0.063
+                        2 |     VCAP → NPC      |   1927 |   32577 |    9582 |  16.5 |  0.83 |   0.082 |  0.163 |  0.237 |  0.245 |  -0.003
+                        3 |   MCF10A → A375     |   1128 |    6346 |   29938 |  21.0 |  0.66 |   0.171 |  0.136 |  0.176 |  0.182 |   0.014
+                        4 |     HELA → PC3      |   1293 |    4251 |   57915 |  28.4 |  0.52 |   0.237 |  0.106 |  0.178 |  0.155 |   0.019
+                        5 |   MCF10A → A549     |   1110 |    6346 |   28575 |  21.4 |  0.46 |   0.119 |  0.176 |  0.331 |  0.315 |   0.027
+                        6 |     HELA → A549     |   1003 |    4251 |   28575 |  27.7 |  0.48 |   0.025 | -0.009 |  0.266 |  0.267 |   0.038
+                        7 |     YAPC → A549     |   1070 |    3023 |   28575 |  24.2 |  0.48 |  -0.040 |  0.053 |  0.309 |  0.286 |   0.038
+                        8 |     THP1 → PC3      |   1022 |    2536 |   57915 |  30.3 |  0.65 |   0.189 |  0.118 |  0.390 |  0.419 |   0.063
+                        9 |   MCF10A → PC3      |   1179 |    6346 |   57915 |  26.8 |  0.56 |   0.088 |  0.040 |  0.277 |  0.299 |   0.071
+                       10 |      ASC → HCC515   |   2397 |    6995 |   21275 |  32.6 |  0.63 |   0.140 |  0.245 |  0.446 |  0.399 |   0.078
+                       11 |     VCAP → HT29     |   4937 |   32577 |   29608 |  17.6 |  0.34 |  -0.001 |  0.002 |  0.477 |  0.491 |   0.099
+                       12 |      SKB → HCC515   |   2040 |    3716 |   21275 |  37.7 |  0.64 |   0.149 |  0.163 |  0.440 |  0.478 |   0.100
+                       13 |     VCAP → HEPG2    |   3486 |   32577 |   13021 |  29.3 |  0.66 |   0.082 |  0.165 |  0.369 |  0.354 |   0.101
+                       14 |     A549 → HELA     |   1003 |   28575 |    4251 |  41.6 |  0.92 |   0.025 |  0.070 |  0.284 |  0.321 |   0.102
+                       15 |     A375 → MCF10A   |   1128 |   29938 |    6346 |  16.1 |  0.69 |   0.227 |  0.217 |  0.315 |  0.346 |   0.108
+                       16 |      SKB → HT29     |   2143 |    3716 |   29608 |  15.6 |  0.36 |   0.252 |  0.187 |  0.335 |  0.352 |   0.109
+                       17 |      ASC → HT29     |   2499 |    6995 |   29608 |  14.0 |  0.35 |   0.004 |  0.028 |  0.352 |  0.357 |   0.118
+                       18 |      SKB → A549     |   2103 |    3716 |   28575 |  23.0 |  0.45 |   0.041 |  0.099 |  0.399 |  0.416 |   0.127
+                       19 |     THP1 → MCF7     |   1026 |    2536 |   54040 |  28.3 |  0.61 |   0.138 |  0.145 |  0.386 |  0.398 |   0.146
+                       20 |      PC3 → MCF10A   |   1179 |   57915 |    6346 |  16.0 |  0.70 |   0.134 |  0.205 |  0.405 |  0.452 |   0.147
+                -- ok so best is likely:
+                    --  1. SKB → NPC — 1681 cmpd, id_r=0.067, lin_r=0.123, mlp_r=0.208, R²=-0.063
+                        2. HELA → A549 — 1003 cmpd, id_r=-0.009, lin_r=0.266, mlp_r=0.267, R²=0.038
+                        3. VCAP → HT29 — 4937 cmpd, id_r=0.002, lin_r=0.477, mlp_r=0.491, R²=0.099
+                        4. SKB → HT29 — 2143 cmpd, id_r=0.187, lin_r=0.335, mlp_r=0.352, R²=0.109
+                        5. ASC → HT29 — 2499 cmpd, id_r=0.028, lin_r=0.352, mlp_r=0.357, R²=0.118
+                        6. SKB → A549 — 2103 cmpd, id_r=0.099, lin_r=0.399, mlp_r=0.416, R²=0.127
+                    -- SKB -> NPC
+                        -- RUNNING sweep w/ longer steps for emlp (1)
+a1 (LINCS)
+-- baselines
+    -- RUNNING etf, rtf lvl1, lvl2 sweeps (4)
+    -- TODO baselines for lvl3
+-- pre-train
+    -- TODO sweeps
+-- fine-tune
+    -- waiting on pre-train
+
+a2 (TAHOE)
+-- baselines
+    -- pb
+        -- TODO emlp, rmlp, etf, rtf lvl3
+        -- ?TODO pb good re-runs of emlp, rmlp, etf, rtf?
+    -- sc
+        -- done elog, rlog lvl1, lvl2
+            -- elog lvl1: results/tahoe/sc/finetune/no_pretrain/lvl1/elog/2026-09-23_09-57, 97.6%
+            -- rlog lvl1: results/tahoe/sc/finetune/no_pretrain/lvl1/rlog/2026-09-23_09-57, 98%
+            -- elog lvl2: results/tahoe/sc/finetune/no_pretrain/lvl2/elog/2026-09-23_12-55, 1.47%
+            -- rlog lvl2: results/tahoe/sc/finetune/no_pretrain/lvl2/rlog/2026-09-23_11-03, 0.38%
+            - rlog takes about 3hrs, elog takes about 1hr
+        -- TODO sweeps of lvl1, lvl2, lvl3
+            -- RUNNING rmlp, emlp, rtf, etf on lvl1 sweeps (4, CQ)
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING mlm rtf long run (1)
+        -- in evaluating the results, we see that:
+            1. mlm etf didn't use tie-breaking for ranking?
+                -- not really an issue
+            2. lrecon etf - teacher embedding collapse + val/test scored by teacher not student
+            3. lrecon rtf - need to normalize by target variance?
+            -- fixed! need re-run of tahoe sweeps and good runs now for lrecon
+                -- replaced w/ batch-wise standarization
+                -- val/test masked_lrecon_loss switched from ema_model to model
+            -- RUNNING test runs of rtf, etf lrecon 100steps (2)
+        -- TODO sweeps
+            -- RUNNING mlm rtf, lrecon rtf, lrecon etf (3, CQ)
+                -- mlm rtf again w/ different range: lr=(0.001,0.01)
+                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+        -- TODO good runs
+-- fine-tune
+    -- pb
+        -- TODO sweeps
+    -- sc
+        -- waiting on pre-train
+
+-- !graphs to make:
+    -- cosine/entropy/sparsity/jaccard between tahoe pb and sc [DONE]
+        -- still need unique count diversity curve
+        -- this essentially extends the comcept of sparsitym to see if entropy starts to fall at 3s and 2s and 1s AND 0s
+        -- thus, by that point, everything that's left is only 2 different values, or 1 same value, etc.
+        -- then normalize the curve by dividing every rank's value by the max # of unique expression values
+        -- so curve starts at 1.0 and decreases towards 0
+    -- pre-training results from tahoe pb [DONE]
+        -- still need mlm rtf results
+    -- baseline accuracies for lvl1 and lvl2 (logistic regression, mlp, transformer no pretrain) [DONE]
+        -- still need for sc, lvl3, and transformer npt of linccs
+-- !graphs to make if results finish on time:
+    -- cell-line pairs of MLP vs identity vs linear for tahoe and lincs

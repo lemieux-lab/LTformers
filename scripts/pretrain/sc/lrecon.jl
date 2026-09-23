@@ -34,7 +34,11 @@ function get_target_embeds(model, x_clean, use_exp)
         pos_ids = cu(Int32.(1:size(embedded, 2)))
         encoded = embedded .+ model.pos_emb(pos_ids)
     end
-    return model.transformer(model.emb_dropout(encoded))
+    # return model.transformer(model.emb_dropout(encoded))
+    raw = model.transformer(model.emb_dropout(encoded))
+    mu = mean(raw, dims=3)
+    sigma = std(raw, dims=3) .+ 1f-6
+    return (raw .- mu) ./ sigma
 end
 
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
@@ -273,7 +277,8 @@ for epoch in ProgressBar(1:n_total_epochs)
             mask_2d = Float32.(CuArray(cached.y) .!= -100)
         end
         target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-        loss_val, _, _ = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+        # loss_val, _, _ = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+        loss_val, _, _ = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
         push!(val_eval_losses, cpu(loss_val))
     end
     push!(val_losses, mean(val_eval_losses))
@@ -312,7 +317,8 @@ for epoch in ProgressBar(1:n_total_epochs)
                         mask_2d = Float32.(CuArray(ym) .!= -100)
                     end
                     target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-                    loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+                    # loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+                    loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
                     push!(eval_losses, cpu(loss_val))
 
                     if !isnothing(preds_embed)
@@ -369,7 +375,8 @@ for epoch in ProgressBar(1:n_total_epochs)
                     mask_2d = Float32.(CuArray(cached.y) .!= -100)
                 end
                 target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-                loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+                # loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
+                loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
                 push!(eval_losses, cpu(loss_val))
 
                 if !isnothing(preds_embed)
@@ -437,7 +444,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
-        log_model(ema_model, joinpath(save_dir, "best"), config)
+        # log_model(ema_model, joinpath(save_dir, "best"), config)
+        log_model(model, joinpath(save_dir, "best"), config)
     end
 end
 
@@ -471,7 +479,8 @@ else
     println("  skipping per-gene/per-rank plots: no predictions collected")
 end
 
-log_model(ema_model, save_dir, config)
+# log_model(ema_model, save_dir, config)
+log_model(model, save_dir, config)
 
 # save shard split for finetune reuse
 jldsave(joinpath(save_dir, "shard_split.jld2");

@@ -52,7 +52,8 @@ top_k = get(config, "top_k", 1024)
 #                            meta_dir=get(config, "meta_dir", ""),
 #                            regression_pairs_fn=get_regression_pairs_pca)
 # load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
-sc_lvl3_percell = get(config, "sc_lvl3_percell", false)
+# sc_lvl3_percell = get(config, "sc_lvl3_percell", false)
+sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)  # per-cell is the default
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
 if sc_lvl3_percell && config["level"] == "lvl3"
@@ -78,8 +79,11 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            sc_lvl3_percell=sc_lvl3_percell,
                            pb_expr=pb_expr_for_percell,
                            pb_df=pb_df_for_percell,
-                           actual_modeltype=config["modeltype"])
+                           actual_modeltype=config["modeltype"],
+                           identity_baseline_fn=identity_baseline)
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+
+id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
 
 n_genes = d.n_genes
 n_classifications = d.n_classifications
@@ -356,8 +360,14 @@ if is_regression
     pearson = cor(all_preds, all_trues)
     rmse = sqrt(mean((all_preds .- all_trues) .^ 2))
     println("R² = $(round(r2, digits=4)), Pearson r = $(round(pearson, digits=4)), RMSE = $(round(rmse, digits=4))")
+    if !isnothing(id_baseline)
+        println("Identity baseline: R²=$(round(id_baseline.r2, digits=4)), Pearson=$(round(id_baseline.pearson, digits=4)), RMSE=$(round(id_baseline.rmse, digits=4))")
+    end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_no_pt_skip, r2=r2, pearson=pearson, rmse=rmse,
+               id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
+               id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
+               id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
 else
     acc = mean(all_preds .== all_trues)

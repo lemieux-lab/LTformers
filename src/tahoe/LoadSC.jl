@@ -324,23 +324,11 @@ end
 
 
 """
-    _load_sc_lvl3(...)
+    _sc_sample_dose_map(meta_dir, dose)
 
-Private helper for lvl3 SC finetune. Pseudo-bulks SC cells per (cell_line, drug),
-then applies PCA regression pairing.
+sample_id → (dose matches) map from sample_metadata.parquet; `nothing` if no dose filter.
 """
-function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
-                        n_coding::Int, top_k::Int, modeltype::String,
-                        source_cell::String, target_cell::String,
-                        dose::String, meta_dir::String,
-                        cell_to_dense_flat_fn, process_cell_topk_flat_fn,
-                        regression_pairs_fn;
-                        subset_shards::Int = 0,
-                        hvg_idx::Union{Vector{Int}, Nothing} = nothing)
-
-    shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
-
-    # -- build sample→dose map if dose filtering requested --
+function _sc_sample_dose_map(meta_dir::String, dose::String)
     sample_dose_map = nothing
     if dose != ""
         if meta_dir == ""
@@ -413,6 +401,102 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
             end
         end
     end
+    return sample_dose_map
+end
+
+
+"""
+    _load_sc_lvl3(...)
+
+Private helper for lvl3 SC finetune. Pseudo-bulks SC cells per (cell_line, drug),
+then applies PCA regression pairing.
+"""
+function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
+                        n_coding::Int, top_k::Int, modeltype::String,
+                        source_cell::String, target_cell::String,
+                        dose::String, meta_dir::String,
+                        cell_to_dense_flat_fn, process_cell_topk_flat_fn,
+                        regression_pairs_fn;
+                        subset_shards::Int = 0,
+                        hvg_idx::Union{Vector{Int}, Nothing} = nothing,
+                        identity_baseline_fn = nothing)
+
+    shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
+
+    # # -- build sample→dose map if dose filtering requested --
+    # sample_dose_map = nothing
+    # if dose != ""
+    #     if meta_dir == ""
+    #         @warn "dose filter requested but no meta_dir provided; skipping SC dose filter"
+    #     else
+    #         sample_meta_path = joinpath(meta_dir, "sample_metadata.parquet")
+    #         if isfile(sample_meta_path)
+    #             println("[SC lvl3] loading sample_metadata.parquet for dose filtering...")
+    #             t = _pq.read_table(sample_meta_path)
+    #             cols = [string(c) for c in t.column_names]
+    #             # find dose column
+    #             dose_col = nothing
+    #             for candidate in ["dose", "pert_dose", "dose_um", "Dose"]
+    #                 if candidate in cols
+    #                     dose_col = candidate
+    #                     break
+    #                 end
+    #             end
+    #             # find sample column
+    #             sample_col = nothing
+    #             for candidate in ["sample", "sample_id", "Sample"]
+    #                 if candidate in cols
+    #                     sample_col = candidate
+    #                     break
+    #                 end
+    #             end
+    #             # fallback: parse dose from drugname_drugconc column (format "DrugName_Conc")
+    #             drugconc_col = nothing
+    #             if isnothing(dose_col) && "drugname_drugconc" in cols
+    #                 drugconc_col = "drugname_drugconc"
+    #                 println("[SC lvl3] no dedicated dose column; parsing dose from drugname_drugconc")
+    #             end
+    #             if !isnothing(sample_col) && (!isnothing(dose_col) || !isnothing(drugconc_col))
+    #                 n_rows = convert(Int, t.num_rows)
+    #                 sample_arr = t.column(sample_col)
+    #                 dose_val = parse(Float64, dose)
+    #                 sample_dose_map = Dict{String, Bool}()
+    #                 if !isnothing(dose_col)
+    #                     dose_arr = t.column(dose_col)
+    #                     for i in 0:(n_rows - 1)
+    #                         s = string(sample_arr[i].as_py())
+    #                         d = dose_arr[i].as_py()
+    #                         d_float = isa(d, Number) ? Float64(d) : tryparse(Float64, string(d))
+    #                         if !isnothing(d_float)
+    #                             sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
+    #                         end
+    #                     end
+    #                 else
+    #                     # drugname_drugconc: as_py() returns a string like "[('DrugName', 0.05, 'uM')]"
+    #                     # extract the float between first and second commas
+    #                     dc_arr = t.column(drugconc_col)
+    #                     dose_re = r",\s*([\d.]+)\s*,"
+    #                     for i in 0:(n_rows - 1)
+    #                         s = string(sample_arr[i].as_py())
+    #                         dc_str = string(dc_arr[i].as_py())
+    #                         m = match(dose_re, dc_str)
+    #                         d_float = isnothing(m) ? nothing : tryparse(Float64, m.captures[1])
+    #                         if !isnothing(d_float)
+    #                             sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
+    #                         end
+    #                     end
+    #                 end
+    #                 n_matching = count(values(sample_dose_map))
+    #                 println("[SC lvl3] dose map: $(length(sample_dose_map)) samples, $n_matching matching dose=$dose")
+    #             else
+    #                 @warn "could not find dose/sample columns in sample_metadata.parquet (cols=$cols)"
+    #             end
+    #         else
+    #             @warn "sample_metadata.parquet not found at $sample_meta_path"
+    #         end
+    #     end
+    # end
+    sample_dose_map = _sc_sample_dose_map(meta_dir, dose)
 
     # -- pass 1: metadata scan, filter to source+target cell lines --
     println("[SC lvl3 pass 1] scanning metadata from $(length(shards_to_scan)) shards...")
@@ -500,10 +584,17 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
     src_mask = BitVector(pb_cl .== source_cell)
     tgt_mask = BitVector(pb_cl .== target_cell)
     pb_drug_sym = Symbol.(pb_drug)
-    X, y, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
-                                                         pb_drug_sym, pb_drug_sym)
+    # X, y, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
+    #                                                      pb_drug_sym, pb_drug_sym)
+    X, y, shared_perts, pca_model, split = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
+                                                                pb_drug_sym, pb_drug_sym)
 
     n_genes = size(X, 1)
+    train_idx, val_idx, test_idx = split.train_idx, split.val_idx, split.test_idx
+
+    # identity baseline on raw pseudo-bulked expression, before rank/HVG transforms
+    id_baseline = isnothing(identity_baseline_fn) ? nothing :
+        identity_baseline_fn(X[:, test_idx], y[:, test_idx], pca_model)
 
     # -- rank if RTF --
     if modeltype == "rtf"
@@ -528,14 +619,15 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
     end
 
     # -- train/val/test split --
-    idx = shuffle(1:size(X, 2))
-    n_test = floor(Int, length(idx) * 0.1)
-    n_val  = floor(Int, length(idx) * 0.1)
-    s_test = length(idx) - n_test
-    s_val  = s_test - n_val
-    train_idx = idx[1:s_val]
-    val_idx   = idx[s_val+1:s_test]
-    test_idx  = idx[s_test+1:end]
+    # idx = shuffle(1:size(X, 2))
+    # n_test = floor(Int, length(idx) * 0.1)
+    # n_val  = floor(Int, length(idx) * 0.1)
+    # s_test = length(idx) - n_test
+    # s_val  = s_test - n_val
+    # train_idx = idx[1:s_val]
+    # val_idx   = idx[s_val+1:s_test]
+    # test_idx  = idx[s_test+1:end]
+    # split comes from regression_pairs_fn (same compounds the PCA was fit on)
 
     X_train = X[:, train_idx]
     X_val   = X[:, val_idx]
@@ -546,11 +638,16 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
 
     println("SC lvl3 split: train=$(size(X_train,2)), val=$(size(X_val,2)), test=$(size(X_test,2))")
 
+    # return (; X_train, X_val, X_test, y_train, y_val, y_test,
+    #           n_genes=modeltype == "rtf" ? n_coding : n_genes,
+    #           n_classifications=1,
+    #           train_idx, val_idx, test_idx,
+    #           cidx_dict=nothing, cs=nothing)
     return (; X_train, X_val, X_test, y_train, y_val, y_test,
               n_genes=modeltype == "rtf" ? n_coding : n_genes,
               n_classifications=1,
               train_idx, val_idx, test_idx,
-              cidx_dict=nothing, cs=nothing)
+              cidx_dict=nothing, cs=nothing, id_baseline)
 end
 
 
@@ -578,7 +675,8 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
                                 pb_df::DataFrame,
                                 regression_pairs_fn,
                                 subset_shards::Int = 0,
-                                hvg_idx::Union{Vector{Int}, Nothing} = nothing)
+                                hvg_idx::Union{Vector{Int}, Nothing} = nothing,
+                                identity_baseline_fn = nothing)
 
     println("[SC lvl3 percell] per-cell mode: individual source cells → PB PC1 targets")
     flush(stdout)
@@ -609,8 +707,20 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("  PB target $(target_cell): $(sum(tgt_mask)) samples")
 
     # get_regression_pairs_pca returns (X_paired, y_paired, shared_perts, pca_model)
-    _, y_pb, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
-                                                            pb_df.drug, pb_df.drug)
+    # _, y_pb, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
+    #                                                         pb_df.drug, pb_df.drug)
+    _, y_pb, shared_perts, pca_model, pca_split = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
+                                                                       pb_df.drug, pb_df.drug)
+    # compound split shared with the PCA fit: cells inherit their compound's split
+    train_drugs = Set(string.(shared_perts[pca_split.train_idx]))
+    val_drugs   = Set(string.(shared_perts[pca_split.val_idx]))
+    test_drugs  = Set(string.(shared_perts[pca_split.test_idx]))
+
+    # identity baseline projects raw SC cells through the PB PCA → gene spaces must match
+    do_id_baseline = !isnothing(identity_baseline_fn) && size(pb_expr, 1) == n_coding
+    if !isnothing(identity_baseline_fn) && !do_id_baseline
+        @warn "PB genes ($(size(pb_expr, 1))) ≠ SC coding genes ($n_coding); identity baseline skipped"
+    end
 
     # build drug → PC1 lookup
     drug_to_pc1 = Dict{String, Float32}()
@@ -624,9 +734,14 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     # SC dose filtering skipped for percell: PB PCA targets are already dose-filtered,
     # and SC shards use different dose levels (0.05/0.5/5.0 uM per compound across samples).
     # All SC cells matching shared compounds contribute as augmented inputs to the same PC1 target.
-    sample_dose_map = nothing
-    if dose != ""
-        println("[SC lvl3 percell] note: dose=$dose applied to PB targets only; SC cells use all doses for shared compounds")
+    # sample_dose_map = nothing
+    # if dose != ""
+    #     println("[SC lvl3 percell] note: dose=$dose applied to PB targets only; SC cells use all doses for shared compounds")
+    # end
+    # keep only source cells at the same dose as the PB targets
+    sample_dose_map = _sc_sample_dose_map(meta_dir, dose)
+    if dose != "" && isnothing(sample_dose_map)
+        @warn "[SC lvl3 percell] dose=$dose requested but no dose map available; SC cells use all doses"
     end
 
     # -- step 3: scan SC shards for source cells with shared compounds --
@@ -669,6 +784,11 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     y = Matrix{Float32}(undef, 1, n_cells)
     cell_drugs = Vector{String}(undef, n_cells)
 
+    # raw expression of test cells, kept aside for the identity baseline
+    test_cols = [col for (col, r) in enumerate(cell_records) if r[3] in test_drugs]
+    test_pos = Dict(col => j for (j, col) in enumerate(test_cols))
+    X_id = do_id_baseline ? Matrix{Float32}(undef, n_coding, length(test_cols)) : nothing
+
     # group by shard for efficient I/O
     by_shard = Dict{String, Vector{Tuple{Int, Int, String}}}()  # shard_path => [(cell_idx_in_shard, col_in_X, drug)]
     for (col, (sp, ci, drug)) in enumerate(cell_records)
@@ -691,6 +811,10 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
                 X[:, col] = gene_ids
                 y[1, col] = drug_to_pc1[drug]
                 cell_drugs[col] = drug
+                # dense holds this cell's raw expression (+1e-10 tie-break noise)
+                if do_id_baseline && haskey(test_pos, col)
+                    X_id[:, test_pos[col]] = dense
+                end
             end
             n_shards_done += 1
             if n_shards_done % 200 == 0; println("  loaded $n_shards_done / $(length(by_shard)) shards"); flush(stdout); end
@@ -709,6 +833,9 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
                 X[:, col] = dense
                 y[1, col] = drug_to_pc1[drug]
                 cell_drugs[col] = drug
+                if do_id_baseline && haskey(test_pos, col)
+                    X_id[:, test_pos[col]] = dense
+                end
             end
             n_shards_done += 1
             if n_shards_done % 200 == 0; println("  loaded $n_shards_done / $(length(by_shard)) shards"); flush(stdout); end
@@ -733,14 +860,19 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("[SC lvl3 percell] materialized: $(size(X))")
 
     # -- step 6: compound-level train/val/test split --
-    unique_drugs = unique(cell_drugs)
-    n_compounds = length(unique_drugs)
-    perm = shuffle(1:n_compounds)
-    n_test_c = max(1, floor(Int, n_compounds * 0.1))
-    n_val_c  = max(1, floor(Int, n_compounds * 0.1))
-    test_compounds  = Set(unique_drugs[perm[1:n_test_c]])
-    val_compounds   = Set(unique_drugs[perm[n_test_c+1:n_test_c+n_val_c]])
-    train_compounds = Set(unique_drugs[perm[n_test_c+n_val_c+1:end]])
+    # unique_drugs = unique(cell_drugs)
+    # n_compounds = length(unique_drugs)
+    # perm = shuffle(1:n_compounds)
+    # n_test_c = max(1, floor(Int, n_compounds * 0.1))
+    # n_val_c  = max(1, floor(Int, n_compounds * 0.1))
+    # test_compounds  = Set(unique_drugs[perm[1:n_test_c]])
+    # val_compounds   = Set(unique_drugs[perm[n_test_c+1:n_test_c+n_val_c]])
+    # train_compounds = Set(unique_drugs[perm[n_test_c+n_val_c+1:end]])
+    # reuse the PCA's compound split so test compounds never shaped the PC1 axis
+    present = Set(cell_drugs)
+    test_compounds  = intersect(test_drugs, present)
+    val_compounds   = intersect(val_drugs, present)
+    train_compounds = intersect(train_drugs, present)
 
     train_idx = Int[]; val_idx = Int[]; test_idx = Int[]
     for i in 1:n_cells
@@ -763,11 +895,21 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("  val:   $(length(val_idx)) cells, $(length(val_compounds)) compounds")
     println("  test:  $(length(test_idx)) cells, $(length(test_compounds)) compounds")
 
+    # test_idx and test_cols are both ascending cell indices → X_id columns align with y_test
+    @assert test_idx == test_cols
+    id_baseline = do_id_baseline ? identity_baseline_fn(X_id, y_test, pca_model) :
+        (isnothing(identity_baseline_fn) ? nothing : (; r2=NaN, pearson=NaN, rmse=NaN))
+
+    # return (; X_train, X_val, X_test, y_train, y_val, y_test,
+    #           n_genes=n_genes,
+    #           n_classifications=1,
+    #           train_idx, val_idx, test_idx,
+    #           cidx_dict=nothing, cs=nothing)
     return (; X_train, X_val, X_test, y_train, y_val, y_test,
               n_genes=n_genes,
               n_classifications=1,
               train_idx, val_idx, test_idx,
-              cidx_dict=nothing, cs=nothing)
+              cidx_dict=nothing, cs=nothing, id_baseline)
 end
 
 
@@ -1083,7 +1225,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                                           sc_lvl3_percell::Bool = false,
                                           pb_expr::Union{Matrix{Float32}, Nothing} = nothing,
                                           pb_df::Union{DataFrame, Nothing} = nothing,
-                                          actual_modeltype::String = "")
+                                          actual_modeltype::String = "",
+                                          identity_baseline_fn = nothing)
 
     # validate required function parameters
     if modeltype == "rtf" && isnothing(process_cell_topk_flat_fn)
@@ -1108,14 +1251,16 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                                        cell_to_dense_flat_fn, process_cell_topk_flat_fn;
                                        pb_expr=pb_expr, pb_df=pb_df,
                                        regression_pairs_fn=regression_pairs_fn,
-                                       subset_shards=subset_shards, hvg_idx=hvg_idx)
+                                       subset_shards=subset_shards, hvg_idx=hvg_idx,
+                                       identity_baseline_fn=identity_baseline_fn)
         else
-            # default: pseudo-bulk SC then PCA regression
+            # pseudo-bulk SC then PCA regression (opt-in via --sc_lvl3_pseudobulk)
             d = _load_sc_lvl3(all_shards, token_to_idx, n_coding, top_k, modeltype,
                                source_cell, target_cell, dose, meta_dir,
                                cell_to_dense_flat_fn, process_cell_topk_flat_fn,
                                regression_pairs_fn;
-                               subset_shards=subset_shards, hvg_idx=hvg_idx)
+                               subset_shards=subset_shards, hvg_idx=hvg_idx,
+                               identity_baseline_fn=identity_baseline_fn)
         end
         # wrap lvl3 result in streaming-compatible shape (no streaming needed, but consistent interface)
         return (; X_train=d.X_train, X_val=d.X_val, X_test=d.X_test,
@@ -1130,7 +1275,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                   n_test_cells=size(d.X_test, 2),
                   use_oversmpl=false,
                   cidx_dict=nothing, cs=nothing,
-                  train_idx=d.train_idx, val_idx=d.val_idx, test_idx=d.test_idx)
+                  train_idx=d.train_idx, val_idx=d.val_idx, test_idx=d.test_idx,
+                  id_baseline=d.id_baseline)
     end
 
     # -- pass 1: metadata scan + split --
@@ -1185,7 +1331,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
               cidx_dict=nothing, cs=nothing,
               train_idx=collect(1:n_train_cells),
               val_idx=collect(1:n_val_cells),
-              test_idx=collect(1:n_test_cells))
+              test_idx=collect(1:n_test_cells),
+              id_baseline=nothing)
 end
 
 

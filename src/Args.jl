@@ -296,7 +296,11 @@ function load_sc_finetune_args()
             help = "dose filter for lvl3 regression (e.g. '5.0'; empty = no filter)"
             arg_type = String
         "--sc_lvl3_percell"
-            help = "use per-cell inputs for SC lvl3 instead of pseudo-bulking (PCA targets from PB data)"
+            # help = "use per-cell inputs for SC lvl3 instead of pseudo-bulking (PCA targets from PB data)"
+            help = "no-op (per-cell is now the SC lvl3 default); kept so existing commands still parse"
+            action = :store_true
+        "--sc_lvl3_pseudobulk"
+            help = "pseudo-bulk SC source cells for lvl3 instead of the default per-cell inputs"
             action = :store_true
         # "--data_format"
         #     help = "data format (ignored for SC; kept for CLI compatibility with PB sweep launchers)"

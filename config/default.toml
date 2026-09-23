@@ -48,7 +48,7 @@ lincs_dose = "10"
 tahoe_source_cell = "CVCL_0218"
 tahoe_target_cell = "CVCL_1577"
 tahoe_dose = "5.0"
-sc_lvl3_percell = false
+sc_lvl3_pseudobulk = false
 
 # misc
 wandb_mode = "online"
