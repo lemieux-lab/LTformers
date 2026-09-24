@@ -3,7 +3,8 @@ arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(joinpath(@__DIR__, "../../..", arch_dir))
 using JLD2, Statistics, StatsBase, CairoMakie, LinearAlgebra, Random, DataFrames
 
-df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
+# df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
+df = load("data/tahoe/filtered_pseudobulks_alpha_10000.jld2")["df"]
 expr = hcat(df.expr...)
 fig_vec_dir = "results/tahoe/pb/figures/vectors"
 fig_var_dir = "results/tahoe/pb/figures/variables"
@@ -64,7 +65,9 @@ rank_kendall = Vector{Float32}(undef, n_pairs)
 for k in 1:n_pairs
     σ = view(ranked, :, idx_a[k])
     τ = view(ranked, :, idx_b[k])
-    rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    # rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    # ^ σ, τ are gene ids at each rank (sortperm), so this compares gene index numbers, not gene ranks
+    rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
 end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"

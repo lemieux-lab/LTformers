@@ -17,8 +17,10 @@ mkpath(save_dir)
 
 # loading
 
-tahoe_data_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/data"
-tahoe_meta_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/metadata"
+# tahoe_data_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/data"
+tahoe_data_dir = "data/tahoe/data"
+# tahoe_meta_dir = "/home/muninn/scratch/kaufmanl/CAP/data/Tahoe-100M/metadata"
+tahoe_meta_dir = "data/tahoe/metadata"
 
 # load gene vocabulary (token_id -> gene_symbol)
 gene_vocab = Dict{Int,String}()
@@ -30,7 +32,8 @@ open(joinpath(tahoe_meta_dir, "gene_vocabulary.jsonl")) do f
 end
 
 # load protein-coding gene list and build token filter
-df_coding = CSV.read("/home/muninn/scratch/kaufmanl/CAP/data/protein-coding_gene.txt", DataFrame; delim='\t')
+# df_coding = CSV.read("/home/muninn/scratch/kaufmanl/CAP/data/protein-coding_gene.txt", DataFrame; delim='\t')
+df_coding = CSV.read("data/tahoe/protein-coding_gene.txt", DataFrame; delim='\t')
 coding_symbols = Set(df_coding.symbol)
 coding_tokens = Set(tid for (tid, sym) in gene_vocab if sym in coding_symbols)
 n_coding = length(coding_tokens)
@@ -383,6 +386,31 @@ sc_N = size(sc_expr, 2)
 elapsed = time() - t0
 println("Sampled $sc_N single cells in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
 
+# kendall distance helpers
+# NOTE: corkendall on sortperm output (gene ids at each rank) compares gene index numbers, not gene ranks,
+# so it depends on arbitrary gene numbering and sits at ~0.5 regardless of similarity. use values (or ranks) per gene instead.
+# tau-b on expression values: zeros are ties (no noise tie-breaking needed)
+kendall_dist(a, b) = (1f0 - Float32(corkendall(Float64.(a), Float64.(b)))) / 2f0
+
+# top-k list kendall: genes in the union of both top-k sets; genes outside a cell's top-k tie at the bottom
+function topk_kendall_dist(top_a, top_b, k)
+    genes = union(view(top_a, 1:k), view(top_b, 1:k))
+    pos_a = Dict(g => i for (i, g) in enumerate(view(top_a, 1:k)))
+    pos_b = Dict(g => i for (i, g) in enumerate(view(top_b, 1:k)))
+    # score = k+1 - rank position (higher = more expressed), 0 = not in top-k
+    sa = Float64[k + 1 - get(pos_a, g, k + 1) for g in genes]
+    sb = Float64[k + 1 - get(pos_b, g, k + 1) for g in genes]
+    return (1f0 - Float32(corkendall(sa, sb))) / 2f0
+end
+
+# sanity: identical -> 0, reversed -> 1
+let x = rand(Float32, 100)
+    @assert kendall_dist(x, x) < 1f-6
+    @assert kendall_dist(x, -x) > 1f0 - 1f-6
+    p = sortperm(x, rev=true)
+    @assert topk_kendall_dist(p, p, 50) < 1f-6
+end
+
 # pairwise distances (kendall on ~19K-length vectors is slow, so fewer pairs than pseudobulk)
 # sc_n_pairs = 1_000_000
 sc_n_pairs = 100_000
@@ -408,9 +436,10 @@ end
 
 sc_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
 for k in 1:sc_n_pairs
-    σ = view(sc_ranked, :, sc_idx_a[k])
-    τ = view(sc_ranked, :, sc_idx_b[k])
-    sc_rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    # σ = view(sc_ranked, :, sc_idx_a[k])
+    # τ = view(sc_ranked, :, sc_idx_b[k])
+    # sc_rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    sc_rank_kendall[k] = kendall_dist(view(sc_expr, :, sc_idx_a[k]), view(sc_expr, :, sc_idx_b[k]))
 end
 
 # save distance vectors
@@ -451,16 +480,23 @@ save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall.png", fig)
 
 ### gene overlap analysis — why the blob is diagonal and distances are large
 
-# per-cell library complexity (number of expressed genes)
-n_expressed_per_cell = vec(sum(sc_expr .> 0f0, dims=1))
-println("\n=== library complexity (genes expressed per cell) ===")
-println("  median: $(median(n_expressed_per_cell))  mean: $(round(mean(n_expressed_per_cell), digits=1))  std: $(round(std(n_expressed_per_cell), digits=1))")
-println("  min: $(minimum(n_expressed_per_cell))  max: $(maximum(n_expressed_per_cell))  total genes: $n_coding")
-println("  median sparsity: $(round(1 - median(n_expressed_per_cell)/n_coding, digits=3))")
+# per-cell library complexity (number of detected genes)
+# n_expressed_per_cell = vec(sum(sc_expr .> 0f0, dims=1))
+n_detected_per_cell = vec(sum(sc_expr .> 0f0, dims=1))
+# println("\n=== library complexity (genes expressed per cell) ===")
+println("\n=== library complexity (genes detected per cell) ===")
+# println("  median: $(median(n_expressed_per_cell))  mean: $(round(mean(n_expressed_per_cell), digits=1))  std: $(round(std(n_expressed_per_cell), digits=1))")
+println("  median: $(median(n_detected_per_cell))  mean: $(round(mean(n_detected_per_cell), digits=1))  std: $(round(std(n_detected_per_cell), digits=1))")
+# println("  min: $(minimum(n_expressed_per_cell))  max: $(maximum(n_expressed_per_cell))  total genes: $n_coding")
+println("  min: $(minimum(n_detected_per_cell))  max: $(maximum(n_detected_per_cell))  total genes: $n_coding")
+# println("  median sparsity: $(round(1 - median(n_expressed_per_cell)/n_coding, digits=3))")
+println("  median sparsity: $(round(1 - median(n_detected_per_cell)/n_coding, digits=3))")
 
 # per-pair overlap metrics
-sc_n_expressed_a = Vector{Int}(undef, sc_n_pairs)
-sc_n_expressed_b = Vector{Int}(undef, sc_n_pairs)
+# sc_n_expressed_a = Vector{Int}(undef, sc_n_pairs)
+# sc_n_expressed_b = Vector{Int}(undef, sc_n_pairs)
+sc_n_detected_a = Vector{Int}(undef, sc_n_pairs)
+sc_n_detected_b = Vector{Int}(undef, sc_n_pairs)
 sc_n_shared = Vector{Int}(undef, sc_n_pairs)        # genes nonzero in both
 sc_n_union = Vector{Int}(undef, sc_n_pairs)          # genes nonzero in at least one
 sc_n_only_a = Vector{Int}(undef, sc_n_pairs)         # nonzero only in a
@@ -474,8 +510,10 @@ for k in 1:sc_n_pairs
     nz_b = b .> 0f0
     shared = sum(nz_a .& nz_b)
     union = sum(nz_a .| nz_b)
-    sc_n_expressed_a[k] = sum(nz_a)
-    sc_n_expressed_b[k] = sum(nz_b)
+    # sc_n_expressed_a[k] = sum(nz_a)
+    # sc_n_expressed_b[k] = sum(nz_b)
+    sc_n_detected_a[k] = sum(nz_a)
+    sc_n_detected_b[k] = sum(nz_b)
     sc_n_shared[k] = shared
     sc_n_union[k] = union
     sc_n_only_a[k] = sum(nz_a .& .!nz_b)
@@ -511,7 +549,8 @@ println("    median=$(round(median(frac_from_mismatch), digits=3))  mean=$(round
 
 # save overlap data
 jldsave("$data_vec_dir/sc_overlap_$(sc_n_pairs).jld2";
-    n_expressed_per_cell=n_expressed_per_cell,
+    # n_expressed_per_cell=n_expressed_per_cell,
+    n_detected_per_cell=n_detected_per_cell,
     jaccard=sc_jaccard, n_shared=sc_n_shared, n_union=sc_n_union,
     n_only_a=sc_n_only_a, n_only_b=sc_n_only_b,
     euclid_from_mismatch=sc_euclid_from_mismatch,
@@ -522,11 +561,14 @@ jldsave("$data_vec_dir/sc_overlap_$(sc_n_pairs).jld2";
 begin
     fig_lc = Figure(size=(600, 400))
     ax_lc = Axis(fig_lc[1, 1],
-        xlabel="Number of expressed genes (per cell)",
+        # xlabel="Number of expressed genes (per cell)",
+        xlabel="Number of detected genes (per cell)",
         ylabel="Count",
         xtickformat=values -> [string(Int(round(v))) for v in values])
-    hist!(ax_lc, Float64.(n_expressed_per_cell), bins=100, color=(:black, 0.6))
-    vlines!(ax_lc, [median(n_expressed_per_cell)], color=:red, linewidth=2, linestyle=:dash, label="median=$(Int(median(n_expressed_per_cell)))")
+    # hist!(ax_lc, Float64.(n_expressed_per_cell), bins=100, color=(:black, 0.6))
+    # vlines!(ax_lc, [median(n_expressed_per_cell)], color=:red, linewidth=2, linestyle=:dash, label="median=$(Int(median(n_expressed_per_cell)))")
+    hist!(ax_lc, Float64.(n_detected_per_cell), bins=100, color=(:black, 0.6))
+    vlines!(ax_lc, [median(n_detected_per_cell)], color=:red, linewidth=2, linestyle=:dash, label="median=$(Int(median(n_detected_per_cell)))")
     axislegend(ax_lc, position=:rt)
     display(fig_lc)
 end
@@ -573,7 +615,8 @@ save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_mismatch_frac.png", fig_frac)
 begin
     fig_jc = Figure(size=(600, 500))
     ax_jc = Axis(fig_jc[1, 1],
-        xlabel="Jaccard overlap (expressed gene sets)",
+        # xlabel="Jaccard overlap (expressed gene sets)",
+        xlabel="Jaccard overlap (detected gene sets)",
         ylabel="Cosine distance")
     scatter!(ax_jc,
         Float64.(sc_jaccard[plot_idx]),
@@ -587,7 +630,8 @@ save("$save_dir/sc_$(n_parquets_to_use)_jaccard_vs_cosine.png", fig_jc)
 begin
     fig_je = Figure(size=(600, 500))
     ax_je = Axis(fig_je[1, 1],
-        xlabel="Jaccard overlap (expressed gene sets)",
+        # xlabel="Jaccard overlap (expressed gene sets)",
+        xlabel="Jaccard overlap (detected gene sets)",
         ylabel="Euclidean distance")
     scatter!(ax_je,
         Float64.(sc_jaccard[plot_idx]),
@@ -629,7 +673,8 @@ begin
         color=Float64.(sc_n_shared[plot_idx]),
         colormap=:viridis,
         markersize=3, alpha=0.6)
-    Colorbar(fig_nsh[1, 2], sc4, label="Shared expressed genes")
+    # Colorbar(fig_nsh[1, 2], sc4, label="Shared expressed genes")
+    Colorbar(fig_nsh[1, 2], sc4, label="Shared detected genes")
     display(fig_nsh)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_shared.png", fig_nsh)
@@ -663,9 +708,10 @@ for top_k in [1024, 2048]
 
     tk_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
     for k in 1:sc_n_pairs
-        σ = view(sc_ranked, 1:top_k, sc_idx_a[k])
-        τ = view(sc_ranked, 1:top_k, sc_idx_b[k])
-        tk_rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+        # σ = view(sc_ranked, 1:top_k, sc_idx_a[k])
+        # τ = view(sc_ranked, 1:top_k, sc_idx_b[k])
+        # tk_rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+        tk_rank_kendall[k] = topk_kendall_dist(view(sc_ranked, :, sc_idx_a[k]), view(sc_ranked, :, sc_idx_b[k]), top_k)
     end
 
     local elapsed = time() - t0
@@ -705,6 +751,272 @@ for top_k in [1024, 2048]
         fig
     end
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_top$(top_k).png", fig_cos)
+end
+
+#######################################################################################################################################
+
+### pairwise vector distances — HVG-filtered (global top-1024 genes by variance)
+
+begin
+    hvg_k = 1024
+    gene_vars = vec(var(sc_expr, dims=2))
+    hvg_idx = sortperm(gene_vars, rev=true)[1:hvg_k]
+    sort!(hvg_idx)
+    println("=== Pairwise distances for HVG-$hvg_k (global gene set) ===")
+    local t0 = time()
+
+    hvg_expr_euclidean = Vector{Float32}(undef, sc_n_pairs)
+    hvg_expr_cosine = Vector{Float32}(undef, sc_n_pairs)
+
+    for k in 1:sc_n_pairs
+        a = view(sc_expr, hvg_idx, sc_idx_a[k])
+        b = view(sc_expr, hvg_idx, sc_idx_b[k])
+        hvg_expr_euclidean[k] = sqrt(sum((a .- b).^2))
+        hvg_expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+    end
+
+    hvg_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
+    for k in 1:sc_n_pairs
+        a = view(sc_expr, hvg_idx, sc_idx_a[k])
+        b = view(sc_expr, hvg_idx, sc_idx_b[k])
+        # ra = sortperm(vec(a), rev=true)
+        # rb = sortperm(vec(b), rev=true)
+        # hvg_rank_kendall[k] = (1f0 - Float32(corkendall(ra, rb))) / 2f0
+        hvg_rank_kendall[k] = kendall_dist(a, b)
+    end
+
+    local elapsed = time() - t0
+    println("Done in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
+
+    jldsave("$data_vec_dir/sc_distances_$(sc_n_pairs)_hvg$(hvg_k).jld2";
+        euclidean=hvg_expr_euclidean, cosine=hvg_expr_cosine, kendall=hvg_rank_kendall,
+        idx_a=sc_idx_a, idx_b=sc_idx_b, n_cells=sc_N, n_parquets=n_parquets_to_use, hvg_k=hvg_k, hvg_idx=hvg_idx)
+    println("Saved distance vectors to $data_vec_dir/sc_distances_$(sc_n_pairs)_hvg$(hvg_k).jld2")
+
+    local fig_euc = begin
+        local fig = Figure(size=(600, 500))
+        local ax = Axis(fig[1, 1],
+            xlabel="kendall tau distance",
+            ylabel="euclidean distance",
+            title="HVG-$hvg_k (global)")
+        local rx = (maximum(hvg_rank_kendall) - minimum(hvg_rank_kendall)) / 100
+        local ry = (maximum(hvg_expr_euclidean) - minimum(hvg_expr_euclidean)) / 100
+        local hb = hexbin!(ax, Float64.(hvg_rank_kendall), Float64.(hvg_expr_euclidean), cellsize=(rx, ry), colorscale=log10)
+        Colorbar(fig[1, 2], hb, label="count (log10)")
+        display(fig)
+        fig
+    end
+    save("$save_dir/sc_$(n_parquets_to_use)_euclidean_kendall_hvg$(hvg_k).png", fig_euc)
+
+    local fig_cos = begin
+        local fig = Figure(size=(600, 500))
+        local ax = Axis(fig[1, 1],
+            xlabel="kendall tau distance",
+            ylabel="cosine distance",
+            title="HVG-$hvg_k (global)")
+        local rx = (maximum(hvg_rank_kendall) - minimum(hvg_rank_kendall)) / 100
+        local ry = (maximum(hvg_expr_cosine) - minimum(hvg_expr_cosine)) / 100
+        local hb = hexbin!(ax, Float64.(hvg_rank_kendall), Float64.(hvg_expr_cosine), cellsize=(rx, ry), colorscale=log10)
+        Colorbar(fig[1, 2], hb, label="count (log10)")
+        display(fig)
+        fig
+    end
+    save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_hvg$(hvg_k).png", fig_cos)
+end
+
+#######################################################################################################################################
+
+### model-matched: cosine on HVG-1024 (ETF input) vs kendall on per-cell top-1024 (RTF input), same pairs
+
+begin
+    local tk = load("$data_vec_dir/sc_distances_$(sc_n_pairs)_top1024.jld2")
+    @assert tk["idx_a"] == sc_idx_a && tk["idx_b"] == sc_idx_b
+    mm_rank_kendall = tk["kendall"]
+
+    local fig = Figure(size=(600, 500))
+    local ax = Axis(fig[1, 1],
+        xlabel="Kendall tau distance (top-1024)",
+        ylabel="Cosine distance (HVG-$hvg_k)",
+        title="Model-matched inputs")
+    local rx = (maximum(mm_rank_kendall) - minimum(mm_rank_kendall)) / 100
+    local ry = (maximum(hvg_expr_cosine) - minimum(hvg_expr_cosine)) / 100
+    local hb = hexbin!(ax, Float64.(mm_rank_kendall), Float64.(hvg_expr_cosine), cellsize=(rx, ry), colorscale=log10)
+    Colorbar(fig[1, 2], hb, label="Count (log10)")
+    display(fig)
+    save("$save_dir/sc_$(n_parquets_to_use)_cosine_hvg$(hvg_k)_kendall_top1024.png", fig)
+    println("model-matched spearman(cosine, kendall) = $(round(corspearman(Float64.(hvg_expr_cosine), Float64.(mm_rank_kendall)), digits=3))")
+end
+
+#######################################################################################################################################
+
+### depth subsampling — is cosine-Jaccard relationship a depth property?
+# subsample high-depth cells to low depth (multinomial resampling of UMI counts)
+# then recompute cosine distance and Jaccard to see if the relationship appears
+
+# begin
+#     println("\n=== Depth subsampling test ===")
+#     target_depths = [500, 1000, 2000, 5000]
+#
+#     # use raw counts (not log-normalized) for subsampling — need to re-read a subset
+#     # instead, approximate by exponentiating log-normalized values: raw ≈ total * (expm1(x) / 10000)
+#     # but we don't have total counts. simpler: use the already-loaded sc_expr and subsample by zeroing genes
+#
+#     # alternative approach: for each cell, keep only a random fraction of detected genes
+#     # this simulates reduced detection sensitivity (low depth → fewer genes detected)
+#
+#     n_sub_pairs = min(sc_n_pairs, 50_000)
+#     sub_idx_a = sc_idx_a[1:n_sub_pairs]
+#     sub_idx_b = sc_idx_b[1:n_sub_pairs]
+#
+#     for frac_keep in [0.1, 0.2, 0.5, 1.0]
+#         println("  frac_keep=$frac_keep")
+#         sub_cosine = Vector{Float32}(undef, n_sub_pairs)
+#         sub_jaccard = Vector{Float32}(undef, n_sub_pairs)
+#
+#         for k in 1:n_sub_pairs
+#             a = sc_expr[:, sub_idx_a[k]]
+#             b = sc_expr[:, sub_idx_b[k]]
+#
+#             if frac_keep < 1.0
+#                 # subsample: randomly zero out (1-frac_keep) of detected genes
+#                 det_a = findall(a .> 0f0)
+#                 det_b = findall(b .> 0f0)
+#                 n_drop_a = round(Int, length(det_a) * (1 - frac_keep))
+#                 n_drop_b = round(Int, length(det_b) * (1 - frac_keep))
+#                 drop_a = sample(det_a, n_drop_a, replace=false)
+#                 drop_b = sample(det_b, n_drop_b, replace=false)
+#                 a = copy(a); a[drop_a] .= 0f0
+#                 b = copy(b); b[drop_b] .= 0f0
+#             end
+#
+#             sub_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+#             nz_a = a .> 0f0
+#             nz_b = b .> 0f0
+#             shared = sum(nz_a .& nz_b)
+#             union = sum(nz_a .| nz_b)
+#             sub_jaccard[k] = union > 0 ? Float32(shared / union) : 0f0
+#         end
+#
+#         local fig = Figure(size=(600, 500))
+#         local ax = Axis(fig[1, 1],
+#             xlabel="Jaccard overlap (detected gene sets)",
+#             ylabel="cosine distance",
+#             title="frac_keep=$frac_keep ($(frac_keep < 1.0 ? "subsampled" : "original"))")
+#         local rx = (maximum(sub_jaccard) - minimum(sub_jaccard) + 1f-6) / 100
+#         local ry = (maximum(sub_cosine) - minimum(sub_cosine) + 1f-6) / 100
+#         hexbin!(ax, Float64.(sub_jaccard), Float64.(sub_cosine), cellsize=(rx, ry), colorscale=log10)
+#         display(fig)
+#         save("$save_dir/sc_$(n_parquets_to_use)_depth_subsample_frac$(frac_keep).png", fig)
+#         println("    cosine: median=$(round(median(sub_cosine), digits=4))  jaccard: median=$(round(median(sub_jaccard), digits=4))")
+#     end
+# end
+# ^ zeroing a uniform fraction of detected genes in sc cells keeps both arms single-cell, so it can't separate
+#   depth from single-cell effects (and real low depth drops lowly expressed genes first, not uniformly)
+
+# instead: build high-depth pseudo-bulks from raw sc counts (cell line × drug × sample), then downsample their
+# UMIs to sc-like depths. if thinned pseudo-bulks reproduce the sc cosine-jaccard pattern -> depth property,
+# if not -> single-cell specific
+
+begin
+    println("\n=== Depth subsampling test (pseudo-bulk → sc depth) ===")
+    n_depth_parquets = 20
+    min_cells_per_pb = 30
+    depth_parquets = parquet_files[sort(sample(1:n_parquets, min(n_depth_parquets, n_parquets), replace=false))]
+
+    pb_sums = Dict{Tuple{String,String,String},Vector{Float32}}()
+    pb_ncells = Dict{Tuple{String,String,String},Int}()
+    sc_totals = Float32[]   # raw UMIs per cell (for sc median depth)
+    for parquet_file in ProgressBar(depth_parquets)
+        parquet_path = joinpath(tahoe_data_dir, parquet_file)
+        parquet = read_parquet(parquet_path)
+        meta = pq.read_table(parquet_path, columns=["drug", "sample", "cell_line_id"])
+        drugs = [string(x) for x in meta.column("drug").to_pylist()]
+        samples = [string(x) for x in meta.column("sample").to_pylist()]
+        cls = [string(x) for x in meta.column("cell_line_id").to_pylist()]
+        for ci in 1:parquet.n_cells
+            raw = cell_to_raw(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
+            push!(sc_totals, sum(raw))
+            key = (cls[ci], drugs[ci], samples[ci])
+            acc = get!(() -> zeros(Float32, n_coding), pb_sums, key)
+            acc .+= raw
+            pb_ncells[key] = get(pb_ncells, key, 0) + 1
+        end
+    end
+    pb_keys = [k for k in keys(pb_sums) if pb_ncells[k] >= min_cells_per_pb]
+    pb_raw = reduce(hcat, [pb_sums[k] for k in pb_keys])
+    pb_depths = vec(sum(pb_raw, dims=1))
+    sc_median_depth = round(Int, median(sc_totals))
+    println("  $(length(pb_keys)) pseudo-bulks (≥$min_cells_per_pb cells), median depth $(round(Int, median(pb_depths))) UMIs")
+    println("  sc median depth: $sc_median_depth UMIs")
+
+    # same log-normalization as cell_to_dense
+    lognorm(v) = (t = sum(v); t > 0 ? Float32.(ifelse.(v .> 0, log1p.(10000f0 .* v ./ t), 0f0)) : Float32.(v))
+
+    # multinomial downsampling of a raw count vector to `depth` UMIs
+    function downsample_counts(v, depth)
+        out = zeros(Float32, length(v))
+        depth >= sum(v) && return Float32.(v)
+        for g in sample(1:length(v), Weights(Float64.(v)), depth, replace=true)
+            out[g] += 1f0
+        end
+        return out
+    end
+
+    function cos_jac(X, ia, ib)
+        cosv = Vector{Float32}(undef, length(ia))
+        jacv = Vector{Float32}(undef, length(ia))
+        for k in eachindex(ia)
+            a = view(X, :, ia[k]); b = view(X, :, ib[k])
+            cosv[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+            nz_a = a .> 0f0; nz_b = b .> 0f0
+            u = sum(nz_a .| nz_b)
+            jacv[k] = u > 0 ? Float32(sum(nz_a .& nz_b) / u) : 0f0
+        end
+        return cosv, jacv
+    end
+
+    n_pb = length(pb_keys)
+    n_depth_pairs = min(20_000, n_pb * (n_pb - 1) ÷ 2)
+    dp_a = rand(1:n_pb, n_depth_pairs)
+    dp_b = rand(1:n_pb, n_depth_pairs)
+    keep_dp = dp_a .!= dp_b
+    dp_a, dp_b = dp_a[keep_dp], dp_b[keep_dp]
+
+    depth_conditions = vcat([("full depth", 0)], [("$d UMIs", d) for d in sort(unique([500, 1000, 2000, 5000, sc_median_depth]))])
+    depth_results = Dict{String,Tuple{Vector{Float32},Vector{Float32}}}()
+    for (label, d) in depth_conditions
+        X = d == 0 ? reduce(hcat, [lognorm(view(pb_raw, :, j)) for j in 1:n_pb]) :
+                     reduce(hcat, [lognorm(downsample_counts(view(pb_raw, :, j), d)) for j in 1:n_pb])
+        cosv, jacv = cos_jac(X, dp_a, dp_b)
+        depth_results[label] = (cosv, jacv)
+        println("  $(rpad(label, 12)) median detected=$(round(Int, median(vec(sum(X .> 0f0, dims=1)))))  " *
+                "cosine median=$(round(median(cosv), digits=4))  jaccard median=$(round(median(jacv), digits=4))  " *
+                "spearman(jac, cos)=$(round(corspearman(Float64.(jacv), Float64.(cosv)), digits=3))")
+    end
+    println("  sc native     median detected=$(round(Int, median(n_detected_per_cell)))  " *
+            "spearman(jac, cos)=$(round(corspearman(Float64.(sc_jaccard), Float64.(sc_expr_cosine)), digits=3))")
+
+    # panels: pseudo-bulk at each depth + sc native for reference
+    local panels = vcat([(l, depth_results[l]...) for (l, _) in depth_conditions],
+                        [("Single-cell (native)", sc_expr_cosine, sc_jaccard)])
+    local fig = Figure(size=(320 * length(panels), 340))
+    for (p, (label, cosv, jacv)) in enumerate(panels)
+        local ax = Axis(fig[1, p], xlabel="Jaccard overlap (detected genes)", ylabel=(p == 1 ? "Cosine distance" : ""),
+                        title=(p < length(panels) ? "Pseudo-bulk, $label" : label), limits=(0, 1, nothing, nothing))
+        local ry = (maximum(cosv) - minimum(cosv) + 1f-6) / 60
+        hexbin!(ax, Float64.(jacv), Float64.(cosv), cellsize=(1 / 60, ry), colorscale=log10)
+    end
+    display(fig)
+    save("$save_dir/sc_$(n_parquets_to_use)_depth_downsample_pb.png", fig, px_per_unit=2)
+
+    # secondary: within sc, does the relationship shift with native depth? (bin pairs by mean detected genes)
+    local pair_det = (n_detected_per_cell[sc_idx_a] .+ n_detected_per_cell[sc_idx_b]) ./ 2
+    local qs = quantile(pair_det, [0, 1/3, 2/3, 1])
+    for i in 1:3
+        local m = (pair_det .>= qs[i]) .& (pair_det .<= qs[i+1])
+        println("  sc depth tertile $i (detected $(round(Int, qs[i]))–$(round(Int, qs[i+1]))): " *
+                "spearman(jac, cos)=$(round(corspearman(Float64.(sc_jaccard[m]), Float64.(sc_expr_cosine[m])), digits=3))")
+    end
 end
 
 #######################################################################################################################################

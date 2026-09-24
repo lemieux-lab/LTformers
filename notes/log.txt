@@ -1852,7 +1852,9 @@ a2
                         5. ASC → HT29 — 2499 cmpd, id_r=0.028, lin_r=0.352, mlp_r=0.357, R²=0.118
                         6. SKB → A549 — 2103 cmpd, id_r=0.099, lin_r=0.399, mlp_r=0.416, R²=0.127
                     -- SKB -> NPC
-                        -- RUNNING sweep w/ longer steps for emlp (1)
+                        -- RUNNING sweep w/ longer steps for emlp 
+                        -- done, located at results/lincs/finetune/no_pretrain/lvl3/emlp/2026-09-23_19-34
+                        -- r is 0.5 not bad i think?
 a1 (LINCS)
 -- baselines
     -- RUNNING etf, rtf lvl1, lvl2 sweeps (4)
@@ -1914,3 +1916,71 @@ a2 (TAHOE)
         -- still need for sc, lvl3, and transformer npt of linccs
 -- !graphs to make if results finish on time:
     -- cell-line pairs of MLP vs identity vs linear for tahoe and lincs
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 24 2026 ###
+
+-- from seb meeting:
+    -- extend sparsity analyses beyond zero counts:
+        -- running sc entvec for comparsion.jl (see below)
+    --- for lvl3 selection:
+        -- RUNNING cl choices eval on Tahoe (1)
+        -- when looking at the MCF7 and PC3 performance, we see that for 1k steps:
+            -- identity = 0.885, lin reg = 0.902, and mlp_r=0.921
+
+-- from lab meeting:
+    -- best-epoch error plots instead of final model error plots updated in pre-training scripts (pb only)
+        -- no need for sc; best_epoch makes no sense if theres legit like 2 epochs being run
+        -- can re-run pb or just leave tbh, the model is properly saved
+    -- analyses figs:
+        -- lincs confusion matrix to see which classes are actually doing worse for lvl1
+            -- later issue
+        -- comparison of rtf vs logistic regressioin
+            -- rtf might be under-trained?
+            -- log/mlp are not truncated or narrowed down to 1024, this might be why theyre doing so well???
+            -- re-run truncated/narrowed down versions of it on lvl1/lvl2
+                -- already did 1024 HVGs for elog and emlp, just need for rlog and rmlp
+                -- RUNNING rlog, rmlp lvl1, lvl2 (2, cluster8)
+            -- re-run rtf with longer # steps?
+                -- RUNNING rtf w/ 40k steps on lvl2 (1, cluster8)
+    -- HVG-filtered and top-k-filtered distances for sc entvec.jl
+    -- depth subsampling in entvec.jl
+        -- RUNNING entvec.jl and t_vec.jl and l_vec.jl (3, cluster8)
+
+a1 (LINCS)
+-- baselines
+    -- RUNNING etf, rtf lvl1, lvl2 sweeps (4)
+    -- !TODO baselines for lvl3
+-- pre-train 
+    -- TODO sweeps
+-- fine-tune
+    -- waiting on pre-train
+
+a2 (TAHOE)
+-- baselines
+    -- pb
+        -- TODO emlp, rmlp, etf, rtf lvl3
+        -- ?TODO re-runs of emlp, rmlp, etf, rtf?
+    -- sc
+        -- ?TODO re-runs of elog, rlog lvl1, lvl2?
+        -- TODO sweeps of lvl1, lvl2, lvl3
+            -- !REVIEW rmlp, emlp, rtf, etf on lvl1 sweeps (4, CQ)
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING mlm rtf long run (1)
+            -- RUNNING redo sweeps of rtf, etf lrecon (2)
+                -- working, but need higher ema_decay range
+                -- currently re-running!
+        -- TODO sweeps
+            -- RUNNING mlm rtf, lrecon rtf, lrecon etf (3, CQ)
+                -- mlm rtf again w/ different range: lr=(0.001,0.01)
+                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+        -- TODO good runs
+-- fine-tune
+    -- pb
+        -- TODO sweeps
+    -- sc
+        -- waiting on pre-train

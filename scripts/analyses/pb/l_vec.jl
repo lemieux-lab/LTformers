@@ -67,7 +67,9 @@ rank_kendall = Vector{Float32}(undef, n_pairs)
 for k in 1:n_pairs
     σ = view(ranked, :, idx_a[k])
     τ = view(ranked, :, idx_b[k])
-    rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    # rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
+    # ^ σ, τ are gene ids at each rank (sortperm), so this compares gene index numbers, not gene ranks
+    rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
 end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
