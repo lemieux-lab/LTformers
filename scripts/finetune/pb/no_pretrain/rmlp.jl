@@ -61,6 +61,20 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes,
            inverse_ranks_fn=inverse_ranks)
 
+# rank_top_k: give rlog/rmlp the same info as rtf (only each sample's top-k genes by rank)
+# X = rank / n_genes (top gene ≈ 0), so genes outside the top-k tie at (k+1) / n_genes
+rank_top_k = something(get(config, "rank_top_k", 0), 0)
+model_tag = config["modeltype"]
+if rank_top_k > 0 && !is_regression
+    cutoff = Float32(rank_top_k) / Float32(d.n_genes)
+    bottom = Float32(rank_top_k + 1) / Float32(d.n_genes)
+    for X in (d.X_train, d.X_val, d.X_test)
+        X[X .> cutoff] .= bottom
+    end
+    global model_tag = "$(config["modeltype"])_topk"
+    println("rank_top_k: kept top-$rank_top_k ranks per sample, rest tied at bottom → saving as $model_tag")
+end
+
 # identity baseline for lvl3
 # id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
 #     identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
@@ -92,12 +106,14 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
 # save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "rmlp", timestamp)
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
