@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/pretrain/pb/wb/sweep_lrecon_etf.yaml
-# run_sweep gh18_sbatch TPB_lr_etf serena-chan-/PB-PT-Aug/hjb32a16
+# run_sweep gh18_sbatch TPB_lr_etf serena-chan-/PB-PT-Aug/311bdwu1
 
 program: scripts/pretrain/pb/lrecon.jl
 project: PB-PT-Aug
@@ -49,7 +49,7 @@ parameters:
     min: 0.8
     # max: 0.99
     # max: 0.95
-    max: 0.999
+    max: 0.9999
 early_terminate:
   type: hyperband
   min_iter: 3

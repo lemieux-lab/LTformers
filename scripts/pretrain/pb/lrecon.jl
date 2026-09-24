@@ -252,6 +252,16 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     # test eval (final epoch only)
     is_last = is_last || done
+
+    # reload best checkpoint for test eval
+    if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
+        best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
+        model_cpu = cpu(model)
+        Flux.loadmodel!(model_cpu, best_state)
+        global model = fix_gpu_dropout(cu(model_cpu))
+        println("reloaded best model (epoch $best_epoch) for test eval")
+    end
+
     eval_losses = Float32[]
 
     if is_last
@@ -332,6 +342,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         mkpath(joinpath(save_dir, "best"))
         # log_model(ema_model, joinpath(save_dir, "best"), config)
         log_model(model, joinpath(save_dir, "best"), config)
+        mkpath(joinpath(save_dir, "best", "ema"))
+        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
     end
 end
 
@@ -339,11 +351,20 @@ end
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss";
          val_losses=val_losses)
 
-pred_matrix = reduce(hcat, saved_preds)
-target_matrix = reduce(hcat, saved_targets)
+# pred_matrix = reduce(hcat, saved_preds)
+# target_matrix = reduce(hcat, saved_targets)
+# jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2");
+#     preds=pred_matrix, targets=target_matrix, positions=saved_positions,
+#     target_variances=target_variances)
+# cap diagnostics to avoid multi-GB files (sep24figs uses 200k tokens, >=100 per position)
+MAX_DIAG_TOKENS = 250_000
+diag_idx = length(saved_preds) > MAX_DIAG_TOKENS ?
+    sort(randperm(length(saved_preds))[1:MAX_DIAG_TOKENS]) : collect(1:length(saved_preds))
+pred_matrix = reduce(hcat, saved_preds[diag_idx])
+target_matrix = reduce(hcat, saved_targets[diag_idx])
 jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2");
-    preds=pred_matrix, targets=target_matrix, positions=saved_positions,
-    target_variances=target_variances)
+    preds=pred_matrix, targets=target_matrix, positions=saved_positions[diag_idx],
+    target_variances=target_variances, n_total_tokens=length(saved_preds))
 
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
                     "mean embedding MSE", "per_gene_error";
@@ -353,6 +374,8 @@ plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir
 
 # log_model(ema_model, save_dir, config)
 log_model(model, save_dir, config)
+mkpath(joinpath(save_dir, "ema"))
+log_model(ema_model, joinpath(save_dir, "ema"), config)  # teacher, needed to rebuild lrecon targets
 log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,

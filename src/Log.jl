@@ -77,9 +77,10 @@ function log_info(; train_indices,
         jldsave(joinpath(save_dir, "masked_test_data.jld2");
                 X = X_test_masked, y = y_test_masked)
     end
-    if !isnothing(X_test)
-        jldsave(joinpath(save_dir, "test_data.jld2"); X = X_test)
-    end
+    # test_data.jld2 no longer saved: X_test = X[:, test_indices] is rebuildable from indices.jld2
+    # if !isnothing(X_test)
+    #     jldsave(joinpath(save_dir, "test_data.jld2"); X = X_test)
+    # end
 end
 
 const _param_groups = [

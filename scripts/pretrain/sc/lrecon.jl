@@ -285,6 +285,16 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     # test eval (final epoch only)
     is_last = (epoch == n_total_epochs) || done
+
+    # reload best checkpoint for test eval
+    if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
+        best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
+        model_cpu = cpu(model)
+        Flux.loadmodel!(model_cpu, best_state)
+        global model = fix_gpu_dropout(cu(model_cpu))
+        println("reloaded best model (epoch $best_epoch) for test eval")
+    end
+
     eval_losses = Float32[]
 
     if is_last
@@ -446,6 +456,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         mkpath(joinpath(save_dir, "best"))
         # log_model(ema_model, joinpath(save_dir, "best"), config)
         log_model(model, joinpath(save_dir, "best"), config)
+        mkpath(joinpath(save_dir, "best", "ema"))
+        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
     end
 end
 
@@ -481,6 +493,8 @@ end
 
 # log_model(ema_model, save_dir, config)
 log_model(model, save_dir, config)
+mkpath(joinpath(save_dir, "ema"))
+log_model(ema_model, joinpath(save_dir, "ema"), config)  # teacher, needed to rebuild lrecon targets
 
 # save shard split for finetune reuse
 jldsave(joinpath(save_dir, "shard_split.jld2");

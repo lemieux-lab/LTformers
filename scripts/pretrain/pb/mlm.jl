@@ -202,6 +202,16 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     # test eval (final epoch only)
     is_last = is_last || done
+
+    # reload best checkpoint for test eval
+    if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
+        best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
+        model_cpu = cpu(model)
+        Flux.loadmodel!(model_cpu, best_state)
+        global model = fix_gpu_dropout(cu(model_cpu))
+        println("reloaded best model (epoch $best_epoch) for test eval")
+    end
+
     eval_losses = Float32[]
     epoch_rank_errors = Int[]
     epoch_preds = Int[]

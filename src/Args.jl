@@ -193,6 +193,9 @@ function load_finetune_args()
         "--seed"
             help = "random seed for reproducibility"
             arg_type = Int
+        "--rank_top_k"
+            help = "rlog/rmlp only: keep each sample's top-k ranks, tie the rest at the bottom (0 = off; matches rtf input info)"
+            arg_type = Int
     end
     return parse_args(s)
 end
