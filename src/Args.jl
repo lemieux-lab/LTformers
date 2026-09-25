@@ -264,6 +264,12 @@ function load_sc_finetune_args()
         "--seed"
             help = "random seed for reproducibility"
             arg_type = Int
+        # "--n_eval_shards"
+        #     help = "number of val/test shards to evaluate (0 = all)"
+        #     arg_type = Int
+        "--ft_eval_shards"
+            help = "SC finetune: number of val/test shards to evaluate (0 = all); separate from pretrain n_eval_shards (default.toml = 10)"
+            arg_type = Int
         # -- SC-specific args --
         "--data_dir"
             help = "path to Tahoe-100M parquet shard directory"

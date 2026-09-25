@@ -32,7 +32,8 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
 # SC data loading
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])

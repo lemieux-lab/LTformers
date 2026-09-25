@@ -78,7 +78,8 @@ X_masked_etf = Matrix{Float32}(undef, top_k, config["batch_size"])
 corrupt_mask_buf = falses(top_k, config["batch_size"])
 
 # save dir
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")

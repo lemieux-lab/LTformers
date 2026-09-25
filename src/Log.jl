@@ -91,7 +91,8 @@ const _param_groups = [
         "n_hvg", "top_k", "n_eval_shards", "subset_shards", "subset_ratio", "max_steps",
         "lr", "drop_prob", "mask_ratio", "ema_decay",
     ],
-    "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "label_path"],
+    # "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "label_path"],
+    "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "ft_eval_shards", "label_path"],
     "# lvl3 references/targets" => ["source_cell", "target_cell", "target_gene"],
     "# misc" => ["wandb_mode", "additional_notes"],
 ]

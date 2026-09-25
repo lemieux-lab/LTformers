@@ -95,7 +95,8 @@ X_masked_etf = Matrix{Float32}(undef, seq_len, config["batch_size"])
 y_masked_etf = Matrix{Int32}(undef, seq_len, config["batch_size"])
 
 # save dir
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "mlm", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")

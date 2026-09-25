@@ -33,7 +33,8 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
 # data — SC shard loading
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
@@ -93,6 +94,15 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            actual_modeltype=config["modeltype"],
                            identity_baseline_fn=identity_baseline)
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+
+# cap val/test eval to first ft_eval_shards shards (0 = all), same subset for every run
+# n_eval = something(get(config, "n_eval_shards", 0), 0)  # inherited default.toml pretrain value (10)
+n_eval = something(get(config, "ft_eval_shards", 0), 0)
+if is_streaming
+    val_paths  = n_eval > 0 ? d.val_shard_paths[1:min(n_eval, length(d.val_shard_paths))]   : d.val_shard_paths
+    test_paths = n_eval > 0 ? d.test_shard_paths[1:min(n_eval, length(d.test_shard_paths))] : d.test_shard_paths
+    println("eval shards: val=$(length(val_paths))/$(length(d.val_shard_paths)) test=$(length(test_paths))/$(length(d.test_shard_paths))")
+end
 
 id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
 
@@ -220,8 +230,10 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
-        println("  epoch $epoch: val eval ($(length(d.val_shard_paths)) shards)"); flush(stdout)
-        for (vi, shard_path) in enumerate(d.val_shard_paths)
+        # println("  epoch $epoch: val eval ($(length(d.val_shard_paths)) shards)"); flush(stdout)
+        println("  epoch $epoch: val eval ($(length(val_paths)) shards)"); flush(stdout)
+        # for (vi, shard_path) in enumerate(d.val_shard_paths)
+        for (vi, shard_path) in enumerate(val_paths)
             cell_indices, cell_labels = d.val_shard_map[shard_path]
             batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                    token_to_idx, n_coding, top_k,
@@ -240,7 +252,8 @@ for epoch in ProgressBar(1:n_total_epochs)
                 end
                 CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
             end
-            if vi % 200 == 0; println("    val shard $vi/$(length(d.val_shard_paths))"); flush(stdout); end
+            # if vi % 200 == 0; println("    val shard $vi/$(length(d.val_shard_paths))"); flush(stdout); end
+            if vi % 200 == 0; println("    val shard $vi/$(length(val_paths))"); flush(stdout); end
         end
     else
         for s in 1:config["batch_size"]:size(d.X_val, 2)
@@ -265,8 +278,10 @@ for epoch in ProgressBar(1:n_total_epochs)
     if is_last
         eval_losses = Float32[]
         if is_streaming
-            println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
-            for (ti, shard_path) in enumerate(d.test_shard_paths)
+            # println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
+            println("  test eval ($(length(test_paths)) shards)"); flush(stdout)
+            # for (ti, shard_path) in enumerate(d.test_shard_paths)
+            for (ti, shard_path) in enumerate(test_paths)
                 cell_indices, cell_labels = d.test_shard_map[shard_path]
                 batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                        token_to_idx, n_coding, top_k,
@@ -289,7 +304,8 @@ for epoch in ProgressBar(1:n_total_epochs)
                     end
                     CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
                 end
-                if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
+                # if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
+                if ti % 200 == 0; println("    test shard $ti/$(length(test_paths))"); flush(stdout); end
             end
         else
             for s in 1:config["batch_size"]:size(d.X_test, 2)

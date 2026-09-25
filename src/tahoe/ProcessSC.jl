@@ -72,7 +72,8 @@ function build_batch_rtf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
         # dense_bufs = [Vector{Float32}(undef, n_coding) for _ in 1:nt]
         @threads for j in 1:bs
             # per-iteration dense buffer (76KB each, avoids threadid() issues in Channel tasks)
-            dense = Vector{Float32}(undef, n_coding)
+            # dense = Vector{Float32}(undef, n_coding)
+            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
             gene_ids, _ = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
                                                  cell_indices[j], token_to_idx, n_coding, top_k)
             batch[:, j] = gene_ids
@@ -98,7 +99,8 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     if nt > 1 && bs >= 4
         # dense_bufs = [Vector{Float32}(undef, n_coding) for _ in 1:nt]
         @threads for j in 1:bs
-            dense = Vector{Float32}(undef, n_coding)
+            # dense = Vector{Float32}(undef, n_coding)
+            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
             gene_ids, expr_vals = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
                                                          cell_indices[j], token_to_idx, n_coding, top_k)
             batch_ids[:, j] = gene_ids
@@ -129,7 +131,8 @@ function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     nt = nthreads()
     if nt > 1 && bs >= 4
         @threads for j in 1:bs
-            dense = Vector{Float32}(undef, n_coding)
+            # dense = Vector{Float32}(undef, n_coding)
+            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
             cell_to_dense_flat!(dense, genes_flat, offsets, expr_flat,
                                 cell_indices[j], token_to_idx)
             hvg_expr = dense[hvg_idx]
@@ -166,6 +169,7 @@ function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::
                             hvg_idx::Union{Vector{Int}, Nothing} = nothing)
     println("  loading shard: $(basename(path))")
     shard = load_shard_fn(path)
+    GC.gc()  # free PyCall temporaries on this thread; otherwise finalizers can run in @threads workers without the GIL
     println("  loaded $(shard.n_cells) cells, building batches...")
     cell_order = shuffle(1:shard.n_cells)
 

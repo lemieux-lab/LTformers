@@ -2036,7 +2036,13 @@ a2 (TAHOE)
     -- sc
         -- ?TODO re-runs of elog, rlog lvl1, lvl2?
         -- TODO sweeps of lvl1, lvl2, lvl3
-            -- !REVIEW rmlp, emlp, rtf, etf on lvl1 sweeps (4, CQ)
+            -- reviewed rmlp, emlp, rtf, etf on lvl1 sweeps
+                -- issue w/ memory + over-runnign scrpts and too many eval parquets (val and test)
+                -- thus, implemented a cap of 300 for val and 300 for test (at least for the sweeps)
+                -- also cleaned the .sh files for slurm on CQ
+                -- do i even need a seed??
+            -- should be ok to re-run sweeps
+            -- RUNNING 
 -- pre-train
     -- pb
         -- TODO good runs
@@ -2047,6 +2053,9 @@ a2 (TAHOE)
                 -- mlm rtf again w/ different range: lr=(0.001,0.01)
                 -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
                 -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+            -- need to re-run lrecon again bc files were changed (normalization)
+                -- also did fixes on processSC.jl so no data race
+            -- nan inputs on mlm etf? maybe need to re-run this, checking:
         -- TODO good runs
 -- fine-tune
     -- pb
