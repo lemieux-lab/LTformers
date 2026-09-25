@@ -51,6 +51,9 @@ if n_hvg > 0 && n_hvg < size(data_expr, 1)
     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
     println("HVG filter: $(n_orig) → $(n_hvg) genes")
 end
+# --n_hvg 0 = all genes -> save under <modeltype>_full/ so it doesn't mix with the default hvg-1024 runs
+model_tag = n_hvg == 0 ? "$(config["modeltype"])_full" : config["modeltype"]
+n_hvg == 0 && println("n_hvg = 0: using all $(size(data_expr, 1)) genes → saving as $model_tag")
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -90,12 +93,14 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
 # save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "emlp", timestamp)
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train

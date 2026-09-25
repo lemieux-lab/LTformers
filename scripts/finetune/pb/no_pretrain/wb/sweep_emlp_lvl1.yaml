@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_emlp_lvl1.yaml
-# run_sweep gh18_sbatch L_emlp_lvl1 serena-chan-/PB-FT-Aug/oxl1qe9x
+# run_sweep gh18_sbatch L_emlp_lvl1 serena-chan-/PB-FT-Aug/yjjw0k1n
 
 program: scripts/finetune/pb/no_pretrain/emlp.jl
 project: PB-FT-Aug
@@ -17,18 +17,18 @@ parameters:
     value: "lvl1"
   data_format:
     value: "lincs"
-  # wandb_mode: follows local.toml
-    # value: "online"
   n_epochs:
     value: 0
   max_ft_steps:
     value: 40000
   batch_size:
     value: 100
+  # n_hvg:
+  #   value: 0
   # swept params
   lr:
     distribution: log_uniform_values
-    min: 0.00005
+    min: 0.000000005
     max: 0.01
   drop_prob:
     min: 0.01

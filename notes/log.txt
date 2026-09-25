@@ -1984,3 +1984,72 @@ a2 (TAHOE)
         -- TODO sweeps
     -- sc
         -- waiting on pre-train
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 25 2026 ###
+
+-- from recent meetings:
+    -- distance vectors
+        -- fixes:
+            -- extend sparsity analyses beyond zero counts
+            -- for sc, HVG-filtered, top-k-filtered, and combined-filtered versions
+            -- downsample pseudo-bulk to single-cell depth and compare cosine and jaccard at diff depth
+        -- RUNNING entvec.jl, t_vec.jl (2)
+        -- finished pb ent.jl, l_vec.jl
+    -- lvl3 cl selection
+        -- RUNNING cl choices eval on Tahoe (1)
+    -- results
+        -- fixes:
+            -- error plots on best-epoch model instead of final model in pb pt
+            -- lincs confusion matrix to see which classes are actually doing worse in lvl1
+            -- npt-rtf vs logistic regression
+        -- for baselines, need:
+            -- longer runs of elog and rlog lvl2 on both tahoe and lincs
+                -- technically it would make sense to have both rlog, rmlp, elog, emlp on 1. full 19k genes, 2. 1024 genes and maybe 3. 2048 genes
+                -- RUNNING rlog, elog on full 19k, 1024 for both lvl1 and lvl2 (10)
+                -- PENDING rmlp sweep on top-1024, emlp sweep on full for both lvl1 and lvl2 tahoe (4)
+            -- lincs emlp, rmlp sweep on lvl1 and lvl2 w/ wider lr ranges
+                -- PENDING emlp, rmlp sweep on lvl1, lvl2 lincs (4)
+            -- tahoe lvl2 etf and rtf for longer steps
+                -- RUNNING for 40k steps (2)
+
+a1 (LINCS)
+-- baselines
+    -- RUNNING etf, rtf lvl2 sweeps (2)
+        -- done etf, rtf lvl1 sweeps
+            -- etf best: etf_nopt_lincs_lvl1_2026-09-24_17-16
+                -- lr=0.00078, drop_prob=0.074
+            -- rtf best: rtf_nopt_lincs_lvl1_2026-09-24_06-53
+                -- lr=0.001, drop_prob=0.17
+    -- !TODO baselines for lvl3
+-- pre-train 
+    -- TODO sweeps
+-- fine-tune
+    -- waiting on pre-train
+
+a2 (TAHOE)
+-- baselines
+    -- pb
+        -- TODO emlp, rmlp, etf, rtf lvl3
+        -- ?TODO re-runs of emlp, rmlp, etf, rtf?
+    -- sc
+        -- ?TODO re-runs of elog, rlog lvl1, lvl2?
+        -- TODO sweeps of lvl1, lvl2, lvl3
+            -- !REVIEW rmlp, emlp, rtf, etf on lvl1 sweeps (4, CQ)
+-- pre-train
+    -- pb
+        -- TODO good runs
+            -- RUNNING mlm rtf long run (1)
+            -- RUNNING redo sweeps of rtf, etf lrecon (2)
+        -- TODO sweeps
+            -- RUNNING mlm rtf, lrecon rtf, lrecon etf (3, CQ)
+                -- mlm rtf again w/ different range: lr=(0.001,0.01)
+                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
+                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+        -- TODO good runs
+-- fine-tune
+    -- pb
+        -- TODO sweeps
+    -- sc
+        -- waiting on pre-train

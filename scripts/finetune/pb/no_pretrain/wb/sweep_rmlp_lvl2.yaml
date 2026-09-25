@@ -1,5 +1,5 @@
 # .venv-x86_64/bin/wandb sweep scripts/finetune/pb/no_pretrain/wb/sweep_rmlp_lvl2.yaml
-# run_sweep gh18_sbatch L_rmlp_lvl2 serena-chan-/PB-FT-Aug/jwoxxcq4
+# run_sweep gh18_sbatch L_rmlp_lvl2 serena-chan-/PB-FT-Aug/fswg1t08
 
 program: scripts/finetune/pb/no_pretrain/rmlp.jl
 project: PB-FT-Aug
@@ -22,14 +22,14 @@ parameters:
   max_ft_steps:
     value: 40000
   batch_size:
-    value: 500
+    value: 100
+  # rank_top_k:
+  #   value: 1024
   # swept params
   lr:
     distribution: log_uniform_values
-    # min: 0.00005
-    # max: 0.01
     min: 0.000000005
-    max: 0.000001
+    max: 0.01
   drop_prob:
     min: 0.01
     max: 0.3

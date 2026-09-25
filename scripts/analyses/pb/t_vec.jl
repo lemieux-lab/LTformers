@@ -72,6 +72,10 @@ end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
+# cosine/kendall pairs for sep24figs.jl + comparison.jl (overwrites the aug 5 file made with the sortperm kendall bug)
+jldsave("$data_vec_dir/cos_ken_$(n_pairs_str)_noself.jld2"; cosine=expr_cosine, kendall=rank_kendall,
+        euclidean=expr_euclid, idx_a=idx_a, idx_b=idx_b)
+
 #######################################################################################################################################
 
 ### gene overlap analysis — contrast with single-cell
