@@ -2,8 +2,15 @@ module LoadSC
 
 using CSV, DataFrames, Random, PyCall, SparseArrays, JLD2, Flux, StatsBase
 
+# shared ranking rules (src/Preprocess.jl) + SC train-shard medians (ProcessSC)
+let d = @__DIR__, s = joinpath(@__DIR__, ".."); d in LOAD_PATH || push!(LOAD_PATH, d); s in LOAD_PATH || push!(LOAD_PATH, s); end
+# using Preprocess: rank_features!
+using Preprocess: rank_features!, pad_token_id
+using ProcessSC: sc_gene_medians
+
 export load_gene_vocab, list_shards, shard_train_test_split, load_shard_split
 export shard_train_val_test_split, load_shard_val_split
+export split_shards, load_hvg_idx
 export load_shard_pyarrow, load_shard_metadata, load_sc_finetune_data
 export sc_finetune_metadata_scan, materialize_finetune_split
 export prepare_shard_cell_map, finetune_batches_from_shard
@@ -28,6 +35,9 @@ function load_gene_vocab(meta_dir::String, coding_gene_path::String)
             gene_vocab[convert(Int, d["token_id"])] = convert(String, d["gene_symbol"])
         end
     end
+    # free the ~60k PyCall temporaries on this thread: CSV.read parses on worker tasks under -t N, and a GC there would
+    # run their finalizers without the GIL -> segfault (same guard as batches_from_shard)
+    GC.gc()
 
     df_coding = CSV.read(coding_gene_path, DataFrame; delim='\t')
     coding_symbols = Set(df_coding.symbol)
@@ -66,9 +76,15 @@ function load_shard_split(model_dir::String, all_shards::Vector{String}, test_ra
     return shard_train_test_split(all_shards, test_ratio)
 end
 
-function shard_train_val_test_split(shard_paths::Vector{String}, val_ratio::Float64 = 0.1, test_ratio::Float64 = 0.1)
+# function shard_train_val_test_split(shard_paths::Vector{String}, val_ratio::Float64 = 0.1, test_ratio::Float64 = 0.1)
+#     n = length(shard_paths)
+#     idx = shuffle(1:n)
+# seeded (local RNG, global stream untouched) so every SC run shares one split and the SC gene medians
+# (scripts/pretrain/sc/compute_medians.jl) can use train shards only; same default seed as PB split_seed
+function shard_train_val_test_split(shard_paths::Vector{String}, val_ratio::Float64 = 0.1, test_ratio::Float64 = 0.1;
+                                    seed::Integer = 42)
     n = length(shard_paths)
-    idx = shuffle(1:n)
+    idx = shuffle(MersenneTwister(seed), 1:n)
     n_test = floor(Int, n * test_ratio)
     n_val  = floor(Int, n * val_ratio)
     test_idx  = sort(idx[1:n_test])
@@ -422,80 +438,6 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
                         identity_baseline_fn = nothing)
 
     shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
-
-    # # -- build sample→dose map if dose filtering requested --
-    # sample_dose_map = nothing
-    # if dose != ""
-    #     if meta_dir == ""
-    #         @warn "dose filter requested but no meta_dir provided; skipping SC dose filter"
-    #     else
-    #         sample_meta_path = joinpath(meta_dir, "sample_metadata.parquet")
-    #         if isfile(sample_meta_path)
-    #             println("[SC lvl3] loading sample_metadata.parquet for dose filtering...")
-    #             t = _pq.read_table(sample_meta_path)
-    #             cols = [string(c) for c in t.column_names]
-    #             # find dose column
-    #             dose_col = nothing
-    #             for candidate in ["dose", "pert_dose", "dose_um", "Dose"]
-    #                 if candidate in cols
-    #                     dose_col = candidate
-    #                     break
-    #                 end
-    #             end
-    #             # find sample column
-    #             sample_col = nothing
-    #             for candidate in ["sample", "sample_id", "Sample"]
-    #                 if candidate in cols
-    #                     sample_col = candidate
-    #                     break
-    #                 end
-    #             end
-    #             # fallback: parse dose from drugname_drugconc column (format "DrugName_Conc")
-    #             drugconc_col = nothing
-    #             if isnothing(dose_col) && "drugname_drugconc" in cols
-    #                 drugconc_col = "drugname_drugconc"
-    #                 println("[SC lvl3] no dedicated dose column; parsing dose from drugname_drugconc")
-    #             end
-    #             if !isnothing(sample_col) && (!isnothing(dose_col) || !isnothing(drugconc_col))
-    #                 n_rows = convert(Int, t.num_rows)
-    #                 sample_arr = t.column(sample_col)
-    #                 dose_val = parse(Float64, dose)
-    #                 sample_dose_map = Dict{String, Bool}()
-    #                 if !isnothing(dose_col)
-    #                     dose_arr = t.column(dose_col)
-    #                     for i in 0:(n_rows - 1)
-    #                         s = string(sample_arr[i].as_py())
-    #                         d = dose_arr[i].as_py()
-    #                         d_float = isa(d, Number) ? Float64(d) : tryparse(Float64, string(d))
-    #                         if !isnothing(d_float)
-    #                             sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
-    #                         end
-    #                     end
-    #                 else
-    #                     # drugname_drugconc: as_py() returns a string like "[('DrugName', 0.05, 'uM')]"
-    #                     # extract the float between first and second commas
-    #                     dc_arr = t.column(drugconc_col)
-    #                     dose_re = r",\s*([\d.]+)\s*,"
-    #                     for i in 0:(n_rows - 1)
-    #                         s = string(sample_arr[i].as_py())
-    #                         dc_str = string(dc_arr[i].as_py())
-    #                         m = match(dose_re, dc_str)
-    #                         d_float = isnothing(m) ? nothing : tryparse(Float64, m.captures[1])
-    #                         if !isnothing(d_float)
-    #                             sample_dose_map[s] = isapprox(d_float, dose_val; atol=0.01)
-    #                         end
-    #                     end
-    #                 end
-    #                 n_matching = count(values(sample_dose_map))
-    #                 println("[SC lvl3] dose map: $(length(sample_dose_map)) samples, $n_matching matching dose=$dose")
-    #             else
-    #                 @warn "could not find dose/sample columns in sample_metadata.parquet (cols=$cols)"
-    #             end
-    #         else
-    #             @warn "sample_metadata.parquet not found at $sample_meta_path"
-    #         end
-    #     end
-    # end
     sample_dose_map = _sc_sample_dose_map(meta_dir, dose)
 
     # -- pass 1: metadata scan, filter to source+target cell lines --
@@ -584,8 +526,7 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
     src_mask = BitVector(pb_cl .== source_cell)
     tgt_mask = BitVector(pb_cl .== target_cell)
     pb_drug_sym = Symbol.(pb_drug)
-    # X, y, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
-    #                                                      pb_drug_sym, pb_drug_sym)
+
     X, y, shared_perts, pca_model, split = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
                                                                 pb_drug_sym, pb_drug_sym)
 
@@ -598,16 +539,34 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
 
     # -- rank if RTF --
     if modeltype == "rtf"
-        gene_medians = vec(median(X, dims=2)) .+ 1f-10
-        # inline ranking (same as Preprocess.rank_genes)
+        # gene_medians = vec(median(X, dims=2)) .+ 1f-10
+        # # inline ranking (same as Preprocess.rank_genes)
+        # n, m = size(X)
+        # X_ranked = Matrix{Int32}(undef, n, m)
+        # normalized_col = Vector{Float32}(undef, n)
+        # sorted_ind_col = Vector{Int32}(undef, n)
+        # for j in 1:m
+        #     @. normalized_col = X[:, j] / gene_medians
+        #     sortperm!(sorted_ind_col, normalized_col, rev=true)
+        #     X_ranked[:, j] .= sorted_ind_col
+        # end
+        # X = X_ranked
+        # ^ median .+ 1f-10 (zero-median genes flood the top) and no top_k truncation (rank_tf builds top_k positions)
+        # SC train-shard nonzero medians; undetected genes (ratio 0) last in gene-index order (stable sortperm)
+        gene_medians = something(sc_gene_medians(n_coding), ones(Float32, size(X, 1)))
         n, m = size(X)
-        X_ranked = Matrix{Int32}(undef, n, m)
+        k = min(top_k, n)
+        X_ranked = Matrix{Int32}(undef, k, m)
         normalized_col = Vector{Float32}(undef, n)
         sorted_ind_col = Vector{Int32}(undef, n)
+        pad = pad_token_id(n_coding)
         for j in 1:m
             @. normalized_col = X[:, j] / gene_medians
             sortperm!(sorted_ind_col, normalized_col, rev=true)
-            X_ranked[:, j] .= sorted_ind_col
+            X_ranked[:, j] .= view(sorted_ind_col, 1:k)
+            # undetected genes (mean 0) -> PAD, same as the per-cell path (process_cell_topk_flat)
+            n_det_j = count(>(0f0), view(X, :, j))
+            n_det_j < k && (X_ranked[max(n_det_j, 1)+1:k, j] .= pad)
         end
         X = X_ranked
     end
@@ -619,15 +578,6 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
     end
 
     # -- train/val/test split --
-    # idx = shuffle(1:size(X, 2))
-    # n_test = floor(Int, length(idx) * 0.1)
-    # n_val  = floor(Int, length(idx) * 0.1)
-    # s_test = length(idx) - n_test
-    # s_val  = s_test - n_val
-    # train_idx = idx[1:s_val]
-    # val_idx   = idx[s_val+1:s_test]
-    # test_idx  = idx[s_test+1:end]
-    # split comes from regression_pairs_fn (same compounds the PCA was fit on)
 
     X_train = X[:, train_idx]
     X_val   = X[:, val_idx]
@@ -638,11 +588,6 @@ function _load_sc_lvl3(all_shards::Vector{String}, token_to_idx::Dict{Int,Int},
 
     println("SC lvl3 split: train=$(size(X_train,2)), val=$(size(X_val,2)), test=$(size(X_test,2))")
 
-    # return (; X_train, X_val, X_test, y_train, y_val, y_test,
-    #           n_genes=modeltype == "rtf" ? n_coding : n_genes,
-    #           n_classifications=1,
-    #           train_idx, val_idx, test_idx,
-    #           cidx_dict=nothing, cs=nothing)
     return (; X_train, X_val, X_test, y_train, y_val, y_test,
               n_genes=modeltype == "rtf" ? n_coding : n_genes,
               n_classifications=1,
@@ -706,9 +651,6 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("  PB source $(source_cell): $(sum(src_mask)) samples")
     println("  PB target $(target_cell): $(sum(tgt_mask)) samples")
 
-    # get_regression_pairs_pca returns (X_paired, y_paired, shared_perts, pca_model)
-    # _, y_pb, shared_perts, pca_model = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
-    #                                                         pb_df.drug, pb_df.drug)
     _, y_pb, shared_perts, pca_model, pca_split = regression_pairs_fn(pb_expr, src_mask, tgt_mask,
                                                                        pb_df.drug, pb_df.drug)
     # compound split shared with the PCA fit: cells inherit their compound's split
@@ -731,13 +673,6 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("  PC1 targets for $(length(drug_to_pc1)) shared compounds")
     flush(stdout)
 
-    # SC dose filtering skipped for percell: PB PCA targets are already dose-filtered,
-    # and SC shards use different dose levels (0.05/0.5/5.0 uM per compound across samples).
-    # All SC cells matching shared compounds contribute as augmented inputs to the same PC1 target.
-    # sample_dose_map = nothing
-    # if dose != ""
-    #     println("[SC lvl3 percell] note: dose=$dose applied to PB targets only; SC cells use all doses for shared compounds")
-    # end
     # keep only source cells at the same dose as the PB targets
     sample_dose_map = _sc_sample_dose_map(meta_dir, dose)
     if dose != "" && isnothing(sample_dose_map)
@@ -828,9 +763,16 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
         for (sp, entries) in by_shard
             shard = load_shard_pyarrow(sp)
             for (ci, col, drug) in entries
-                cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
-                                      shard.expr_flat, ci, token_to_idx)
-                X[:, col] = dense
+                if modeltype in ("rmlp", "rlog") && !isnothing(process_cell_topk_flat_fn)
+                    # same ranking as SC RTF (medians, detected first); top-k rank features (k+1-r)/k, absent 0
+                    gene_ids, _, n_det = process_cell_topk_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                                                   shard.expr_flat, ci, token_to_idx, n_coding, top_k)
+                    rank_features!(view(X, :, col), gene_ids, n_det, top_k)
+                else
+                    cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                          shard.expr_flat, ci, token_to_idx)
+                    X[:, col] = dense
+                end
                 y[1, col] = drug_to_pc1[drug]
                 cell_drugs[col] = drug
                 if do_id_baseline && haskey(test_pos, col)
@@ -842,16 +784,20 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
         end
 
         # -- step 5: model-specific transforms (MLP/ETF only) --
-        if modeltype in ("rmlp", "rlog")
-            # rank transform for rank-based MLPs (inv[gene, sample] = rank)
-            gene_medians = vec(median(X, dims=2)) .+ 1f-10
-            for j in axes(X, 2)
-                X[:, j] ./= gene_medians
-                perm = sortperm(view(X, :, j); rev=true)
-                for (r, g) in enumerate(perm)
-                    X[g, j] = Float32(r)
-                end
-            end
+        # if modeltype in ("rmlp", "rlog")
+        #     # rank transform for rank-based MLPs (inv[gene, sample] = rank)
+        #     gene_medians = vec(median(X, dims=2)) .+ 1f-10
+        #     for j in axes(X, 2)
+        #         X[:, j] ./= gene_medians
+        #         perm = sortperm(view(X, :, j); rev=true)
+        #         for (r, g) in enumerate(perm)
+        #             X[g, j] = Float32(r)
+        #         end
+        #     end
+        # elseif !isnothing(hvg_idx)
+        # ^ rmlp/rlog features are now built per cell above (already encoded, no further transform)
+        if modeltype in ("rmlp", "rlog") && !isnothing(process_cell_topk_flat_fn)
+            nothing
         elseif !isnothing(hvg_idx)
             X = X[hvg_idx, :]
             n_genes = size(X, 1)
@@ -860,15 +806,6 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     println("[SC lvl3 percell] materialized: $(size(X))")
 
     # -- step 6: compound-level train/val/test split --
-    # unique_drugs = unique(cell_drugs)
-    # n_compounds = length(unique_drugs)
-    # perm = shuffle(1:n_compounds)
-    # n_test_c = max(1, floor(Int, n_compounds * 0.1))
-    # n_val_c  = max(1, floor(Int, n_compounds * 0.1))
-    # test_compounds  = Set(unique_drugs[perm[1:n_test_c]])
-    # val_compounds   = Set(unique_drugs[perm[n_test_c+1:n_test_c+n_val_c]])
-    # train_compounds = Set(unique_drugs[perm[n_test_c+n_val_c+1:end]])
-    # reuse the PCA's compound split so test compounds never shaped the PC1 axis
     present = Set(cell_drugs)
     test_compounds  = intersect(test_drugs, present)
     val_compounds   = intersect(val_drugs, present)
@@ -900,11 +837,6 @@ function _load_sc_lvl3_percell(all_shards::Vector{String}, token_to_idx::Dict{In
     id_baseline = do_id_baseline ? identity_baseline_fn(X_id, y_test, pca_model) :
         (isnothing(identity_baseline_fn) ? nothing : (; r2=NaN, pearson=NaN, rmse=NaN))
 
-    # return (; X_train, X_val, X_test, y_train, y_val, y_test,
-    #           n_genes=n_genes,
-    #           n_classifications=1,
-    #           train_idx, val_idx, test_idx,
-    #           cidx_dict=nothing, cs=nothing)
     return (; X_train, X_val, X_test, y_train, y_val, y_test,
               n_genes=n_genes,
               n_classifications=1,
@@ -1160,7 +1092,18 @@ function _build_ft_batch(shard, cell_indices::AbstractVector{Int},
                           hvg_idx::Union{Vector{Int}, Nothing},
                           process_cell_topk_flat_fn, cell_to_dense_flat_fn)
     bs = length(cell_indices)
-    if modeltype == "rtf"
+    if modeltype == "rankfeat"
+        # rank baselines (rlog/rmlp): Matrix{Float32}(n_coding, bs), same ranking as rtf,
+        # top-k encoding (k+1-r)/k with absent genes 0 (top_k = n_coding gives the full encoding)
+        batch = Matrix{Float32}(undef, n_coding, bs)
+        dense = Vector{Float32}(undef, n_coding)
+        for (j, ci) in enumerate(cell_indices)
+            gene_ids, _, n_det = process_cell_topk_flat_fn(dense, shard.genes_flat, shard.offsets,
+                                                           shard.expr_flat, ci, token_to_idx, n_coding, top_k)
+            rank_features!(view(batch, :, j), gene_ids, n_det, top_k)
+        end
+        return batch
+    elseif modeltype == "rtf"
         # returns Matrix{Int32}(top_k, bs)
         batch = Matrix{Int32}(undef, top_k, bs)
         dense = Vector{Float32}(undef, n_coding)
@@ -1283,24 +1226,6 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
     scan = sc_finetune_metadata_scan(all_shards, level;
                                       pb_data_path=pb_data_path,
                                       subset_shards=subset_shards)
-
-    # # -- materialize val and test (small, needed every epoch) --
-    # println("[streaming] materializing val split...")
-    # flush(stdout)
-    # X_val, y_val = materialize_finetune_split(scan.val_cells, scan.label_to_id, scan.n_cls,
-    #                                            token_to_idx, n_coding, top_k, modeltype, hvg_idx;
-    #                                            process_cell_topk_flat_fn=process_cell_topk_flat_fn,
-    #                                            cell_to_dense_flat_fn=cell_to_dense_flat_fn)
-    # println("  val: $(size(X_val))")
-    #
-    # println("[streaming] materializing test split...")
-    # flush(stdout)
-    # X_test, y_test = materialize_finetune_split(scan.test_cells, scan.label_to_id, scan.n_cls,
-    #                                              token_to_idx, n_coding, top_k, modeltype, hvg_idx;
-    #                                              process_cell_topk_flat_fn=process_cell_topk_flat_fn,
-    #                                              cell_to_dense_flat_fn=cell_to_dense_flat_fn)
-    # println("  test: $(size(X_test))")
-
     # -- build shard maps for all splits (val/test streamed like train) --
     train_shard_map = prepare_shard_cell_map(scan.train_cells, scan.label_to_id)
     train_shard_paths = collect(keys(train_shard_map))
@@ -1333,6 +1258,29 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
               val_idx=collect(1:n_val_cells),
               test_idx=collect(1:n_test_cells),
               id_baseline=nothing)
+end
+
+
+
+# seeded train/val/test shard split; subset > 0 keeps the first `subset` train shards and subset÷8 (≥ 1) val/test
+function split_shards(all_shards::Vector{String}, subset::Int = 0)
+    train, val, test = shard_train_val_test_split(all_shards, 0.1, 0.1)
+    if subset > 0
+        n_eval = max(1, div(subset, 8))
+        train = train[1:min(subset, length(train))]
+        val = val[1:min(n_eval, length(val))]
+        test = test[1:min(n_eval, length(test))]
+    end
+    println("Shards: $(length(train)) train, $(length(val)) val, $(length(test)) test")
+    return train, val, test
+end
+
+# HVG gene indices (scripts/pretrain/sc/compute_hvg.jl); required for SC ETF
+function load_hvg_idx(path::String)
+    (path != "" && isfile(path)) || error("SC ETF requires hvg_path (got '$path')")
+    d = load(path)
+    println("  loaded $(length(d["hvg_idx"])) HVG indices from $path (computed from $(d["n_cells_scanned"]) cells)")
+    return d["hvg_idx"]
 end
 
 

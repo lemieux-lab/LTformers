@@ -2,6 +2,10 @@ module Extract
 
 using Flux, CUDA, Statistics, StatsBase
 
+# encode was used below without being imported (mpool would throw UndefVarError)
+let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
+using Models: encode, encode_rank, masked_mean_pool
+
 export mpool, get_embeds, get_embeds_lrecon, get_embeds_exp
 
 
@@ -15,7 +19,8 @@ function _batched_embed(forward_fn, X, batch_size::Int)
     return hcat(embeds...)
 end
 
-mpool(m, x) = dropdims(mean(encode(m, x), dims=2), dims=2)
+# mpool(m, x) = dropdims(mean(encode(m, x), dims=2), dims=2)
+mpool(m, x) = masked_mean_pool(encode_rank(m, x)...)   # PAD-aware encoder + mean over real tokens
 
 get_embeds(pt_model, X_ranked, batch_size::Int) =
     _batched_embed(x -> mpool(pt_model, cu(Int32.(x))), X_ranked, batch_size)
@@ -23,12 +28,13 @@ get_embeds(pt_model, X_ranked, batch_size::Int) =
 function get_embeds_lrecon(pt_model, X_ranked, batch_size::Int)
     _batched_embed(X_ranked, batch_size) do x
         x_batch = cu(Int32.(x))
-        embedded = pt_model.embedding(x_batch)
-        pos_ids = cu(Int32.(1:size(embedded, 2)))
-        encoded = embedded .+ pt_model.pos_emb(pos_ids)
-        dropped = pt_model.emb_dropout(encoded)
-        transformed = pt_model.transformer(dropped)
-        dropdims(mean(transformed, dims=2), dims=2)
+        # embedded = pt_model.embedding(x_batch)
+        # pos_ids = cu(Int32.(1:size(embedded, 2)))
+        # encoded = embedded .+ pt_model.pos_emb(pos_ids)
+        # dropped = pt_model.emb_dropout(encoded)
+        # transformed = pt_model.transformer(dropped)
+        # dropdims(mean(transformed, dims=2), dims=2)
+        masked_mean_pool(encode_rank(pt_model, x_batch)...)
     end
 end
 

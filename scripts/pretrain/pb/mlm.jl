@@ -9,7 +9,6 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 
 args = load_pretrain_args()
-# config = load_config(args["config"], args)
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "mlm", args["modeltype"]])
 
@@ -50,7 +49,8 @@ else
     println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
-gene_medians = vec(median(data_expr, dims=2)) .+ 1f-10
+# train-split medians from file (scripts/pretrain/pb/compute_medians.jl), HVG subset for etf
+gene_medians = gene_medians_for(config, data_expr; hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 X_ranks = rank_genes(data_expr, gene_medians)
 
 n_genes = size(X_ranks, 1)
@@ -58,23 +58,28 @@ n_classes = n_genes
 MASK_ID = n_genes + 1
 top_k = get(config, "top_k", 1024)
 
+# truncate before the split so tvsplit doesn't copy the full 19k-row rank matrix (split only depends on n samples)
+if use_exp
+    inv_ranks = inverse_ranks(X_ranks)
+elseif top_k < n_genes
+    X_ranks = X_ranks[1:top_k, :]
+    println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
+end
+
+# seeded so every PB pretrain objective/modeltype shares one split; reseed after so masks stay random per run
+Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
+Random.seed!()
 
 if use_exp
     X_expr = Float32.(data_expr)
     X_train = X_expr[:, train_indices]
     X_val = X_expr[:, val_indices]
     X_test = X_expr[:, test_indices]
-    inv_ranks = inverse_ranks(X_ranks)
     X_inv_ranks_train = inv_ranks[:, train_indices]
     X_inv_ranks_val = inv_ranks[:, val_indices]
     X_inv_ranks_test = inv_ranks[:, test_indices]
 else
-    X_ranks_full = X_ranks
-    if top_k < n_genes
-        X_ranks = X_ranks[1:top_k, :]
-        println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
-    end
     X_train = X_ranks[:, train_indices]
     X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
@@ -115,11 +120,14 @@ end
 
 # save dir
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
-fmt = get(config, "data_format", "tahoe")
 dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "mlm", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
+# save split now (survives a crash before log_info) and next to every checkpoint (finetune reads <model_dir>/indices.jld2)
+save_indices(dir) = jldsave(joinpath(dir, "indices.jld2");
+                            train_indices=train_indices, val_indices=val_indices, test_indices=test_indices)
+save_indices(save_dir)
 if use_exp && @isdefined(hvg_idx)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
@@ -145,20 +153,18 @@ done = false
 best_val_loss = Inf32
 best_epoch = 0
 
-n_total_epochs = if use_max_steps
-    bpe = cld(size(X_train, 2), config["batch_size"])
-    cld(config["max_steps"], bpe)
-else
-    config["n_epochs"]
-end
-warmup_epochs = max(1, div(n_total_epochs, 10))
+bpe = cld(size(X_train, 2), config["batch_size"])
+n_total_epochs = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
+# per-step lr schedule (matches SC pretrain); per-epoch version ran the whole last epoch at lr = 0
+total_steps = use_max_steps ? config["max_steps"] : n_total_epochs * bpe
+warmup_steps = max(1, div(total_steps, 10))
+train_loss_maxes = Float32[]
 X_train_masked = similar(X_train)
 y_train_masked = use_exp ? similar(X_inv_ranks_train) : similar(X_train)
 
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     is_last = (epoch == n_total_epochs)
-    Optimisers.adjust!(opt, compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs))
 
     if use_exp
         mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
@@ -176,6 +182,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         x_batch = CuArray(X_train_masked[:, start_idx:end_idx])
         y_batch = CuArray(y_train_masked[:, start_idx:end_idx])
 
+        Optimisers.adjust!(opt, compute_lr_step(global_step + 1, total_steps, config["lr"], warmup_steps))
         l_val, grads = Flux.withgradient(model) do m
             masked_mlm_loss(m, x_batch, y_batch, n_classes)[1]
         end
@@ -187,6 +194,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
     push!(train_losses, mean(epoch_losses))
+    push!(train_loss_maxes, maximum(epoch_losses))
 
     # val eval (every epoch for checkpt + sweep selection)
     Flux.testmode!(model)
@@ -199,6 +207,15 @@ for epoch in ProgressBar(1:n_total_epochs)
         push!(val_eval_losses, loss_val)
     end
     push!(val_losses, mean(val_eval_losses))
+
+    # save best before the last-epoch reload so a best final epoch isn't overwritten by the older checkpoint
+    if val_losses[end] < best_val_loss
+        global best_val_loss = val_losses[end]
+        global best_epoch = epoch
+        mkpath(joinpath(save_dir, "best"))
+        log_model(model, joinpath(save_dir, "best"), config)
+        isfile(joinpath(save_dir, "best", "indices.jld2")) || save_indices(joinpath(save_dir, "best"))
+    end
 
     # test eval (final epoch only)
     is_last = is_last || done
@@ -234,37 +251,24 @@ for epoch in ProgressBar(1:n_total_epochs)
                 append!(epoch_preds, Flux.onecold(logits_cpu))
                 append!(epoch_trues, y_targets_cpu)
 
-                for i in eachindex(y_targets_cpu)
-                    r = y_targets_cpu[i]  # ETF: r = rank; RTF: r = gene_id
-                    col = @view logits_cpu[:, i]
-                    err = count(x -> x > col[r], col)
-                    push!(epoch_rank_errors, err)
-                    if use_exp
-                        rank_error_sums[r] += err
-                        rank_error_counts[r] += 1
-                    else
-                        gene_error_sums[r] += err
-                        gene_error_counts[r] += 1
-                    end
-                end
 
+
+                # single pass in the same column-major order as the loss mask: err computed once per masked token
                 y_labels_cpu = cpu(y_batch)
-                batch_len = size(y_labels_cpu, 2)
                 masked_idx = 0
-                for j in 1:batch_len
-                    for pos in 1:n_genes  # ETF: pos = gene position; RTF: pos = rank position
-                        r = y_labels_cpu[pos, j]
+                for j in 1:size(y_labels_cpu, 2)
+                    for pos in 1:size(y_labels_cpu, 1)  # ETF: pos = gene position; RTF: pos = rank position (top_k rows)
+                        r = y_labels_cpu[pos, j]        # ETF: r = rank; RTF: r = gene_id
                         (r == -100 || r <= 0 || r > n_classes) && continue
                         masked_idx += 1
                         col = @view logits_cpu[:, masked_idx]
                         err = count(x -> x > col[r], col)
-                        if use_exp
-                            gene_error_sums[pos] += err
-                            gene_error_counts[pos] += 1
-                        else
-                            rank_error_sums[pos] += err
-                            rank_error_counts[pos] += 1
-                        end
+                        push!(epoch_rank_errors, err)
+                        rank_idx, gene_idx = use_exp ? (r, pos) : (pos, r)
+                        rank_error_sums[rank_idx] += err
+                        rank_error_counts[rank_idx] += 1
+                        gene_error_sums[gene_idx] += err
+                        gene_error_counts[gene_idx] += 1
                     end
                 end
             end
@@ -278,6 +282,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
                         "val_loss" => val_losses[end],
+                        "train_loss_max" => train_loss_maxes[end],
                         "global_step" => global_step)
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
@@ -286,12 +291,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    if val_losses[end] < best_val_loss
-        global best_val_loss = val_losses[end]
-        global best_epoch = epoch
-        mkpath(joinpath(save_dir, "best"))
-        log_model(model, joinpath(save_dir, "best"), config)
-    end
+    # moved above the reload
 
     if is_last
         append!(all_preds, epoch_preds)
@@ -302,8 +302,9 @@ end
 # log
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce";
          val_losses=val_losses)
-cs, cp = plot_ranked_heatmap(all_trues, all_preds, save_dir)
-plot_per_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir)
+# RTF trues/preds are gene ids (file order) -> correlations meaningless and histogram is n_genes^2
+cs, cp = use_exp ? plot_ranked_heatmap(all_trues, all_preds, save_dir) : (nothing, nothing)
+# plot_per_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir)  # same data as plot_per_sample_rank_error below
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
                     "mean rank error", "per_gene_error";
                     sorted_gene_path=get(config, "sorted_gene_path", ""))
@@ -315,8 +316,9 @@ log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indic
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
-           X_test_masked=X_test_masked, y_test_masked=y_test_masked,
-           X_test=use_exp ? X_expr[:, test_indices] : X_test)
+           train_loss_maxes=train_loss_maxes,
+           X_test_masked=X_test_masked, y_test_masked=y_test_masked)
+           # X_test=use_exp ? X_expr[:, test_indices] : X_test)  # ignored by log_info
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

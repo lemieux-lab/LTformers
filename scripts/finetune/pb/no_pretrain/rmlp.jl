@@ -14,6 +14,7 @@ config = load_config(args["config"], args,
 resolve_data_path!(config)
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
+config["modeltype"] == "rmlp" || error("rmlp.jl is MLP only; use rlog.jl for -t rlog (got $(config["modeltype"]))")
 
 # seed
 seed = get(config, "seed", nothing)
@@ -46,12 +47,6 @@ else  # tahoe
 end
 
 # mlp_rtf: no HVG, uses inverse ranks of all genes
-# n_hvg = get(config, "n_hvg", 0)
-# if n_hvg > 0 && n_hvg < size(data_expr, 1)
-#     n_orig = size(data_expr, 1)
-#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
-# end
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -61,58 +56,39 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes,
            inverse_ranks_fn=inverse_ranks)
 
-# rank_top_k: give rlog/rmlp the same info as rtf (only each sample's top-k genes by rank)
-# X = rank / n_genes (top gene ≈ 0), so genes outside the top-k tie at (k+1) / n_genes
-rank_top_k = something(get(config, "rank_top_k", 0), 0)
-model_tag = config["modeltype"]
-if rank_top_k > 0 && !is_regression
-    cutoff = Float32(rank_top_k) / Float32(d.n_genes)
-    bottom = Float32(rank_top_k + 1) / Float32(d.n_genes)
-    for X in (d.X_train, d.X_val, d.X_test)
-        X[X .> cutoff] .= bottom
-    end
-    global model_tag = "$(config["modeltype"])_topk"
-    println("rank_top_k: kept top-$rank_top_k ranks per sample, rest tied at bottom → saving as $model_tag")
-end
+# # rank_top_k: give rlog/rmlp the same info as rtf (only each sample's top-k genes by rank)
+rank_k = rank_feature_k(config, d.n_genes)
+# model_tag = rank_k < d.n_genes || d.n_genes <= get(config, "top_k", 1024) ? config["modeltype"] : "$(config["modeltype"])_full"
+model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")   # _topk<k> for non-default k (no folder collisions)
+rank_enc = get(config, "rank_encoding", "rev")   # non-default encodings get their own folder (e.g. rlog_logrank/)
+rank_enc == "rev" || (model_tag *= "_$(rank_enc)")
+println("rank features: k=$rank_k of $(d.n_genes) genes → saving as $model_tag")
 
 # identity baseline for lvl3
-# id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
-#     identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
 id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 # model
-if config["modeltype"] == "rlog"
-    # single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
-    config["lr"] = 0.001
-    model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
-    model = cu(model)
-else
-    # nonlinear MLP: tapered layers with relu + dropout
-    sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-             for i in 0:config["n_layers"]+1]
-    layers = []
-    for i in 1:length(sizes)-1
-        push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-        if i < length(sizes) - 1
-            push!(layers, Flux.Dropout(config["drop_prob"]))
-        end
+# nonlinear MLP: tapered layers with relu + dropout
+sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
+         for i in 0:config["n_layers"]+1]
+layers = []
+for i in 1:length(sizes)-1
+    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
+    if i < length(sizes) - 1
+        push!(layers, Flux.Dropout(config["drop_prob"]))
     end
-    model = Flux.Chain(layers...)
-    model = fix_gpu_dropout(cu(model))
 end
-# opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
+model = Flux.Chain(layers...)
+model = fix_gpu_dropout(cu(model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "rmlp", timestamp)
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
 save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "PB-FT-Aug", "$(config["modeltype"])_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -134,6 +110,30 @@ n_total_epochs = if use_max_steps
     cld(ft_step_limit, max(bpe, 1))
 else
     config["n_epochs"]
+end
+
+# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+function run_test(m)
+    epoch_preds = is_regression ? Float32[] : Int[]
+    epoch_trues = is_regression ? Float32[] : Int[]
+    eval_losses = Float32[]
+    n_test = size(d.X_test, 2)
+    for s in 1:config["batch_size"]:n_test
+        e = min(s + config["batch_size"] - 1, n_test)
+        x_gpu = cu(Float32.(d.X_test[:, s:e]))
+        y_gpu = cu(d.y_test[:, s:e])
+        logits = m(x_gpu)
+        if is_regression
+            push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+            append!(epoch_preds, vec(cpu(logits)))
+            append!(epoch_trues, vec(cpu(y_gpu)))
+        else
+            push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+            append!(epoch_preds, Flux.onecold(cpu(logits)))
+            append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+        end
+    end
+    return mean(eval_losses), epoch_preds, epoch_trues
 end
 
 for epoch in ProgressBar(1:n_total_epochs)
@@ -195,24 +195,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_trues = is_regression ? Float32[] : Int[]
 
     if is_last
-        eval_losses = Float32[]
-        n_test = size(d.X_test, 2)
-        for s in 1:config["batch_size"]:n_test
-            e = min(s + config["batch_size"] - 1, n_test)
-            x_gpu = cu(Float32.(d.X_test[:, s:e]))
-            y_gpu = cu(d.y_test[:, s:e])
-            logits = model(x_gpu)
-            if is_regression
-                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                append!(epoch_preds, vec(cpu(logits)))
-                append!(epoch_trues, vec(cpu(y_gpu)))
-            else
-                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                append!(epoch_preds, Flux.onecold(cpu(logits)))
-                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
-            end
-        end
-        push!(test_losses, mean(eval_losses))
+        final_test_loss, epoch_preds, epoch_trues = run_test(model)
+        push!(test_losses, final_test_loss)
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
     end
@@ -247,9 +231,31 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
 end
 
+
+# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
+# all_preds / all_trues above come from the final model
+opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+best_cpu = load_best_cpu(model, save_dir)
+best_preds, best_trues = if isnothing(best_cpu)
+    println("no best/ checkpoint found, best metrics = final model")
+    all_preds, all_trues
+else
+    best_model = fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(best_model)
+    _, bp, bt = run_test(best_model)
+    bp, bt
+end
+best_metrics = test_metrics(best_preds, best_trues, is_regression)
+final_metrics = test_metrics(all_preds, all_trues, is_regression)
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+println("test (best model, epoch $best_epoch): ", best_metrics)
+println("test (final model):         ", final_metrics)
+
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
     wb.summary["best_epoch"] = best_epoch
+    for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
+    for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
     wandb.finish()
 end
 
@@ -277,6 +283,8 @@ if is_regression
     end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=mlp_skip, r2=r2, pearson=pearson, rmse=rmse,
+               best_r2=best_metrics.r2, best_pearson=best_metrics.pearson, best_rmse=best_metrics.rmse,
+               final_r2=final_metrics.r2, final_pearson=final_metrics.pearson, final_rmse=final_metrics.rmse,
                id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
                id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
                id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
@@ -284,6 +292,6 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-               skip=mlp_skip, accuracy=acc, total_steps=global_step,
+               skip=mlp_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_epoch=best_epoch, best_val_loss=best_val_loss)
 end

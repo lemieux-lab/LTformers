@@ -19,3 +19,4 @@ config/LocalPreferences.toml
 
 *.sh
 *.log
+*.yaml

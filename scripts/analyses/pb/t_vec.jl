@@ -3,7 +3,6 @@ arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(joinpath(@__DIR__, "../../..", arch_dir))
 using JLD2, Statistics, StatsBase, CairoMakie, LinearAlgebra, Random, DataFrames
 
-# df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
 df = load("data/tahoe/filtered_pseudobulks_alpha_10000.jld2")["df"]
 expr = hcat(df.expr...)
 fig_vec_dir = "results/tahoe/pb/figures/vectors"
@@ -12,7 +11,17 @@ data_vec_dir = "results/tahoe/pb/data/vectors"
 save_prefix = "pb"
 
 n_genes, N = size(expr)
-gene_medians = vec(median(expr, dims=2)) .+ 1f-10
+# gene_medians = vec(median(expr, dims=2)) .+ 1f-10
+# shared ranking rule (src/Preprocess.jl, 2026-09-26): per-gene nonzero medians over all samples, computed once
+# (scripts/pretrain/pb/compute_medians.jl); undetected genes rank after detected ones, ties by gene index (no noise)
+gene_medians = let p = "data/tahoe/pb_gene_medians.jld2"
+    if isfile(p) && length(load(p, "medians")) == size(expr, 1)
+        Float32.(load(p, "medians"))
+    else
+        @warn "no usable medians file $p: computing nonzero medians here"
+        Float32[(v = filter(>(0), r); isempty(v) ? 1f0 : median(v)) for r in eachrow(expr)]
+    end
+end
 println("dataset=tahoe  n_genes=$n_genes  N=$N")
 
 mkpath(fig_vec_dir); mkpath(fig_var_dir); mkpath(data_vec_dir)
@@ -28,8 +37,8 @@ function rank_genes(expr, medians)
     for j in 1:m
         unsorted_expr_col = view(expr, :, j)
         @. normalized_col = unsorted_expr_col / medians
-        randn!(noise)
-        @. normalized_col += noise * 1f-10 # only doing the noise here bc thats what we doing in the single-cell
+        # randn!(noise)
+        # @. normalized_col += noise * 1f-10 # only doing the noise here bc thats what we doing in the single-cell   # no noise: ties by gene index, like the models
         sortperm!(sorted_ind_col, normalized_col, rev=true)
         data_ranked[:, j] .= sorted_ind_col
     end
@@ -65,9 +74,11 @@ rank_kendall = Vector{Float32}(undef, n_pairs)
 for k in 1:n_pairs
     σ = view(ranked, :, idx_a[k])
     τ = view(ranked, :, idx_b[k])
-    # rank_kendall[k] = (1f0 - Float32(corkendall(σ, τ))) / 2f0
-    # ^ σ, τ are gene ids at each rank (sortperm), so this compares gene index numbers, not gene ranks
-    rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
+    # rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
+    # tau-b on x / median: same order as the ranking, and undetected genes tie (absent for the models) instead of
+    # being ordered by gene index
+    rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
 end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
@@ -237,7 +248,6 @@ begin
     Colorbar(fig[1, 2], hb, label="count (log10)")
     display(fig)
 end
-# save("$fig_vec_dir/$(save_prefix)_euclid_kendall_$(n_pairs_str)_noself.png", fig)
 
 begin
     fig = Figure(size=(600, 400))

@@ -3,7 +3,6 @@ arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
 using JLD2, StatsBase, Statistics, CairoMakie, DataFrames
 
-# dataset = "lincs"
 dataset = "tahoe" # for pseudobulk
 
 if dataset == "lincs"
@@ -12,7 +11,6 @@ if dataset == "lincs"
     data_dir = "results/lincs/data/entropies"
     save_prefix = "lincs"
 elseif dataset == "tahoe"
-    # df = load("/home/muninn/scratch/kaufmanl/CAP/results/tahoe/pseudobulks/filtered_pseudobulks_alpha_10000.jld2")["df"]
     df = load("data/tahoe/filtered_pseudobulks_alpha_10000.jld2")["df"]
     expr = hcat(df.expr...)
     fig_dir = "results/tahoe/pb/figures/entropies"
@@ -21,7 +19,17 @@ elseif dataset == "tahoe"
 end
 
 n_genes, N = size(expr)
-gene_medians = vec(median(expr, dims=2)) .+ 1f-10
+# gene_medians = vec(median(expr, dims=2)) .+ 1f-10
+# shared ranking rule (src/Preprocess.jl, 2026-09-26): per-gene nonzero medians over all samples, computed once
+# (scripts/pretrain/pb/compute_medians.jl); undetected genes rank after detected ones, ties by gene index (no noise)
+gene_medians = let p = dataset == "lincs" ? "data/lincs/gene_medians.jld2" : "data/tahoe/pb_gene_medians.jld2"
+    if isfile(p) && length(load(p, "medians")) == size(expr, 1)
+        Float32.(load(p, "medians"))
+    else
+        @warn "no usable medians file $p: computing nonzero medians here"
+        Float32[(v = filter(>(0), r); isempty(v) ? 1f0 : median(v)) for r in eachrow(expr)]
+    end
+end
 
 mkpath(fig_dir); mkpath(data_dir)
 
@@ -58,10 +66,17 @@ function calculate_entropy(row)
     return entropy
 end
 
+# entropies = Float64[]
+# for row in eachrow(ranked)
+#     e = calculate_entropy(row)
+#     push!(entropies, e)
+# end
+# only samples where rank r is a detected gene (undetected genes are absent for the models; counting them would
+# measure the gene-index tie order). LINCS: every gene detected -> unchanged
+n_det = vec(sum(expr .> 0, dims=1))
 entropies = Float64[]
-for row in eachrow(ranked)
-    e = calculate_entropy(row)
-    push!(entropies, e)
+for r in 1:n_genes
+    push!(entropies, calculate_entropy(ranked[r, n_det .>= r]))
 end
 
 begin
@@ -129,11 +144,6 @@ begin
     scatter!(ax_ent, 1:n_genes, entropies, alpha=0.5, color=:black, markersize=4, label="Entropy")
     scatter!(ax_spar, 1:n_genes, sparsities, alpha=0.5, color=Makie.wong_colors()[1], markersize=4, label="Sparsity")
 
-    # Legend(fig_overlay[0, 1],
-    #     [MarkerElement(color=:black, marker=:circle, markersize=8),
-    #      MarkerElement(color=Makie.wong_colors()[1], marker=:circle, markersize=8)],
-    #     ["Entropy", "Sparsity"],
-    #     orientation=:horizontal, tellwidth=false)
 
     display(fig_overlay)
 end

@@ -78,7 +78,7 @@ sort!(hvg_idx)  # sorted by gene index for consistent ordering
 
 println("\nResults:")
 println("  Scanned $total_cells cells across $n_scan shards")
-println("  Top HVG variance range: $(round(gene_var[hvg_idx[1]], digits=4)) — $(round(gene_var[hvg_idx[end]], digits=4))")
+println("  Top HVG variance range: $(round(maximum(gene_var[hvg_idx]), digits=4)) — $(round(minimum(gene_var[hvg_idx]), digits=4))")
 println("  Bottom non-HVG variance: $(round(gene_var[sortperm(gene_var, rev=true)[n_hvg+1]], digits=4))")
 
 mkpath(dirname(out_path))

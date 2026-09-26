@@ -16,7 +16,7 @@ config = load_config(args["config"], args,
                      dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
-config["modeltype"] == "emlp" || error("emlp.jl is MLP only; use elog.jl for -t elog (got $(config["modeltype"]))")
+config["modeltype"] == "elog" || error("elog.jl requires -t elog (got $(config["modeltype"]))")
 # resolve_model_dir!(config)  # no pretrain weights needed
 
 # seed
@@ -106,19 +106,10 @@ end
 
 id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
 
-# model — MLP with linearly interpolated layer sizes
-# nonlinear MLP: tapered layers with relu + dropout
-sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-         for i in 0:config["n_layers"]+1]
-layers = []
-for i in 1:length(sizes)-1
-    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-    if i < length(sizes) - 1
-        push!(layers, Flux.Dropout(config["drop_prob"]))
-    end
-end
-model = Flux.Chain(layers...)
-model = fix_gpu_dropout(cu(model))
+# single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
+config["lr"] = 0.001
+model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
+model = cu(model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir

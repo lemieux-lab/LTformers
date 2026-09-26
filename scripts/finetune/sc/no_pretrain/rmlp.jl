@@ -16,6 +16,7 @@ config = load_config(args["config"], args,
                      dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
+config["modeltype"] == "rmlp" || error("rmlp.jl is MLP only; use rlog.jl for -t rlog (got $(config["modeltype"]))")
 # resolve_model_dir!(config)  # no pretrain weights needed
 
 # seed
@@ -26,7 +27,6 @@ if !isnothing(seed)
     println("Random seed: $seed")
 end
 
-# is_regression = false  # SC finetune: lvl1/lvl2 classification only
 is_regression = config["level"] == "lvl3"
 use_oversmpl = config["level"] == "lvl2" && !is_regression
 
@@ -35,27 +35,18 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
 # data — SC shard loading (RTF mode returns Int32 gene IDs in rank order)
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 all_shards = list_shards(config["data_dir"])
 
-top_k = get(config, "top_k", 1024)
-# d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, "rtf";
-#                            pb_data_path=get(config, "pb_data_path", ""),
-#                            subset_shards=get(config, "subset_shards", 0),
-#                            process_cell_topk_flat_fn=process_cell_topk_flat,
-#                            cell_to_dense_flat_fn=cell_to_dense_flat!,
-#                            oversmpl_fn=oversmpl,
-#                            source_cell=get(config, "source_cell", ""),
-#                            target_cell=get(config, "target_cell", ""),
-#                            dose=get(config, "dose", ""),
-#                            meta_dir=get(config, "meta_dir", ""),
-#                            regression_pairs_fn=get_regression_pairs_pca)
+# top_k = get(config, "top_k", 1024)
+# rank features for each cell's top-k genes (default top_k = 1024, like rtf); --rank_top_k 0 = all genes -> _full
+top_k = rank_feature_k(config, n_coding)
+model_tag = gene_set_tag(config["modeltype"], top_k, n_coding; kind="topk")
+println("rank features: top-$top_k of $n_coding genes → saving as $model_tag")
 # load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
-# sc_lvl3_percell = get(config, "sc_lvl3_percell", false)
 sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)  # per-cell is the default
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
@@ -87,7 +78,6 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
 is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
 
 # cap val/test eval to first ft_eval_shards shards (0 = all), same subset for every run
-# n_eval = something(get(config, "n_eval_shards", 0), 0)  # inherited default.toml pretrain value (10)
 n_eval = something(get(config, "ft_eval_shards", 0), 0)
 if is_streaming
     val_paths  = n_eval > 0 ? d.val_shard_paths[1:min(n_eval, length(d.val_shard_paths))]   : d.val_shard_paths
@@ -113,24 +103,22 @@ function sc_inverse_ranks(X_rtf::Matrix{Int32}, n_coding::Int)
     return inv
 end
 
-# for streaming: all inverse ranks computed per-batch via sc_inverse_ranks_batch()
-# for non-streaming (lvl3): compute upfront on materialized data
 if is_streaming
     println("streaming mode: all inverse ranks (train/val/test) computed per-batch")
     # X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)  # removed: val/test no longer materialized
-    # X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
     X_train = nothing  # not materialized
+#     # lvl3 percell/pseudo-bulk: data is already Float32 ranks, just normalize
 elseif eltype(d.X_train) == Float32
-    # lvl3 percell/pseudo-bulk: data is already Float32 ranks, just normalize
-    println("lvl3 mode: data already ranked, normalizing by n_coding=$n_coding")
-    X_train = d.X_train ./ Float32(n_coding)
-    X_val   = d.X_val   ./ Float32(n_coding)
-    X_test  = d.X_test  ./ Float32(n_coding)
+    # lvl3 per-cell: loader already built rank features ((k+1-r)/k, absent 0)
+    println("lvl3 mode: rank features already encoded by the loader")
+    X_train, X_val, X_test = d.X_train, d.X_val, d.X_test
 else
-    println("converting RTF tokens to inverse ranks (n_coding=$n_coding)...")
-    X_train = sc_inverse_ranks(d.X_train, n_coding) ./ Float32(n_coding)
-    X_val   = sc_inverse_ranks(d.X_val, n_coding)   ./ Float32(n_coding)
-    X_test  = sc_inverse_ranks(d.X_test, n_coding)  ./ Float32(n_coding)
+    # top-k gene-id tokens (lvl3 pseudobulk / non-streaming); undetected genes are PAD (pad_token_id), so the
+    # number of real ids per column is the detected count
+    println("converting top-$(size(d.X_train, 1)) gene ids to rank features (n_coding=$n_coding)...")
+    # _feat(ids) = rank_features(ids, fill(size(ids, 1), size(ids, 2)), n_coding, size(ids, 1))
+    _feat(ids) = rank_features(ids, vec(sum(ids .!= pad_token_id(n_coding), dims=1)), n_coding, size(ids, 1))
+    X_train, X_val, X_test = _feat(d.X_train), _feat(d.X_val), _feat(d.X_test)
 end
 n_genes = n_coding  # MLP input dim = full gene space
 n_classifications = d.n_classifications
@@ -145,36 +133,30 @@ train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
 println("inverse ranks done: input dim = $n_genes")
 
 # model — MLP with linearly interpolated layer sizes
-if config["modeltype"] == "rlog"
-    # single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
-    config["lr"] = 0.001
-    model = Flux.Chain(Flux.Dense(n_genes => n_classifications))
-    model = cu(model)
-else
-    # nonlinear MLP: tapered layers with relu + dropout
-    sizes = [round(Int, n_genes + (n_classifications - n_genes) * i / (config["n_layers"] + 1))
-             for i in 0:config["n_layers"]+1]
-    layers = []
-    for i in 1:length(sizes)-1
-        push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-        if i < length(sizes) - 1
-            push!(layers, Flux.Dropout(config["drop_prob"]))
-        end
+# nonlinear MLP: tapered layers with relu + dropout
+sizes = [round(Int, n_genes + (n_classifications - n_genes) * i / (config["n_layers"] + 1))
+         for i in 0:config["n_layers"]+1]
+layers = []
+for i in 1:length(sizes)-1
+    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
+    if i < length(sizes) - 1
+        push!(layers, Flux.Dropout(config["drop_prob"]))
     end
-    model = Flux.Chain(layers...)
-    model = fix_gpu_dropout(cu(model))
 end
+model = Flux.Chain(layers...)
+model = fix_gpu_dropout(cu(model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "rmlp", timestamp)
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "SC-FT-Aug", "$(config["modeltype"])_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, "SC-FT-Aug", "$(config["modeltype"])_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, "SC-FT-Aug", "$(model_tag)_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
@@ -201,6 +183,60 @@ else
     config["n_epochs"]
 end
 
+# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+function run_test(m)
+    epoch_preds = is_regression ? Float32[] : Int[]
+    epoch_trues = is_regression ? Float32[] : Int[]
+    eval_losses = Float32[]
+    if is_streaming
+        println("  test eval ($(length(test_paths)) shards)"); flush(stdout)
+        for (ti, shard_path) in enumerate(test_paths)
+            cell_indices, cell_labels = d.test_shard_map[shard_path]
+            batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                   token_to_idx, n_coding, top_k,
+                                                   config["batch_size"], "rankfeat", d.n_classifications;
+                                                   hvg_idx=nothing, use_oversmpl=false,
+                                                   process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                   cell_to_dense_flat_fn=cell_to_dense_flat!)
+            for (x_batch, y_batch) in batches
+                x_inv = x_batch   # "rankfeat" batches are already encoded (Preprocess.rank_features!)
+                x_gpu = CuArray(x_inv)
+                y_gpu = CuArray(y_batch)
+                logits = m(x_gpu)
+                if is_regression
+                    push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                    append!(epoch_preds, vec(cpu(logits)))
+                    append!(epoch_trues, vec(cpu(y_gpu)))
+                else
+                    push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                    append!(epoch_preds, Flux.onecold(cpu(logits)))
+                    append!(epoch_trues, Flux.onecold(y_batch))
+                end
+                CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
+            end
+            if ti % 200 == 0; println("    test shard $ti/$(length(test_paths))"); flush(stdout); end
+        end
+    else
+        n_test = size(X_test, 2)
+        for s in 1:config["batch_size"]:n_test
+            e = min(s + config["batch_size"] - 1, n_test)
+            x_gpu = cu(X_test[:, s:e])
+            y_gpu = cu(y_test[:, s:e])
+            logits = m(x_gpu)
+            if is_regression
+                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                append!(epoch_preds, vec(cpu(logits)))
+                append!(epoch_trues, vec(cpu(y_gpu)))
+            else
+                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                append!(epoch_preds, Flux.onecold(cpu(logits)))
+                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+            end
+        end
+    end
+    return mean(eval_losses), epoch_preds, epoch_trues
+end
+
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     is_last = (epoch == n_total_epochs)
@@ -217,13 +253,13 @@ for epoch in ProgressBar(1:n_total_epochs)
             cell_indices, cell_labels = d.train_shard_map[shard_path]
             batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                    token_to_idx, n_coding, top_k,
-                                                   config["batch_size"], "rtf", n_classifications;
+                                                   config["batch_size"], "rankfeat", n_classifications;
                                                    hvg_idx=nothing, use_oversmpl=use_oversmpl,
                                                    process_cell_topk_flat_fn=process_cell_topk_flat,
                                                    cell_to_dense_flat_fn=cell_to_dense_flat!)
             for (x_batch, y_batch) in batches
                 # convert RTF gene IDs to inverse ranks per batch
-                x_inv = sc_inverse_ranks_batch(x_batch, n_coding)
+                x_inv = x_batch   # "rankfeat" batches are already encoded (Preprocess.rank_features!)
                 x_gpu = CuArray(x_inv)
                 y_gpu = CuArray(y_batch)
 
@@ -277,19 +313,17 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
-        # println("  epoch $epoch: val eval ($(length(d.val_shard_paths)) shards)"); flush(stdout)
         println("  epoch $epoch: val eval ($(length(val_paths)) shards)"); flush(stdout)
-        # for (vi, shard_path) in enumerate(d.val_shard_paths)
         for (vi, shard_path) in enumerate(val_paths)
             cell_indices, cell_labels = d.val_shard_map[shard_path]
             batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
                                                    token_to_idx, n_coding, top_k,
-                                                   config["batch_size"], "rtf", d.n_classifications;
+                                                   config["batch_size"], "rankfeat", d.n_classifications;
                                                    hvg_idx=nothing, use_oversmpl=false,
                                                    process_cell_topk_flat_fn=process_cell_topk_flat,
                                                    cell_to_dense_flat_fn=cell_to_dense_flat!)
             for (x_batch, y_batch) in batches
-                x_inv = sc_inverse_ranks_batch(x_batch, n_coding)
+                x_inv = x_batch   # "rankfeat" batches are already encoded (Preprocess.rank_features!)
                 x_gpu = CuArray(x_inv)
                 y_gpu = CuArray(y_batch)
                 logits = model(x_gpu)
@@ -300,7 +334,6 @@ for epoch in ProgressBar(1:n_total_epochs)
                 end
                 CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
             end
-            # if vi % 200 == 0; println("    val shard $vi/$(length(d.val_shard_paths))"); flush(stdout); end
             if vi % 200 == 0; println("    val shard $vi/$(length(val_paths))"); flush(stdout); end
         end
     else
@@ -324,58 +357,10 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
 
+    #                                                    token_to_idx, n_coding, top_k,
     if is_last
-        eval_losses = Float32[]
-        if is_streaming
-            # println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
-            println("  test eval ($(length(test_paths)) shards)"); flush(stdout)
-            # for (ti, shard_path) in enumerate(d.test_shard_paths)
-            for (ti, shard_path) in enumerate(test_paths)
-                cell_indices, cell_labels = d.test_shard_map[shard_path]
-                batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
-                                                       token_to_idx, n_coding, top_k,
-                                                       config["batch_size"], "rtf", d.n_classifications;
-                                                       hvg_idx=nothing, use_oversmpl=false,
-                                                       process_cell_topk_flat_fn=process_cell_topk_flat,
-                                                       cell_to_dense_flat_fn=cell_to_dense_flat!)
-                for (x_batch, y_batch) in batches
-                    x_inv = sc_inverse_ranks_batch(x_batch, n_coding)
-                    x_gpu = CuArray(x_inv)
-                    y_gpu = CuArray(y_batch)
-                    logits = model(x_gpu)
-                    if is_regression
-                        push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                        append!(epoch_preds, vec(cpu(logits)))
-                        append!(epoch_trues, vec(cpu(y_gpu)))
-                    else
-                        push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                        append!(epoch_preds, Flux.onecold(cpu(logits)))
-                        append!(epoch_trues, Flux.onecold(y_batch))
-                    end
-                    CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
-                end
-                # if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
-                if ti % 200 == 0; println("    test shard $ti/$(length(test_paths))"); flush(stdout); end
-            end
-        else
-            n_test = size(X_test, 2)
-            for s in 1:config["batch_size"]:n_test
-                e = min(s + config["batch_size"] - 1, n_test)
-                x_gpu = cu(X_test[:, s:e])
-                y_gpu = cu(y_test[:, s:e])
-                logits = model(x_gpu)
-                if is_regression
-                    push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                    append!(epoch_preds, vec(cpu(logits)))
-                    append!(epoch_trues, vec(cpu(y_gpu)))
-                else
-                    push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                    append!(epoch_preds, Flux.onecold(cpu(logits)))
-                    append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
-                end
-            end
-        end
-        push!(test_losses, mean(eval_losses))
+        final_test_loss, epoch_preds, epoch_trues = run_test(model)
+        push!(test_losses, final_test_loss)
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
     end
@@ -410,9 +395,31 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
 end
 
+
+# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
+# all_preds / all_trues above come from the final model
+opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+best_cpu = load_best_cpu(model, save_dir)
+best_preds, best_trues = if isnothing(best_cpu)
+    println("no best/ checkpoint found, best metrics = final model")
+    all_preds, all_trues
+else
+    best_model = fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(best_model)
+    _, bp, bt = run_test(best_model)
+    bp, bt
+end
+best_metrics = test_metrics(best_preds, best_trues, is_regression)
+final_metrics = test_metrics(all_preds, all_trues, is_regression)
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+println("test (best model, epoch $best_epoch): ", best_metrics)
+println("test (final model):         ", final_metrics)
+
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
     wb.summary["best_epoch"] = best_epoch
+    for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
+    for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
     wandb.finish()
 end
 
@@ -440,6 +447,8 @@ if is_regression
     end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=mlp_skip, r2=r2, pearson=pearson, rmse=rmse,
+               best_r2=best_metrics.r2, best_pearson=best_metrics.pearson, best_rmse=best_metrics.rmse,
+               final_r2=final_metrics.r2, final_pearson=final_metrics.pearson, final_rmse=final_metrics.rmse,
                id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
                id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
                id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
@@ -447,6 +456,6 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-               skip=mlp_skip, accuracy=acc, total_steps=global_step,
+               skip=mlp_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_epoch=best_epoch, best_val_loss=best_val_loss)
 end

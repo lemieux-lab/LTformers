@@ -14,7 +14,7 @@ config = load_config(args["config"], args,
 resolve_data_path!(config)
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
-config["modeltype"] == "emlp" || error("emlp.jl is MLP only; use elog.jl for -t elog (got $(config["modeltype"]))")
+config["modeltype"] == "elog" || error("elog.jl requires -t elog (got $(config["modeltype"]))")
 
 # seed
 seed = get(config, "seed", nothing)
@@ -47,14 +47,6 @@ else  # tahoe
 end
 
 n_hvg = get(config, "n_hvg", 0)
-# if n_hvg > 0 && n_hvg < size(data_expr, 1)
-#     n_orig = size(data_expr, 1)
-#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
-# end
-# # --n_hvg 0 = all genes -> save under <modeltype>_full/ so it doesn't mix with the default hvg-1024 runs
-# model_tag = n_hvg == 0 ? "$(config["modeltype"])_full" : config["modeltype"]
-# n_hvg == 0 && println("n_hvg = 0: using all $(size(data_expr, 1)) genes → saving as $model_tag")
 # lvl3: HVGs are selected on the same data as lvl1/2 but applied AFTER pairing (dsplit hvg_idx_lvl3), so the PC1
 # target, split and identity baseline use all genes and are identical between the full and HVG runs
 n_genes_all = size(data_expr, 1)
@@ -84,18 +76,10 @@ d = dsplit(data_expr, config;
 id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 # model
-# nonlinear MLP: tapered layers with relu + dropout
-sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-         for i in 0:config["n_layers"]+1]
-layers = []
-for i in 1:length(sizes)-1
-    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-    if i < length(sizes) - 1
-        push!(layers, Flux.Dropout(config["drop_prob"]))
-    end
-end
-model = Flux.Chain(layers...)
-model = fix_gpu_dropout(cu(model))
+# single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
+config["lr"] = 0.001
+model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
+model = cu(model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir

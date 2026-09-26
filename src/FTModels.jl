@@ -4,7 +4,7 @@ using Flux, CUDA, Functors, Statistics, JLD2
 
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
 using Models: Transf, RankModel, ExpModel, RankLReconModel, ExpLReconModel,
-              RankEReconModel, ExpEReconModel, encode, fix_gpu_dropout
+              RankEReconModel, ExpEReconModel, encode, fix_gpu_dropout, encode_rank, masked_mean_pool
 using Extract: get_embeds, get_embeds_lrecon, get_embeds_exp
 
 export RankClassifier, ExpClassifier
@@ -39,12 +39,14 @@ function RankClassifier(; n_genes::Int, embed_dim::Int, n_layers::Int,
 end
 
 function (m::RankClassifier)(x)
-    embedded = m.embedding(x)
-    pos_ids = cu(Int32.(1:size(embedded, 2)))
-    encoded = embedded .+ m.pos_emb(pos_ids)
-    dropped = m.emb_dropout(encoded)
-    transformed = m.transformer(dropped)
-    pooled = dropdims(mean(transformed, dims=2), dims=2)
+    # embedded = m.embedding(x)
+    # pos_ids = cu(Int32.(1:size(embedded, 2)))
+    # encoded = embedded .+ m.pos_emb(pos_ids)
+    # dropped = m.emb_dropout(encoded)
+    # transformed = m.transformer(dropped)
+    # pooled = dropdims(mean(transformed, dims=2), dims=2)
+    transformed, keep = encode_rank(m, x)          # PAD-aware attention (SC cells with < top_k detected genes)
+    pooled = masked_mean_pool(transformed, keep)   # mean over real tokens only
     return m.head(pooled)
 end
 
@@ -137,8 +139,10 @@ function RankFTModel(pt_model::RankEReconModel;
 end
 
 function (m::RankFTModel)(x)
-    transformed = encode(m.pretrained, x)
-    pooled = dropdims(mean(transformed, dims=2), dims=2)
+    # transformed = encode(m.pretrained, x)
+    # pooled = dropdims(mean(transformed, dims=2), dims=2)
+    transformed, keep = encode_rank(m.pretrained, x)   # PAD-aware
+    pooled = masked_mean_pool(transformed, keep)
     return m.head(pooled)
 end
 

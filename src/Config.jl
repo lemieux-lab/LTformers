@@ -210,9 +210,6 @@ function resolve_data_path!(config::Dict)
     if existing != "" && isfile(existing) && haskey(DATA_PATHS, fmt) && contains(existing, fmt)
         println("resolved data_path: $existing (from config)")
         path = existing
-    # elseif existing != "" && isfile(existing)
-    #     println("resolved data_path: $existing (from config)")
-    #     path = existing
     else
         if !haskey(DATA_PATHS, fmt)
             error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")

@@ -9,7 +9,6 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 
 args = load_pretrain_args()
-# config = load_config(args["config"], args)
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "lrecon", args["modeltype"]])
 
@@ -21,7 +20,8 @@ use_exp = config["modeltype"] == "etf"
 
 start_time = now()
 
-function get_target_embeds(model, x_clean, use_exp)
+# normalize=false returns raw teacher output (for the collapse monitor; standardized targets always have var ≈ 1)
+function get_target_embeds(model, x_clean, use_exp; normalize::Bool = true)
     if use_exp
         projected = model.proj(reshape(x_clean, 1, size(x_clean)...))
         gene_ids = cu(Int32.(1:size(x_clean, 1)))
@@ -31,8 +31,8 @@ function get_target_embeds(model, x_clean, use_exp)
         pos_ids = cu(Int32.(1:size(embedded, 2)))
         encoded = embedded .+ model.pos_emb(pos_ids)
     end
-    # return model.transformer(model.emb_dropout(encoded))
     raw = model.transformer(model.emb_dropout(encoded))
+    normalize || return raw
     mu = mean(raw, dims=3)
     sigma = std(raw, dims=3) .+ 1f-6
     return (raw .- mu) ./ sigma
@@ -56,40 +56,49 @@ if config["subset_ratio"] < 1.0
     println("subset: $(length(subset_idx))/$(n_total) samples")
 end
 
+# gene selection: ETF = top-n HVGs, RTF = full gene vocab + per-sample top_k truncation (matches mlm + finetune)
 n_hvg = get(config, "n_hvg", 0)
-if n_hvg > 0 && n_hvg < size(data_expr, 1)
-    n_orig = size(data_expr, 1)
-    data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-    println("HVG filter: $(n_orig) → $(n_hvg) genes")
+if use_exp
+    if n_hvg > 0 && n_hvg < size(data_expr, 1)
+        n_orig = size(data_expr, 1)
+        data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
+        println("HVG filter: $(n_orig) → $(n_hvg) genes")
+    end
+else
+    println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
-gene_medians = vec(median(data_expr, dims=2)) .+ 1f-10
+# train-split medians from file (scripts/pretrain/pb/compute_medians.jl), HVG subset for etf
+gene_medians = gene_medians_for(config, data_expr; hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 X_ranks = rank_genes(data_expr, gene_medians)
 
 n_genes = size(X_ranks, 1)
 MASK_ID = n_genes + 1
+top_k = get(config, "top_k", 1024)
+if !use_exp && top_k < n_genes
+    X_ranks = X_ranks[1:top_k, :]
+    println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
+end
+seq_len = use_exp ? n_genes : min(top_k, n_genes)
 
 # splits
-# _, _, train_indices, test_indices = ttsplit(X_ranks, 0.2f0)
+# seeded so every PB pretrain objective/modeltype shares one split; reseed after so masks/donors stay random per run
+Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
+Random.seed!()
 
 if use_exp
     X_expr = Float32.(data_expr)
     X_train = X_expr[:, train_indices]
     X_val = X_expr[:, val_indices]
     X_test = X_expr[:, test_indices]
-    X_ranks_train = X_ranks[:, train_indices]
-    X_ranks_val = X_ranks[:, val_indices]
-    X_ranks_test = X_ranks[:, test_indices]
 else
     X_train = X_ranks[:, train_indices]
     X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
-X_ranks_val = X_ranks[:, val_indices]
-X_ranks_test = X_ranks[:, test_indices]
+X_ranks_test = use_exp ? X_ranks[:, test_indices] : X_test # only test ranks are used (per-gene/per-rank diagnostics)
 if use_exp
-    inv_ranks_val = inverse_ranks(X_ranks_val)
     inv_ranks_test = inverse_ranks(X_ranks_test)
 end
 
@@ -101,7 +110,7 @@ model = if use_exp
 else
     RankLReconModel(n_genes=n_genes, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
                     n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                    dropout_prob=config["drop_prob"])
+                    dropout_prob=config["drop_prob"], seq_len=seq_len)
 end
 model = cu(model)
 model = fix_gpu_dropout(model)
@@ -132,12 +141,15 @@ end
 
 # save dir
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
-fmt = get(config, "data_format", "tahoe")
 dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-if n_hvg > 0
+# save split now (survives a crash before log_info) and next to every checkpoint (finetune reads <model_dir>/indices.jld2)
+save_indices(dir) = jldsave(joinpath(dir, "indices.jld2");
+                            train_indices=train_indices, val_indices=val_indices, test_indices=test_indices)
+save_indices(save_dir)
+if @isdefined(hvg_idx) # not defined when HVG filter skipped (RTF, or LINCS 978 < n_hvg)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
 
@@ -157,17 +169,19 @@ rank_error_counts = zeros(Int, n_genes)
 global_step = 0
 use_max_steps = config["max_steps"] > 0
 done = false
-# best_test_loss = Inf32
 best_val_loss = Inf32
 best_epoch = 0
 
-n_total_epochs = if use_max_steps
-    bpe = cld(size(X_train, 2), config["batch_size"])
-    cld(config["max_steps"], bpe)
-else
-    config["n_epochs"]
-end
-warmup_epochs = max(1, div(n_total_epochs, 10))
+bpe = cld(size(X_train, 2), config["batch_size"])
+n_total_epochs = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
+warmup_epochs = max(1, div(n_total_epochs, 10)) # still used for the frozen-teacher snapshot
+# per-step lr schedule (matches SC pretrain); per-epoch version ran the whole last epoch at lr = 0
+total_steps = use_max_steps ? config["max_steps"] : n_total_epochs * bpe
+warmup_steps = max(1, div(total_steps, 10))
+train_loss_maxes = Float32[]
+# val against a frozen teacher snapshot (taken after warmup): comparable across epochs, unlike the moving-teacher val_loss
+frozen_teacher = nothing
+val_losses_frozen = Float32[]
 X_train_masked = similar(X_train)
 if use_exp
     train_corrupt_mask = falses(size(X_train))
@@ -181,7 +195,6 @@ saved_positions = Int32[]
 for epoch in ProgressBar(1:n_total_epochs)
     done && break
     is_last = (epoch == n_total_epochs)
-    Optimisers.adjust!(opt, compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs))
 
     if use_exp
         corrupt_expr!(X_train_masked, train_corrupt_mask, X_train, config["mask_ratio"])
@@ -208,6 +221,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             mask_2d = Float32.(y_batch .!= -100)
         end
 
+        Optimisers.adjust!(opt, compute_lr_step(global_step + 1, total_steps, config["lr"], warmup_steps))
         l_val, grads = Flux.withgradient(model) do m
             masked_lrecon_loss(m, x_batch, target_embeds, mask_2d)[1]
         end
@@ -220,10 +234,11 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
     push!(train_losses, mean(epoch_losses))
+    push!(train_loss_maxes, maximum(epoch_losses))
 
     # collapse detect
     sample_clean = CuArray(X_train[:, 1:min(config["batch_size"], size(X_train, 2))])
-    sample_targets = get_target_embeds(ema_model, sample_clean, use_exp)
+    sample_targets = get_target_embeds(ema_model, sample_clean, use_exp; normalize=false)
     tgt_var = mean(cpu(var(sample_targets, dims=3)))
     push!(target_variances, Float32(tgt_var))
     if tgt_var < 1f-6
@@ -231,6 +246,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
 
     # val eval (every epoch for checkpt + sweep selection)
+    Flux.testmode!(model)
     val_eval_losses = Float32[]
     for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
         end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
@@ -244,14 +260,53 @@ for epoch in ProgressBar(1:n_total_epochs)
             y_batch = CuArray(y_val_masked[:, start_idx:end_idx])
             mask_2d = Float32.(y_batch .!= -100)
         end
-        # loss_val, _, _ = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
         loss_val, _, _ = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
         push!(val_eval_losses, cpu(loss_val))
     end
     push!(val_losses, mean(val_eval_losses))
 
+    # frozen-teacher val: snapshot the teacher at the end of warmup, then score the student against its targets
+    if epoch == warmup_epochs
+        global frozen_teacher = deepcopy(ema_model)
+        Flux.testmode!(frozen_teacher)
+    end
+    if isnothing(frozen_teacher)
+        push!(val_losses_frozen, NaN32)
+    else
+        frozen_eval_losses = Float32[]
+        for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
+            end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
+            x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
+            frozen_targets = get_target_embeds(frozen_teacher, CuArray(X_val[:, start_idx:end_idx]), use_exp)
+            mask_2d = use_exp ? CuArray(Float32.(val_corrupt_mask[:, start_idx:end_idx])) :
+                                Float32.(CuArray(y_val_masked[:, start_idx:end_idx]) .!= -100)
+            push!(frozen_eval_losses, masked_lrecon_loss(model, x_batch, frozen_targets, mask_2d)[1])
+        end
+        push!(val_losses_frozen, mean(frozen_eval_losses))
+    end
+
+    # save best before the last-epoch reload so a best final epoch isn't overwritten by the older checkpoint
+    if val_losses[end] < best_val_loss
+        global best_val_loss = val_losses[end]
+        global best_epoch = epoch
+        mkpath(joinpath(save_dir, "best"))
+        log_model(model, joinpath(save_dir, "best"), config)
+        mkpath(joinpath(save_dir, "best", "ema"))
+        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
+        isfile(joinpath(save_dir, "best", "indices.jld2")) || save_indices(joinpath(save_dir, "best"))
+    end
+
     # test eval (final epoch only)
     is_last = is_last || done
+
+    # save the end-of-training student + teacher before the best reload: finetuning uses <run>/final for lrecon
+    # (moving-teacher val picks the epoch with the easiest targets, not the best representation)
+    if is_last
+        mkpath(joinpath(save_dir, "final", "ema"))
+        log_model(model, joinpath(save_dir, "final"), config)
+        log_model(ema_model, joinpath(save_dir, "final", "ema"), config)
+        save_indices(joinpath(save_dir, "final"))
+    end
 
     # reload best checkpoint for test eval
     if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
@@ -259,7 +314,17 @@ for epoch in ProgressBar(1:n_total_epochs)
         model_cpu = cpu(model)
         Flux.loadmodel!(model_cpu, best_state)
         global model = fix_gpu_dropout(cu(model_cpu))
+        Flux.testmode!(model)
         println("reloaded best model (epoch $best_epoch) for test eval")
+        # also reload the best-epoch teacher so test targets match the student
+        ema_path = joinpath(save_dir, "best", "ema", "model_state.jld2")
+        if isfile(ema_path)
+            ema_cpu = cpu(ema_model)
+            Flux.loadmodel!(ema_cpu, load(ema_path)["model_state"])
+            global ema_model = fix_gpu_dropout(cu(ema_cpu))
+            Flux.testmode!(ema_model)
+            println("reloaded best teacher (epoch $best_epoch) for test targets")
+        end
     end
 
     eval_losses = Float32[]
@@ -283,15 +348,14 @@ for epoch in ProgressBar(1:n_total_epochs)
                 mask_cpu = cpu(mask_bool)
             end
 
-            # loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(ema_model, x_batch, target_embeds, mask_2d)
             loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
             push!(eval_losses, cpu(loss_val))
 
             if !isnothing(decoded_masked)
                 dec_cpu = cpu(decoded_masked)
                 tgt_cpu = cpu(tgt_masked)
-                ranks_batch = X_ranks_test[:, start_idx:min(end_idx, size(X_ranks_test, 2))]
-                inv_ranks_batch = use_exp ? inv_ranks_test[:, start_idx:min(end_idx, size(inv_ranks_test, 2))] : nothing
+                ranks_batch = X_ranks_test[:, start_idx:end_idx]
+                inv_ranks_batch = use_exp ? inv_ranks_test[:, start_idx:end_idx] : nothing
                 embed_dim_local = size(dec_cpu, 1)
                 masked_idx = 0
                 for j in 1:size(mask_cpu, 2)
@@ -329,33 +393,23 @@ for epoch in ProgressBar(1:n_total_epochs)
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
                         "val_loss" => val_losses[end],
                         "target_variance" => target_variances[end],
+                        "train_loss_max" => train_loss_maxes[end],
                         "global_step" => global_step)
+        isnan(val_losses_frozen[end]) || (log_dict["val_loss_frozen"] = val_losses_frozen[end])
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
         end
         wb.log(log_dict)
     end
 
-    if val_losses[end] < best_val_loss
-        global best_val_loss = val_losses[end]
-        global best_epoch = epoch
-        mkpath(joinpath(save_dir, "best"))
-        # log_model(ema_model, joinpath(save_dir, "best"), config)
-        log_model(model, joinpath(save_dir, "best"), config)
-        mkpath(joinpath(save_dir, "best", "ema"))
-        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
-    end
+    # moved above the reload
+    #     log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
 end
 
 # log
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss";
          val_losses=val_losses)
 
-# pred_matrix = reduce(hcat, saved_preds)
-# target_matrix = reduce(hcat, saved_targets)
-# jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2");
-#     preds=pred_matrix, targets=target_matrix, positions=saved_positions,
-#     target_variances=target_variances)
 # cap diagnostics to avoid multi-GB files (sep24figs uses 200k tokens, >=100 per position)
 MAX_DIAG_TOKENS = 250_000
 diag_idx = length(saved_preds) > MAX_DIAG_TOKENS ?
@@ -364,7 +418,8 @@ pred_matrix = reduce(hcat, saved_preds[diag_idx])
 target_matrix = reduce(hcat, saved_targets[diag_idx])
 jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2");
     preds=pred_matrix, targets=target_matrix, positions=saved_positions[diag_idx],
-    target_variances=target_variances, n_total_tokens=length(saved_preds))
+    target_variances=target_variances, n_total_tokens=length(saved_preds),
+    val_losses_frozen=val_losses_frozen)
 
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
                     "mean embedding MSE", "per_gene_error";
@@ -372,17 +427,16 @@ plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
 plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir,
                            "mean embedding MSE", "per_rank_error")
 
-# log_model(ema_model, save_dir, config)
 log_model(model, save_dir, config)
 mkpath(joinpath(save_dir, "ema"))
 log_model(ema_model, joinpath(save_dir, "ema"), config)  # teacher, needed to rebuild lrecon targets
 log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
-           target_variances=target_variances,
+           target_variances=target_variances, train_loss_maxes=train_loss_maxes,
            X_test_masked=X_test_masked,
-           y_test_masked=use_exp ? test_corrupt_mask : y_test_masked,
-           X_test=use_exp ? X_expr[:, test_indices] : X_test)
+           y_test_masked=use_exp ? test_corrupt_mask : y_test_masked)
+           # X_test=use_exp ? X_expr[:, test_indices] : X_test)  # ignored by log_info
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

@@ -1998,7 +1998,12 @@ a2 (TAHOE)
         -- RUNNING entvec.jl, t_vec.jl (2)
         -- finished pb ent.jl, l_vec.jl
     -- lvl3 cl selection
-        -- RUNNING cl choices eval on Tahoe (1)
+        -- done cl choices eval on Tahoe
+            -- no bueno, the identity baseline and mlp baselines are very very strong. 
+            -- this could be because PC1 is an axis shared by every line
+            -- thus we can try subtracting each compound's mean response across all cell lines before taking PC1
+            -- probably no need to do this for LINCS as well since LINCS has so much variance between cell lines
+            -- double-check w/ seb tho!
     -- results
         -- fixes:
             -- error plots on best-epoch model instead of final model in pb pt
@@ -2042,23 +2047,149 @@ a2 (TAHOE)
                 -- also cleaned the .sh files for slurm on CQ
                 -- do i even need a seed??
             -- should be ok to re-run sweeps
-            -- RUNNING 
+            -- RUNNING rmlp, emlp lvl1 sweeps (2,1:10, CQ)
 -- pre-train
     -- pb
         -- TODO good runs
             -- RUNNING mlm rtf long run (1)
             -- RUNNING redo sweeps of rtf, etf lrecon (2)
         -- TODO sweeps
-            -- RUNNING mlm rtf, lrecon rtf, lrecon etf (3, CQ)
+            -- tried mlm rtf, lrecon rtf, lrecon etf
                 -- mlm rtf again w/ different range: lr=(0.001,0.01)
-                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) (1)
-                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) (1)
+                -- lrecon again w/ different ranges: lr=(0.0001, 0.0025), ema_decay=(0.7, 0.9) 
+                -- lrecon etf  again w/ different rages: ema_decay=(0.95,0.999) 
             -- need to re-run lrecon again bc files were changed (normalization)
                 -- also did fixes on processSC.jl so no data race
-            -- nan inputs on mlm etf? maybe need to re-run this, checking:
+            -- nan inputs on mlm etf? fixed; this is due to data race issue
+            -- RUNNING redo of mlm rtf, mlm etf, lrecon rtf, lrecon etf (4,1:10, CQ) (see above for why)
         -- TODO good runs
 -- fine-tune
     -- pb
         -- TODO sweeps
     -- sc
         -- waiting on pre-train
+
+-- ok so code review, lots of issues:
+    -- pb
+        -- re-did ranking such that we take median over only nonzero samples
+        -- proper checkpointing and plotting
+        -- made HVG selection ETF-only
+    -- sc
+        -- re-did ranking such that we take median over only nonzero samples
+        -- etf prev. used top-k truncation instead of hvg 
+        -- lrecon didn't have testmode so dropout was used
+        -- pretraining lr schedule implemented
+        -- mlm per-gene and per-rank error plots were empty
+        -- lrecon target_variance is now raw teacher embedding variance
+        -- best checkpoint now does not override the final checkpoint
+    -- need to re-run:
+        -- pb
+            -- all rank sweeps
+            -- all rank baselines
+        -- sc
+            -- everything? only had results from some pre-trainings anyways, so whatever?
+    -- need to figure out a way to run sweeps in a faster manner (maybe outside of wandb) for slightly less important things?
+        -- ex, for baselines can just run baby sweeps, just need big sweeps for pretraining and finetuning w/ pt?
+        -- would random search be faster? then early stopping is not an issue
+            -- one issue that may come up is the lrecon best/ checkpoint, it sometimes only picks hte best model because the teacher targets are easy
+    -- now redo all elog, rlogs w/ new ranking method:
+        -- lincs lvl1, lvl2
+        -- tahoe lvl1, lvl2
+    -- also need emlp, rmlp sweeps again... how to do this faster without taking as much time?
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 26 2026 ###
+
+-- from recent meetings:
+    -- distance vectors
+        -- re-RUNNING entvec.jl, t_vec.jl, pb ent.jl, l_vec. (4)
+            -- since ranking method has changed
+    -- lvl3 cl selection
+        -- RUNNING tahoe cl choices but w/ each compound's mean across all cl subtracted (1)
+            -- fyi makes no sense to subtract compounds mean per cell line:
+                -- pca already centers, by doing that we would just look at per-replicate noisier
+
+-- from refactor:
+    -- in sc pre-training scripts:
+        -- lr schedule fix (prev. lr at epoch 2 was 0 and w/ 160k steps, we only have 2eps)
+        -- checkpointing
+        -- hvg input for erecon/lrecon etf
+        -- mlm plotting
+    -- in pb pre-training scripts:
+        -- mlm rtf crash
+        -- lincs crashes
+        -- top-k input for erecon/lrecon rtf
+    -- note: about 38% of sc cells detect fewer than 1024 genes. options:
+        -- like gf, attenion mask + padding
+        -- noise/random fill or fixed order fill
+    -- for baseline scripts:
+        -- ranking changed from rank/n to (n_det + 1 - r)/n 
+            -- aka from (top gene ≈ 0.001, last = 1) to (top gene ≈ 1, last ≈ 0.001) 
+            -- w/ absent genes = 0 (thus this aligns more with last being close to 0)
+            -- also divide by n_det instead of n, so the top value doesn't depend on detection depth
+    -- for rtf scripts:
+        -- ranking changed from subtracting median to subtracting nonzero median
+            -- could also consider subtracting median based on train test split 
+                -- but in trying this on LINCS, there is not much of a difference so whatever
+        -- thus no need to re-run LINCS pre-trainings! (even tho still need to run these i think?)
+
+-- need to REDO:
+    -- tpb
+        -- pre-training
+            -- mlm rtf, mlm etf, erecon rtf, erecon etf, lrecon rtf, lrecon etf sweeps + final runs
+        -- baselines
+            -- rtf sweeps + final runs
+            -- rmlp sweep (top-1024, full) + final runs
+            -- emlp sweep (1024-hvg, full) + final runs
+            -- rlog (top-1024, full) final runs
+            -- elog (1024-hvg, full) final runs
+    -- tsc
+        -- all (barely had anything anyways)
+    -- lincs
+        -- pre-training
+            -- all (don't have anything atm)
+        -- baselines
+            -- rtf sweep + final runs
+            -- rmlp sweep + final runs
+            -- rlog final runs
+-- can KEEP:
+    -- tpb
+        -- etf
+    -- lincs
+        -- etf, emlp, elog
+
+a1 (LINCS)
+-- baselines
+    -- TODO rtf/rmlp/rlog for lvl1, lvl2
+    -- TODO rtf/rmlp/rlog, etf/emlp/elog for lvl3
+-- pre-train 
+    -- TODO sweeps
+-- fine-tune
+    -- waiting on pre-train
+
+a2 (TAHOE)
+-- baselines
+    -- pb
+        -- TODO elog/emlp on 1024-hvg, full for lvl1, lvl2
+        -- TODO rlog/rmlp on top-1024, full for lvl1, lvl2
+        -- TODO rtf sweeps for lvl1, lvl2
+    -- sc
+        -- TODO all sweeps
+-- pre-train
+    -- pb
+        -- TODO all sweeps
+-- fine-tune
+    -- pb
+        -- waiting on pre-train
+    -- sc
+        -- waiting on pre-train
+
+completed: 
+-- LINCS
+    -- etf/emlp/elog for lvl1, lvl2
+-- TPB
+    -- etf for lvl1, lvl2
+
+i think i will just redo everything. 
+

@@ -2,6 +2,10 @@ module ProcessLabels
 
 using Flux, JLD2, Random, StatsBase, Statistics, DataFrames, MultivariateStats
 
+let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
+# using Preprocess: nonzero_medians
+using Preprocess: nonzero_medians, gene_medians_for, rank_feature_k, rank_features
+
 export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline
 
 
@@ -36,42 +40,6 @@ function get_labels(data_expr::Matrix{Float32}, df::DataFrame, level::String)
     end
 end
 
-# --- old single-gene lvl3 (replaced by PCA-based approach) ---
-# # lincs lvl3: need to pair compounds across two cell lines
-# # TODO need to still implement tahoe!!!
-# function get_regression_pairs(expr::Matrix{Float32}, inst::DataFrame, gene_df::DataFrame,
-#                               source_cell::Symbol, target_cell::Symbol, target_gene::String)
-#     gene_idx = findfirst(gene_df.gene_symbol .== target_gene)
-#     isnothing(gene_idx) && error("target gene '$target_gene' not found in gene DataFrame")
-#     println("target gene: $target_gene (index $gene_idx)")
-#
-#     src_mask = inst.cell_iname .== source_cell
-#     tgt_mask = inst.cell_iname .== target_cell
-#     println("source cell line $source_cell: $(sum(src_mask)) samples")
-#     println("target cell line $target_cell: $(sum(tgt_mask)) samples")
-#
-#     src_perts = Set(inst.pert_id[src_mask])
-#     tgt_perts = Set(inst.pert_id[tgt_mask])
-#     shared_perts = sort(collect(intersect(src_perts, tgt_perts)))
-#
-#     filter!(p -> p != :DMSO && p != Symbol("DMSO"), shared_perts)
-#     println("shared pert_ids (excl. DMSO): $(length(shared_perts))")
-#
-#     n_genes = size(expr, 1)
-#     n_compounds = length(shared_perts)
-#     X_paired = Matrix{Float32}(undef, n_genes, n_compounds) # source cell line means
-#     y_paired = Matrix{Float32}(undef, 1, n_compounds) # target gene in target cell
-#
-#     for (k, pid) in enumerate(shared_perts)
-#         src_idx = findall((inst.pert_id .== pid) .& src_mask)
-#         tgt_idx = findall((inst.pert_id .== pid) .& tgt_mask)
-#         X_paired[:, k] = vec(mean(expr[:, src_idx], dims=2))
-#         y_paired[1, k] = mean(expr[gene_idx, tgt_idx])
-#     end
-#
-#     return X_paired, y_paired, shared_perts
-# end
-
 # --- PCA-based lvl3: predict PC1 of target cell line compound-mean profiles ---
 
 """
@@ -84,8 +52,13 @@ and returns source means as X and target PC1 scores as y.
 Returns: (X_paired, y_paired, shared_perts, pca_model, split)
 PCA is fit on train-split target compounds only; `split` holds compound indices.
 """
-function _compound_split(n::Int; val_ratio::AbstractFloat=0.1f0, test_ratio::AbstractFloat=0.1f0)
-    idx = shuffle(1:n)
+# function _compound_split(n::Int; val_ratio::AbstractFloat=0.1f0, test_ratio::AbstractFloat=0.1f0)
+#     idx = shuffle(1:n)
+# seeded (local RNG, global stream untouched): every lvl3 run for a source/target pair gets the same compounds in
+# train/val/test and hence the same PCA/PC1 targets and identity baseline, whatever the model or gene set
+# (was: a new random split per run, so e.g. elog vs elog_full lvl3 results weren't comparable)
+function _compound_split(n::Int; val_ratio::AbstractFloat=0.1f0, test_ratio::AbstractFloat=0.1f0, seed::Integer=42)
+    idx = shuffle(MersenneTwister(seed), 1:n)
     n_test = floor(Int, n * test_ratio)
     n_val  = floor(Int, n * val_ratio)
     s_test = n - n_test
@@ -116,10 +89,7 @@ function get_regression_pairs_pca(expr::Matrix{Float32},
         src_means[:, k] = vec(mean(expr[:, src_idx], dims=2))
         tgt_means[:, k] = vec(mean(expr[:, tgt_idx], dims=2))
     end
-
-    # fit PCA on target compound-means (observations as columns)
-    # pca_model = MultivariateStats.fit(PCA, Float64.(tgt_means); maxoutdim=2)
-    # pc_scores = Float32.(MultivariateStats.transform(pca_model, Float64.(tgt_means)))  # (2 x n_compounds)
+    
     # fit on train compounds only so test compounds don't shape the PC1 axis
     split = _compound_split(n_compounds; val_ratio=val_ratio, test_ratio=test_ratio)
     pca_model = MultivariateStats.fit(PCA, Float64.(tgt_means[:, split.train_idx]); maxoutdim=2)
@@ -135,11 +105,9 @@ function get_regression_pairs_pca(expr::Matrix{Float32},
 
     # bimodality coefficient for PC1: BC = (skewness² + 1) / kurtosis
     pc1_vals = pc_scores[1, :]
-    # m = mean(pc1_vals); s = std(pc1_vals)
     pc1_train = pc1_vals[split.train_idx]
     m = mean(pc1_train); s = std(pc1_train)
     if s > 0
-        # z = (pc1_vals .- m) ./ s
         z = (pc1_train .- m) ./ s
         skw = mean(z .^ 3)
         krt = mean(z .^ 4)
@@ -151,7 +119,6 @@ function get_regression_pairs_pca(expr::Matrix{Float32},
     y_paired = reshape(pc1_vals, 1, n_compounds)
     X_paired = src_means
 
-    # return X_paired, y_paired, shared_perts, pca_model
     return X_paired, y_paired, shared_perts, pca_model, split
 end
 
@@ -174,12 +141,8 @@ function get_regression_pairs(expr::Matrix{Float32}, inst::DataFrame, gene_df::D
     println("source cell line $source_cell: $(sum(src_mask)) samples")
     println("target cell line $target_cell: $(sum(tgt_mask)) samples")
 
-    # X, y, perts, pca = get_regression_pairs_pca(expr, src_mask, tgt_mask,
-    #                                               inst.pert_id, inst.pert_id)
     X, y, perts, pca, split = get_regression_pairs_pca(expr, src_mask, tgt_mask,
                                                          inst.pert_id, inst.pert_id)
-    # return X, y, perts
-    # return X, y, perts, pca
     return X, y, perts, pca, split
 end
 
@@ -206,12 +169,8 @@ function get_regression_pairs(expr::Matrix{Float32}, df::DataFrame,
     println("source cell line $source_cell: $(sum(src_mask)) samples")
     println("target cell line $target_cell: $(sum(tgt_mask)) samples")
 
-    # X, y, perts, pca = get_regression_pairs_pca(expr, src_mask, tgt_mask,
-    #                                               df.drug, df.drug)
     X, y, perts, pca, split = get_regression_pairs_pca(expr, src_mask, tgt_mask,
                                                          df.drug, df.drug)
-    # return X, y, perts
-    # return X, y, perts, pca
     return X, y, perts, pca, split
 end
 
@@ -274,6 +233,14 @@ function get_pt_idx(label_idx, model_dir::String)
         return nothing, nothing, nothing, nothing
     end
     indices_path = "$model_dir/indices.jld2"
+    # checkpoints live in <run>/best or <run>/final but indices.jld2 is written to <run>/ -> fall back to the parent
+    if !isfile(indices_path) && basename(rstrip(model_dir, '/')) in ("best", "final")
+        parent_path = joinpath(dirname(rstrip(model_dir, '/')), "indices.jld2")
+        if isfile(parent_path)
+            println("using pretrain split from $parent_path")
+            indices_path = parent_path
+        end
+    end
     if !isfile(indices_path)
         println("no $indices_path, using new random split")
         return nothing, nothing, nothing, nothing
@@ -297,7 +264,8 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
                 ttsplit_fn = error("ttsplit_fn required"),
                 tvsplit_fn = nothing,
                 rank_genes_fn = error("rank_genes_fn required"),
-                inverse_ranks_fn = nothing)
+                inverse_ranks_fn = nothing,
+                hvg_idx_lvl3 = nothing)   # expression models, lvl3: HVG subset applied after pairing (targets use all genes)
     fmt = get(config, "data_format", "tahoe")
 
     if config["level"] == "lvl3"
@@ -306,13 +274,9 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         dose = get(config, "dose", "")
         if fmt == "lincs"
             isnothing(inst_df) && error("dsplit lvl3: inst_df required for LINCS regression")
-            # X, y, shared_perts = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
-            # X, y, shared_perts, pca_model = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
             X, y, shared_perts, pca_model, split = get_regression_pairs(data, inst_df, gene_df, src, tgt; dose=dose)
         else  # tahoe PB
             isnothing(label_source) && error("dsplit lvl3: label_source (DataFrame) required for Tahoe PB regression")
-            # X, y, shared_perts = get_regression_pairs(data, label_source, src, tgt; dose=dose)
-            # X, y, shared_perts, pca_model = get_regression_pairs(data, label_source, src, tgt; dose=dose)
             X, y, shared_perts, pca_model, split = get_regression_pairs(data, label_source, src, tgt; dose=dose)
         end
         n_genes = size(X, 1)
@@ -321,24 +285,30 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         # computed on raw expression, before any rank transform
         id_baseline = identity_baseline(X[:, test_idx], y[:, test_idx], pca_model)
 
+        if !isnothing(hvg_idx_lvl3) && config["modeltype"] in ("etf", "emlp", "elog")
+            X = X[hvg_idx_lvl3, :]
+            n_genes = size(X, 1)
+        end
+
         if config["modeltype"] == "rtf"
-            gene_medians = vec(median(X, dims=2)) .+ 1f-10
+            # gene_medians = nonzero_medians(X)
+            gene_medians = gene_medians_for(config, X)   # train-split medians from file (Preprocess)
             X = rank_genes_fn(X, gene_medians)
         elseif config["modeltype"] in ("rmlp", "rlog")
             isnothing(inverse_ranks_fn) && error("dsplit lvl3: inverse_ranks_fn required for $(config["modeltype"])")
-            gene_medians = vec(median(X, dims=2)) .+ 1f-10
+            # gene_medians = nonzero_medians(X)
+            # X_ranked = rank_genes_fn(X, gene_medians)
+            # X = Float32.(inverse_ranks_fn(X_ranked)) ./ Float32(n_genes)
+            gene_medians = gene_medians_for(config, X)
             X_ranked = rank_genes_fn(X, gene_medians)
-            X = Float32.(inverse_ranks_fn(X_ranked)) ./ Float32(n_genes)
+            # top-k: (k+1-r)/k, absent 0; full (--rank_top_k 0): (n_det+1-r)/n, undetected 0 (Preprocess.rank_features)
+            X = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes);
+                         encoding=Symbol(get(config, "rank_encoding", "rev")))
         end
 
-        # X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
         X_train, X_val, X_test = X[:, train_idx], X[:, val_idx], X[:, test_idx]
         y_train, y_val, y_test = y[:, train_idx], y[:, val_idx], y[:, test_idx]
 
-        # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-        #           n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing)
-        # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-        #           n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing, pca_model)
         return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
                   n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing, pca_model, id_baseline)
     end
@@ -360,7 +330,6 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         return shuffled[n_val+1:end], shuffled[1:n_val]
     end
 
-    # if config["modeltype"] == "emlp"
     if config["modeltype"] in ("emlp", "elog")
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
@@ -383,12 +352,15 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
             X_train, X_val, X_test = X[:, train_idx], X[:, val_idx], X[:, test_idx]
         end
 
-    # elseif config["modeltype"] == "rmlp"
     elseif config["modeltype"] in ("rmlp", "rlog")
-        gene_medians = vec(median(X, dims=2)) .+ 1f-10
+        # gene_medians = nonzero_medians(X)
+        # X_ranked = rank_genes_fn(X, gene_medians)
+        # X_inv = Float32.(inverse_ranks_fn(X_ranked)) ./ Float32(n_genes)
+        gene_medians = gene_medians_for(config, X)   # train-split medians from file (Preprocess)
         X_ranked = rank_genes_fn(X, gene_medians)
-        # X_inv = inverse_ranks_fn(X_ranked)
-        X_inv = Float32.(inverse_ranks_fn(X_ranked)) ./ Float32(n_genes)
+        # top-k: (k+1-r)/k, absent 0; full (--rank_top_k 0): (n_det+1-r)/n, undetected 0 (Preprocess.rank_features)
+        X_inv = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes);
+                         encoding=Symbol(get(config, "rank_encoding", "rev")))
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_inv, 0.1f0, 0.1f0)
@@ -400,7 +372,8 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         end
 
     else  # rtf
-        gene_medians = vec(median(X, dims=2)) .+ 1f-10
+        # gene_medians = nonzero_medians(X)
+        gene_medians = gene_medians_for(config, X)   # train-split medians from file, same as pretraining
         X_ranked = rank_genes_fn(X, gene_medians)
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
@@ -416,11 +389,7 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     y_train, y_val, y_test = y_oh[:, train_idx], y_oh[:, val_idx], y_oh[:, test_idx]
 
     cidx_dict, cs = config["level"] == "lvl2" ? oversmpl(y_train) : (nothing, nothing)
-
-    # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-    #           n_genes, n_classifications=n_cls, cidx_dict, cs)
-    # return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
-    #           n_genes, n_classifications=n_cls, cidx_dict, cs, pca_model=nothing)
+    
     return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
               n_genes, n_classifications=n_cls, cidx_dict, cs, pca_model=nothing, id_baseline=nothing)
 end

@@ -14,7 +14,7 @@ config = load_config(args["config"], args,
 resolve_data_path!(config)
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
-config["modeltype"] == "emlp" || error("emlp.jl is MLP only; use elog.jl for -t elog (got $(config["modeltype"]))")
+config["modeltype"] == "rlog" || error("rlog.jl requires -t rlog (got $(config["modeltype"]))")
 
 # seed
 seed = get(config, "seed", nothing)
@@ -46,31 +46,7 @@ else  # tahoe
     meta_df = data
 end
 
-n_hvg = get(config, "n_hvg", 0)
-# if n_hvg > 0 && n_hvg < size(data_expr, 1)
-#     n_orig = size(data_expr, 1)
-#     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-#     println("HVG filter: $(n_orig) → $(n_hvg) genes")
-# end
-# # --n_hvg 0 = all genes -> save under <modeltype>_full/ so it doesn't mix with the default hvg-1024 runs
-# model_tag = n_hvg == 0 ? "$(config["modeltype"])_full" : config["modeltype"]
-# n_hvg == 0 && println("n_hvg = 0: using all $(size(data_expr, 1)) genes → saving as $model_tag")
-# lvl3: HVGs are selected on the same data as lvl1/2 but applied AFTER pairing (dsplit hvg_idx_lvl3), so the PC1
-# target, split and identity baseline use all genes and are identical between the full and HVG runs
-n_genes_all = size(data_expr, 1)
-hvg_idx_lvl3 = nothing
-if n_hvg > 0 && n_hvg < n_genes_all
-    if config["level"] == "lvl3"
-        _, hvg_idx_lvl3 = select_hvg(data_expr, n_hvg)
-        println("HVG filter (lvl3, applied after pairing): $(n_genes_all) → $(n_hvg) genes")
-    else
-        data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
-        println("HVG filter: $(n_genes_all) → $(n_hvg) genes")
-    end
-end
-n_used = (n_hvg > 0 && n_hvg < n_genes_all) ? n_hvg : n_genes_all
-model_tag = gene_set_tag(config["modeltype"], n_used, n_genes_all; kind="hvg")
-println("gene set: $n_used of $n_genes_all genes → saving as $model_tag")
+# mlp_rtf: no HVG, uses inverse ranks of all genes
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -78,24 +54,24 @@ d = dsplit(data_expr, config;
            inst_df=(fmt == "lincs" && !isa(data, Matrix) ? data.inst : nothing),
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes,
-           hvg_idx_lvl3=hvg_idx_lvl3)
+           inverse_ranks_fn=inverse_ranks)
+
+# # rank_top_k: give rlog/rmlp the same info as rtf (only each sample's top-k genes by rank)
+rank_k = rank_feature_k(config, d.n_genes)
+# model_tag = rank_k < d.n_genes || d.n_genes <= get(config, "top_k", 1024) ? config["modeltype"] : "$(config["modeltype"])_full"
+model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")   # _topk<k> for non-default k (no folder collisions)
+rank_enc = get(config, "rank_encoding", "rev")   # non-default encodings get their own folder (e.g. rlog_logrank/)
+rank_enc == "rev" || (model_tag *= "_$(rank_enc)")
+println("rank features: k=$rank_k of $(d.n_genes) genes → saving as $model_tag")
 
 # identity baseline for lvl3
 id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 # model
-# nonlinear MLP: tapered layers with relu + dropout
-sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-         for i in 0:config["n_layers"]+1]
-layers = []
-for i in 1:length(sizes)-1
-    push!(layers, Flux.Dense(sizes[i] => sizes[i+1], i < length(sizes)-1 ? relu : identity))
-    if i < length(sizes) - 1
-        push!(layers, Flux.Dropout(config["drop_prob"]))
-    end
-end
-model = Flux.Chain(layers...)
-model = fix_gpu_dropout(cu(model))
+# single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
+config["lr"] = 0.001
+model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
+model = cu(model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
@@ -136,7 +112,7 @@ function run_test(m)
     n_test = size(d.X_test, 2)
     for s in 1:config["batch_size"]:n_test
         e = min(s + config["batch_size"] - 1, n_test)
-        x_gpu = cu(d.X_test[:, s:e])
+        x_gpu = cu(Float32.(d.X_test[:, s:e]))
         y_gpu = cu(d.y_test[:, s:e])
         logits = m(x_gpu)
         if is_regression
@@ -172,7 +148,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             batch_idx = perm[s:e]
         end
 
-        x_gpu = cu(d.X_train[:, batch_idx])
+        x_gpu = cu(Float32.(d.X_train[:, batch_idx]))
         y_gpu = cu(d.y_train[:, batch_idx])
 
         lv, grads = Flux.withgradient(model) do m
@@ -194,7 +170,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     n_val = size(d.X_val, 2)
     for s in 1:config["batch_size"]:n_val
         e = min(s + config["batch_size"] - 1, n_val)
-        x_gpu = cu(d.X_val[:, s:e])
+        x_gpu = cu(Float32.(d.X_val[:, s:e]))
         y_gpu = cu(d.y_val[:, s:e])
         logits = model(x_gpu)
         if is_regression

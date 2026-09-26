@@ -1,9 +1,12 @@
 module Log
 
-using Flux, JLD2
+# using Flux, JLD2
+using Flux, JLD2, Statistics
 
 export pretrain_skip, finetune_skip, finetune_no_pt_skip, mlp_skip
 export log_model, log_info, log_params
+export load_best_cpu, test_metrics
+export save_best
 
 
 # skip sets
@@ -29,6 +32,28 @@ function log_model(model, save_dir::String)
     jldsave("$save_dir/model_state.jld2"; model_state=Flux.state(model_cpu))
 end
 
+# cpu copy of `model` with the best-val checkpoint from <save_dir>/best loaded (the in-memory final model is untouched);
+# nothing if no checkpoint was saved. caller moves it to gpu: fix_gpu_dropout(cu(m))
+function load_best_cpu(model, save_dir::String)
+    path = joinpath(save_dir, "best", "model_state.jld2")
+    isfile(path) || return nothing
+    m = deepcopy(cpu(model))   # cpu() is a no-op (no copy) for a model already on cpu
+    Flux.loadmodel!(m, load(path)["model_state"])
+    return m
+end
+
+# test metrics from collected predictions: accuracy (classification) or r2/pearson/rmse (regression)
+function test_metrics(preds, trues, is_regression::Bool)
+    if is_regression
+        isempty(preds) && return (r2=NaN, pearson=NaN, rmse=NaN)
+        r2 = 1.0 - sum((preds .- trues) .^ 2) / sum((trues .- mean(trues)) .^ 2)
+        return (r2=r2, pearson=cor(preds, trues), rmse=sqrt(mean((preds .- trues) .^ 2)))
+    else
+        isempty(preds) && return (accuracy=NaN,)
+        return (accuracy=mean(preds .== trues),)
+    end
+end
+
 function log_model(model, save_dir::String, config::Dict)
     log_model(model, save_dir)
     arch_keys = ["embed_dim", "hidden_dim", "n_heads", "n_layers", "drop_prob", "modeltype"]
@@ -47,6 +72,7 @@ function log_info(; train_indices,
                     all_preds = nothing,
                     all_trues = nothing,
                     target_variances = nothing,
+                    train_loss_maxes = nothing,
                     X_test_masked = nothing,
                     y_test_masked = nothing,
                     X_test = nothing)
@@ -67,6 +93,9 @@ function log_info(; train_indices,
     if !isnothing(target_variances)
         loss_kwargs[:target_variances] = target_variances
     end
+    if !isnothing(train_loss_maxes)
+        loss_kwargs[:train_loss_maxes] = train_loss_maxes # per-epoch max batch loss (spike diagnostic)
+    end
     jldsave(joinpath(save_dir, "losses.jld2"); loss_kwargs...)
 
     if !isnothing(all_preds)
@@ -77,10 +106,6 @@ function log_info(; train_indices,
         jldsave(joinpath(save_dir, "masked_test_data.jld2");
                 X = X_test_masked, y = y_test_masked)
     end
-    # test_data.jld2 no longer saved: X_test = X[:, test_indices] is rebuildable from indices.jld2
-    # if !isnothing(X_test)
-    #     jldsave(joinpath(save_dir, "test_data.jld2"); X = X_test)
-    # end
 end
 
 const _param_groups = [
@@ -91,7 +116,6 @@ const _param_groups = [
         "n_hvg", "top_k", "n_eval_shards", "subset_shards", "subset_ratio", "max_steps",
         "lr", "drop_prob", "mask_ratio", "ema_decay",
     ],
-    # "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "label_path"],
     "# finetune" => ["model_dir", "mode", "task", "level", "max_ft_steps", "ft_eval_shards", "label_path"],
     "# lvl3 references/targets" => ["source_cell", "target_cell", "target_gene"],
     "# misc" => ["wandb_mode", "additional_notes"],
@@ -133,6 +157,19 @@ function log_params(config::Dict, gpu_info::String, run_hours, run_minutes, save
                 println(io, "$k = $v")
             end
         end
+    end
+end
+
+
+
+# best-val checkpoint -> <save_dir>/best (+ best/ema for an EMA teacher); reload with load_best_cpu
+function save_best(model, save_dir::String, config::Dict; ema = nothing)
+    best = joinpath(save_dir, "best")
+    mkpath(best)
+    log_model(model, best, config)
+    if !isnothing(ema)
+        mkpath(joinpath(best, "ema"))
+        log_model(ema, joinpath(best, "ema"), config)
     end
 end
 

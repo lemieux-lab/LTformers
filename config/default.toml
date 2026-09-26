@@ -20,12 +20,13 @@ n_heads = 2
 n_layers = 2
 n_hvg = 1024 # for ETF
 top_k = 1024 # for RTF
-hvg_path = "data/hvg_indices.jld2" # pre-computed HVG indices for SC-ETF (30-shard, 846k cells)
+hvg_path = "data/hvg_indices.jld2" # pre-computed HVG indices for SC-ETF (100-shard, 2.82M cells; was 30-shard, 846k cells)
 n_eval_shards = 10
 subset_shards = 0
 subset_ratio = 1.0
 # max_steps = 160000 # pre-train
 max_steps = 40000 # pre-train
+split_seed = 42 # PB pretrain train/val/test split (shared across objectives + model types)
 
 # variable params
 lr = 0.0005

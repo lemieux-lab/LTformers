@@ -180,7 +180,6 @@ begin
         markersize=3, alpha=0.5, color=:orange, label="LINCS ($(length(lincs_H)) genes)")
     axislegend(ax, position=:rb)
 
-    # save("$fig_ent_dir/lt_entropy_ranked.png", fig_rank)
     display(fig_rank)
 end
 

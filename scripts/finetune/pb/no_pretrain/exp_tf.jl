@@ -59,8 +59,6 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
 # identity baseline for lvl3
-# id_baseline = is_regression && hasproperty(d, :pca_model) && !isnothing(d.pca_model) ?
-#     identity_baseline(d.X_test, d.y_test, d.pca_model) : nothing
 id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
 
 n_genes = d.n_genes
@@ -76,12 +74,10 @@ model = ExpClassifier(n_genes=n_genes, embed_dim=config["embed_dim"],
                       n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
                       dropout_prob=config["drop_prob"])
 model = fix_gpu_dropout(cu(model))
-# opt = Flux.setup(Optimisers.Adam(config["lr"]), model)
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], "etf", timestamp)
 save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
@@ -108,6 +104,30 @@ n_total_epochs = if use_max_steps
     cld(ft_step_limit, max(bpe, 1))
 else
     config["n_epochs"]
+end
+
+# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+function run_test(m)
+    epoch_preds = is_regression ? Float32[] : Int[]
+    epoch_trues = is_regression ? Float32[] : Int[]
+    eval_losses = Float32[]
+    n_test = size(X_test, 2)
+    for s in 1:config["batch_size"]:n_test
+        e = min(s + config["batch_size"] - 1, n_test)
+        x_gpu = cu(X_test[:, s:e])
+        y_gpu = cu(y_test[:, s:e])
+        logits = m(x_gpu)
+        if is_regression
+            push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+            append!(epoch_preds, vec(cpu(logits)))
+            append!(epoch_trues, vec(cpu(y_gpu)))
+        else
+            push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+            append!(epoch_preds, Flux.onecold(cpu(logits)))
+            append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+        end
+    end
+    return mean(eval_losses), epoch_preds, epoch_trues
 end
 
 for epoch in ProgressBar(1:n_total_epochs)
@@ -169,24 +189,8 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_trues = is_regression ? Float32[] : Int[]
 
     if is_last
-        eval_losses = Float32[]
-        n_test = size(X_test, 2)
-        for s in 1:config["batch_size"]:n_test
-            e = min(s + config["batch_size"] - 1, n_test)
-            x_gpu = cu(X_test[:, s:e])
-            y_gpu = cu(y_test[:, s:e])
-            logits = model(x_gpu)
-            if is_regression
-                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                append!(epoch_preds, vec(cpu(logits)))
-                append!(epoch_trues, vec(cpu(y_gpu)))
-            else
-                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                append!(epoch_preds, Flux.onecold(cpu(logits)))
-                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
-            end
-        end
-        push!(test_losses, mean(eval_losses))
+        final_test_loss, epoch_preds, epoch_trues = run_test(model)
+        push!(test_losses, final_test_loss)
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
     end
@@ -223,9 +227,31 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
 end
 
+
+# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
+# all_preds / all_trues above come from the final model
+opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+best_cpu = load_best_cpu(model, save_dir)
+best_preds, best_trues = if isnothing(best_cpu)
+    println("no best/ checkpoint found, best metrics = final model")
+    all_preds, all_trues
+else
+    best_model = fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(best_model)
+    _, bp, bt = run_test(best_model)
+    bp, bt
+end
+best_metrics = test_metrics(best_preds, best_trues, is_regression)
+final_metrics = test_metrics(all_preds, all_trues, is_regression)
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+println("test (best model, epoch $best_epoch): ", best_metrics)
+println("test (final model):         ", final_metrics)
+
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
     wb.summary["best_epoch"] = best_epoch
+    for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
+    for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
     wandb.finish()
 end
 
@@ -253,6 +279,8 @@ if is_regression
     end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_no_pt_skip, r2=r2, pearson=pearson, rmse=rmse,
+               best_r2=best_metrics.r2, best_pearson=best_metrics.pearson, best_rmse=best_metrics.rmse,
+               final_r2=final_metrics.r2, final_pearson=final_metrics.pearson, final_rmse=final_metrics.rmse,
                id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
                id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
                id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
@@ -260,6 +288,6 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-               skip=finetune_no_pt_skip, accuracy=acc, total_steps=global_step,
+               skip=finetune_no_pt_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_epoch=best_epoch, best_val_loss=best_val_loss)
 end

@@ -59,8 +59,6 @@ all_data = jld2_lincs(lincs_data, all_filter, all_file)
 loaded_all_data = load_lincs(all_file)
 
 
-# csv_lincs(lincs_data, untreated_data.expr, untreated_data, "data/cellline_geneexpr.csv")
-# csv_lincs(lincs_data, all_data.expr, all_data, "data/all_cellline_geneexpr.csv")
 
 #=
 for reference:

@@ -1,17 +1,20 @@
+# SC latent-reconstruction pretraining (data2vec-style EMA teacher; Tahoe single-cell shards, streamed)
+#   student sees the masked/corrupted input and regresses the teacher's (batch-standardized) embeddings of the clean input
+#   RTF: top-k gene ids by rank, masked ids; ETF: expression at the 1024 HVGs in fixed gene order, donor-swap corruption
+
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
 
-using JLD2, CUDA, Dates, Flux, Optimisers, Random, Statistics, Functors
-using ProgressBars, CairoMakie, StatsBase, LinearAlgebra
+using JLD2, CUDA, Dates, Flux, Optimisers, Random, Statistics
+using ProgressBars, CairoMakie, StatsBase
 
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src/tahoe"))
-using Preprocess, Models, Train, Log, Plot, Args, Config
-using LoadSC, ProcessSC
+using Models, Train, Log, Plot, Args, Config
+using LoadSC, ProcessSC, EvalSC
 
 args = load_pretrain_args()
-# config = load_config(args["config"], args)
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "lrecon", args["modeltype"]],
                      dataset="tahoe_sc")
@@ -21,486 +24,194 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 use_exp = config["modeltype"] == "etf"
-
 start_time = now()
 
-function get_target_embeds(model, x_clean, use_exp)
-    if use_exp
-        projected = model.proj(reshape(x_clean, 1, size(x_clean)...))
-        gene_ids = cu(Int32.(1:size(x_clean, 1)))
-        encoded = projected .+ model.pos_emb(gene_ids)
-    else
-        embedded = model.embedding(x_clean)
-        pos_ids = cu(Int32.(1:size(embedded, 2)))
-        encoded = embedded .+ model.pos_emb(pos_ids)
-    end
-    # return model.transformer(model.emb_dropout(encoded))
-    raw = model.transformer(model.emb_dropout(encoded))
-    mu = mean(raw, dims=3)
-    sigma = std(raw, dims=3) .+ 1f-6
-    return (raw .- mu) ./ sigma
-end
-
+# data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
-
-all_shards = list_shards(config["data_dir"])
-train_shards, val_shards, test_shards = shard_train_val_test_split(all_shards, 0.1, 0.1)
-if config["subset_shards"] > 0
-    train_shards = train_shards[1:min(config["subset_shards"], length(train_shards))]
-    val_shards = val_shards[1:min(max(1, div(config["subset_shards"], 8)), length(val_shards))]
-    test_shards = test_shards[1:min(max(1, div(config["subset_shards"], 8)), length(test_shards))]
-end
-println("Shards: $(length(train_shards)) train, $(length(val_shards)) val, $(length(test_shards)) test")
-
+train_shards, val_shards, test_shards = split_shards(list_shards(config["data_dir"]), config["subset_shards"])
 top_k = config["top_k"]
 MASK_ID = Int32(n_coding + 1)
+hvg_idx = use_exp ? load_hvg_idx(get(config, "hvg_path", "")) : nothing
+seq_len = use_exp ? length(hvg_idx) : top_k
 
+mc = (obj=:lrecon, use_exp=use_exp, seq_len=seq_len, mask_ratio=config["mask_ratio"], mask_id=MASK_ID,
+      batch_size=config["batch_size"], coding_tokens=coding_tokens, n_coding=n_coding, top_k=top_k,
+      token_to_idx=token_to_idx, hvg_idx=hvg_idx, load_shard_fn=load_shard_pyarrow)
+
+# student + EMA teacher
 model = if use_exp
     ExpLReconModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
                    n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                   dropout_prob=config["drop_prob"], seq_len=top_k)
+                   dropout_prob=config["drop_prob"], seq_len=seq_len)
 else
     RankLReconModel(n_genes=n_coding, embed_dim=config["embed_dim"], n_layers=config["n_layers"],
                     n_heads=config["n_heads"], hidden_dim=config["hidden_dim"],
-                    dropout_prob=config["drop_prob"], seq_len=top_k)
+                    dropout_prob=config["drop_prob"], seq_len=seq_len)
 end
-model = cu(model)
-model = fix_gpu_dropout(model)
-
+model = fix_gpu_dropout(cu(model))
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
 opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
+mask_bufs = sc_mask_buffers(mc)
 
-# mask
-X_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
-y_masked_rtf = Matrix{Int32}(undef, top_k, config["batch_size"])
-X_masked_etf = Matrix{Float32}(undef, top_k, config["batch_size"])
-corrupt_mask_buf = falses(top_k, config["batch_size"])
-
-# save dir
-# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# save dir + logging
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-
 wandb = init_wandb(config, "SC-PT-Aug", "lrecon_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
+
+# schedule: batches/epoch estimated from one shard, per-step warmup + cosine lr
+n_cells_per_shard = load_shard_pyarrow(train_shards[1]).n_cells
+sched = step_schedule(n_cells_per_shard, length(train_shards), config["batch_size"], config["max_steps"], config["n_epochs"])
+println("  $(n_cells_per_shard) cells/shard -> $(sched.bpe) batches/epoch, $(sched.n_epochs) epochs, " *
+        "$(sched.total_steps) steps (warmup $(sched.warmup_steps))")
+use_max_steps = config["max_steps"] > 0
+MAX_EMBED_BATCHES = 10   # test batches whose raw embeddings are kept in lrecon_diagnostics.jld2
+
+# statically masked val (checkpoint selection, every epoch) and test (final epoch) batches
+val_cache = sc_masked_cache(val_shards[1:min(config["n_eval_shards"], length(val_shards))], mc)
+eval_cache = sc_masked_cache(test_shards[1:min(config["n_eval_shards"], length(test_shards))], mc)
 
 train_losses = Float32[]
 val_losses = Float32[]
 test_losses = Float32[]
-target_variances = Float32[]
-saved_mse = Float32[]
-saved_cossim = Float32[]
-saved_positions = Int32[]
-MAX_EMBED_BATCHES = 10
-sample_preds = Vector{Float32}[]
-sample_targets = Vector{Float32}[]
-sample_positions = Int32[]
-gene_error_sums = zeros(Float32, n_coding) # indexed by gene_id
-gene_error_counts = zeros(Int, n_coding)
-rank_error_sums = zeros(Float32, top_k) # indexed by rank position
-rank_error_counts = zeros(Int, top_k)
+target_variances = Float32[]   # raw (un-standardized) teacher embedding variance on a fixed batch: collapse monitor
+err_acc = ErrorAcc(n_coding, seq_len)
+lrecon_diag = LreconDiag()
+collapse_check_batch = nothing
 
 global_step = 0
-use_max_steps = config["max_steps"] > 0
 done = false
 best_val_loss = Inf32
 best_epoch = 0
 
-n_total_epochs = if use_max_steps
-    # n_sample = min(5, length(train_shards))
-    n_sample = 1
-    sample_shards = train_shards[1:n_sample]
-    local total_cells = 0
-    for sp in sample_shards
-        println("  estimating epoch size from shard: $(basename(sp))")
-        shard = load_shard_pyarrow(sp)
-        total_cells += shard.n_cells
-        println("  shard has $(shard.n_cells) cells")
-    end
-    avg_cells_per_shard = total_cells / n_sample
-    est_cells_per_epoch = avg_cells_per_shard * length(train_shards)
-    bpe = cld(Int(round(est_cells_per_epoch)), config["batch_size"])
-    n_ep = cld(config["max_steps"], bpe)
-    println("  estimated: $(Int(round(avg_cells_per_shard))) cells/shard, $bpe batches/epoch, $n_ep epochs for $(config["max_steps"]) steps")
-    n_ep
-else
-    config["n_epochs"]
-end
-warmup_epochs = max(1, div(n_total_epochs, 10))
-
-# pre-cache val batches (used every epoch for checkpoint selection)
-val_cache = NamedTuple[]
-_val_shards = val_shards[1:min(config["n_eval_shards"], length(val_shards))]
-for sp in _val_shards
-    batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
-                                 config["batch_size"]; modeltype=config["modeltype"],
-                                 token_to_idx=token_to_idx,
-                                 load_shard_fn=load_shard_pyarrow)
-    for batch in batches
-        if use_exp
-            batch_ids, batch_expr = batch
-            bs = size(batch_expr, 2)
-            xm = Matrix{Float32}(undef, top_k, bs)
-            cm = falses(top_k, bs)
-            corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-            push!(val_cache, (x=copy(xm), cm=copy(cm), clean=copy(batch_expr), ids=copy(batch_ids)))
-        else
-            bs = size(batch, 2)
-            xm = Matrix{Int32}(undef, top_k, bs)
-            ym = Matrix{Int32}(undef, top_k, bs)
-            sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
-            push!(val_cache, (x=copy(xm), y=copy(ym), clean=copy(batch)))
-        end
-    end
-end
-println("  cached $(length(val_cache)) val batches from $(length(_val_shards)) shards")
-
-# pre-cache test batches (used only on final epoch)
-eval_cache = NamedTuple[]
-_eval_shards = test_shards[1:min(config["n_eval_shards"], length(test_shards))]
-for sp in _eval_shards
-    batches = batches_from_shard(sp, coding_tokens, n_coding, top_k,
-                                 config["batch_size"]; modeltype=config["modeltype"],
-                                 token_to_idx=token_to_idx,
-                                 load_shard_fn=load_shard_pyarrow)
-    for batch in batches
-        if use_exp
-            batch_ids, batch_expr = batch
-            bs = size(batch_expr, 2)
-            xm = Matrix{Float32}(undef, top_k, bs)
-            cm = falses(top_k, bs)
-            corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-            push!(eval_cache, (x=copy(xm), cm=copy(cm), clean=copy(batch_expr), ids=copy(batch_ids)))
-        else
-            bs = size(batch, 2)
-            xm = Matrix{Int32}(undef, top_k, bs)
-            ym = Matrix{Int32}(undef, top_k, bs)
-            sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
-            push!(eval_cache, (x=copy(xm), y=copy(ym), clean=copy(batch)))
-        end
-    end
-end
-println("  cached $(length(eval_cache)) test batches from $(length(_eval_shards)) shards")
-
-collapse_check_batch = nothing
-
-for epoch in ProgressBar(1:n_total_epochs)
+for epoch in ProgressBar(1:sched.n_epochs)
     done && break
-    lr = compute_lr(epoch, n_total_epochs, config["lr"], warmup_epochs)
-    Optimisers.adjust!(opt, lr)
+    lr = compute_lr_step(global_step + 1, sched.total_steps, config["lr"], sched.warmup_steps)
 
     # train
     Flux.trainmode!(model)
     epoch_losses = Float32[]
     shuffled_train = shuffle(train_shards)
-
     for (si, shard_path) in enumerate(shuffled_train)
         done && break
-        batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
-                                     config["batch_size"]; modeltype=config["modeltype"],
-                                     token_to_idx=token_to_idx,
-                                     load_shard_fn=load_shard_pyarrow)
-
-        for batch in batches
-            if use_exp
-                batch_ids, batch_expr = batch
-                bs = size(batch_expr, 2)
-                xm = @view X_masked_etf[:, 1:bs]
-                cm = @view corrupt_mask_buf[:, 1:bs]
-                corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-                x_gpu = CuArray(xm)
-                x_clean_gpu = CuArray(batch_expr)
-                mask_2d = CuArray(Float32.(cm))
-            else
-                bs = size(batch, 2)
-                xm = @view X_masked_rtf[:, 1:bs]
-                ym = @view y_masked_rtf[:, 1:bs]
-                sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
-                x_gpu = CuArray(xm)
-                x_clean_gpu = CuArray(batch)
-                mask_2d = Float32.(CuArray(ym) .!= -100)
-            end
-
-            target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-
+        for batch in sc_shard_batches(shard_path, mc)
+            lr = compute_lr_step(global_step + 1, sched.total_steps, config["lr"], sched.warmup_steps)
+            Optimisers.adjust!(opt, lr)
+            b = sc_mask!(mask_bufs, batch, mc)
+            x_gpu, mask_gpu = CuArray(b.x), CuArray(Float32.(b.m))
+            targets = teacher_targets(ema_model, CuArray(b.clean), use_exp)
             l_val, grads = Flux.withgradient(model) do m
-                masked_lrecon_loss(m, x_gpu, target_embeds, mask_2d)[1]
+                masked_lrecon_loss(m, x_gpu, targets, mask_gpu)[1]
             end
             Flux.update!(opt, model, grads[1])
             ema_update!(ema_model, model, Float32(config["ema_decay"]))
             push!(epoch_losses, l_val)
-
-            # save first clean batch for collapse detection
-            if isnothing(collapse_check_batch)
-                if use_exp
-                    global collapse_check_batch = copy(batch_expr)
-                else
-                    global collapse_check_batch = copy(batch)
-                end
-            end
-
+            isnothing(collapse_check_batch) && (global collapse_check_batch = copy(b.clean))
             global global_step += 1
             if use_max_steps && global_step >= config["max_steps"]
                 global done = true; break
             end
         end
-
-        if si % 50 == 0
+        if si % 50 == 0 || done
             println("  epoch $epoch shard $si/$(length(shuffled_train)) step=$global_step loss=$(round(mean(epoch_losses[max(1,end-49):end]), digits=4))")
         end
     end
     push!(train_losses, mean(epoch_losses))
 
-    # collapse detection
-    if !isnothing(collapse_check_batch)
-        collapse_clean = CuArray(collapse_check_batch)
-        collapse_tgts = get_target_embeds(ema_model, collapse_clean, use_exp)
-        tgt_var = mean(cpu(var(collapse_tgts, dims=3)))
-        push!(target_variances, Float32(tgt_var))
-        if tgt_var < 1f-6
-            println("WARNING epoch $epoch: target embedding variance = $tgt_var — possible collapse")
-        end
+    # collapse monitor: raw teacher variance across cells (standardized targets have var ≈ 1 by construction)
+    # raw_tgts = teacher_targets(ema_model, CuArray(collapse_check_batch), use_exp; normalize=false)
+    # push!(target_variances, Float32(mean(cpu(var(raw_tgts, dims=3)))))
+    # variance across cells over real tokens only (PAD positions of short cells excluded)
+    raw_tgts, tgt_keep = teacher_targets(ema_model, CuArray(collapse_check_batch), use_exp; normalize=false, return_keep=true)
+    if isnothing(tgt_keep)
+        push!(target_variances, Float32(mean(cpu(var(raw_tgts, dims=3)))))
+    else
+        w = reshape(Float32.(tgt_keep), 1, size(tgt_keep)...)
+        n = sum(w, dims=3)
+        mu = sum(raw_tgts .* w, dims=3) ./ max.(n, 1f0)
+        v = sum(((raw_tgts .- mu) .* w) .^ 2, dims=3) ./ max.(n .- 1f0, 1f0)
+        ok_pos = repeat(n .>= 2f0, size(v, 1), 1, 1)
+        push!(target_variances, Float32(mean(cpu(v)[cpu(ok_pos)])))
     end
+    target_variances[end] < 1f-6 && println("WARNING epoch $epoch: target embedding variance = $(target_variances[end]) — possible collapse")
 
-    # val eval (every epoch for checkpt selection)
+    # val (every epoch, checkpoint selection; student scored against the current teacher)
+    Flux.testmode!(model)
     val_eval_losses = Float32[]
-    for cached in val_cache
-        if use_exp
-            x_gpu = CuArray(cached.x)
-            x_clean_gpu = CuArray(cached.clean)
-            mask_2d = CuArray(Float32.(cached.cm))
-        else
-            x_gpu = CuArray(cached.x)
-            x_clean_gpu = CuArray(cached.clean)
-            mask_2d = Float32.(CuArray(cached.y) .!= -100)
-        end
-        target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-        # loss_val, _, _ = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
-        loss_val, _, _ = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
-        push!(val_eval_losses, cpu(loss_val))
+    for c in val_cache
+        targets = teacher_targets(ema_model, CuArray(c.clean), use_exp)
+        push!(val_eval_losses, Float32(masked_lrecon_loss(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))[1]))
     end
     push!(val_losses, mean(val_eval_losses))
-
-    # test eval (final epoch only)
-    is_last = (epoch == n_total_epochs) || done
-
-    # reload best checkpoint for test eval
-    if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
-        best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
-        model_cpu = cpu(model)
-        Flux.loadmodel!(model_cpu, best_state)
-        global model = fix_gpu_dropout(cu(model_cpu))
-        println("reloaded best model (epoch $best_epoch) for test eval")
-    end
-
-    eval_losses = Float32[]
-
-    if is_last
-        full_eval = !use_max_steps
-
-        if full_eval
-            n_embed_batches_full = 0
-            for shard_path in test_shards
-                batches = batches_from_shard(shard_path, coding_tokens, n_coding, top_k,
-                                             config["batch_size"]; modeltype=config["modeltype"],
-                                             token_to_idx=token_to_idx,
-                                             load_shard_fn=load_shard_pyarrow)
-                for batch in batches
-                    if use_exp
-                        batch_ids, batch_expr = batch
-                        bs = size(batch_expr, 2)
-                        xm = Matrix{Float32}(undef, top_k, bs)
-                        cm = falses(top_k, bs)
-                        corrupt_expr!(xm, cm, batch_expr, config["mask_ratio"])
-                        x_gpu = CuArray(xm)
-                        x_clean_gpu = CuArray(batch_expr)
-                        mask_2d = CuArray(Float32.(cm))
-                    else
-                        bs = size(batch, 2)
-                        xm = Matrix{Int32}(undef, top_k, bs)
-                        ym = Matrix{Int32}(undef, top_k, bs)
-                        sc_mask_input!(xm, ym, batch, config["mask_ratio"], -100, MASK_ID)
-                        x_gpu = CuArray(xm)
-                        x_clean_gpu = CuArray(batch)
-                        mask_2d = Float32.(CuArray(ym) .!= -100)
-                    end
-                    target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-                    # loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
-                    loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
-                    push!(eval_losses, cpu(loss_val))
-
-                    if !isnothing(preds_embed)
-                        dec_cpu = cpu(preds_embed)
-                        tgt_cpu = cpu(targets_embed)
-                        if use_exp
-                            mask_cpu_bool = cpu(mask_2d) .> 0f0
-                        else
-                            mask_cpu_bool = ym .!= -100
-                        end
-                        embed_dim_local = size(dec_cpu, 1)
-                        save_embed = n_embed_batches_full < MAX_EMBED_BATCHES
-
-                        masked_idx = 0
-                        for j in 1:bs
-                            for pos in 1:top_k
-                                if mask_cpu_bool[pos, j]
-                                    masked_idx += 1
-                                    d = dec_cpu[:, masked_idx]
-                                    t = tgt_cpu[:, masked_idx]
-                                    emb_mse = sum((d .- t) .^ 2) / embed_dim_local
-                                    rank_error_sums[pos] += emb_mse
-                                    rank_error_counts[pos] += 1
-                                    gene_id = use_exp ? batch_ids[pos, j] : batch[pos, j]
-                                    gene_error_sums[gene_id] += emb_mse
-                                    gene_error_counts[gene_id] += 1
-                                    push!(saved_mse, emb_mse)
-                                    push!(saved_cossim, Float32(dot(d, t) / (norm(d) * norm(t) + 1f-8)))
-                                    push!(saved_positions, Int32(pos))
-                                    if save_embed
-                                        push!(sample_preds, d)
-                                        push!(sample_targets, t)
-                                        push!(sample_positions, Int32(pos))
-                                    end
-                                end
-                            end
-                        end
-                        if save_embed
-                            n_embed_batches_full += 1
-                        end
-                    end
-                end
-            end
-        else
-            n_embed_batches_cached = 0
-            for cached in eval_cache
-                if use_exp
-                    x_gpu = CuArray(cached.x)
-                    x_clean_gpu = CuArray(cached.clean)
-                    mask_2d = CuArray(Float32.(cached.cm))
-                else
-                    x_gpu = CuArray(cached.x)
-                    x_clean_gpu = CuArray(cached.clean)
-                    mask_2d = Float32.(CuArray(cached.y) .!= -100)
-                end
-                target_embeds = get_target_embeds(ema_model, x_clean_gpu, use_exp)
-                # loss_val, preds_embed, targets_embed = masked_lrecon_loss(ema_model, x_gpu, target_embeds, mask_2d)
-                loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, x_gpu, target_embeds, mask_2d)
-                push!(eval_losses, cpu(loss_val))
-
-                if !isnothing(preds_embed)
-                    dec_cpu = cpu(preds_embed)
-                    tgt_cpu = cpu(targets_embed)
-                    bs = size(cached.x, 2)
-                    if use_exp
-                        mask_cpu_bool = cached.cm
-                    else
-                        mask_cpu_bool = cached.y .!= -100
-                    end
-                    embed_dim_local = size(dec_cpu, 1)
-                    save_embed = n_embed_batches_cached < MAX_EMBED_BATCHES
-
-                    masked_idx = 0
-                    for j in 1:bs
-                        for pos in 1:top_k
-                            if mask_cpu_bool[pos, j]
-                                masked_idx += 1
-                                d = dec_cpu[:, masked_idx]
-                                t = tgt_cpu[:, masked_idx]
-                                emb_mse = sum((d .- t) .^ 2) / embed_dim_local
-                                rank_error_sums[pos] += emb_mse
-                                rank_error_counts[pos] += 1
-                                gene_id = use_exp ? cached.ids[pos, j] : cached.clean[pos, j]
-                                gene_error_sums[gene_id] += emb_mse
-                                gene_error_counts[gene_id] += 1
-                                push!(saved_mse, emb_mse)
-                                push!(saved_cossim, Float32(dot(d, t) / (norm(d) * norm(t) + 1f-8)))
-                                push!(saved_positions, Int32(pos))
-                                if save_embed
-                                    push!(sample_preds, d)
-                                    push!(sample_targets, t)
-                                    push!(sample_positions, Int32(pos))
-                                end
-                            end
-                        end
-                    end
-                    if save_embed
-                        n_embed_batches_cached += 1
-                    end
-                end
-            end
-        end
-
-        if !isempty(eval_losses)
-            push!(test_losses, mean(eval_losses))
-        end
-    end
-
-    println("epoch $epoch/$n_total_epochs | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
-
-    if wb !== nothing
-        log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                        "val_loss" => val_losses[end],
-                        "target_variance" => isempty(target_variances) ? NaN : target_variances[end],
-                        "global_step" => global_step)
-        if !isempty(test_losses)
-            log_dict["test_loss"] = test_losses[end]
-        end
-        wb.log(log_dict)
-    end
-
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
-        mkpath(joinpath(save_dir, "best"))
-        # log_model(ema_model, joinpath(save_dir, "best"), config)
-        log_model(model, joinpath(save_dir, "best"), config)
-        mkpath(joinpath(save_dir, "best", "ema"))
-        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
+        save_best(model, save_dir, config; ema=ema_model)
+    end
+
+    # test (final epoch, best student)
+    is_last = (epoch == sched.n_epochs) || done
+    if is_last
+        best_cpu = load_best_cpu(model, save_dir)
+        if !isnothing(best_cpu)
+            global model = fix_gpu_dropout(cu(best_cpu))
+            Flux.testmode!(model)
+            println("reloaded best model (epoch $best_epoch) for test eval")
+        end
+        eval_losses = Float32[]
+        for (bi, c) in enumerate(eval_cache)
+            targets = teacher_targets(ema_model, CuArray(c.clean), use_exp)
+            loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))
+            push!(eval_losses, Float32(loss_val))
+            isnothing(preds_embed) && continue
+            accumulate_lrecon_diag!(err_acc, lrecon_diag, cpu(preds_embed), cpu(targets_embed), c.m, c.ids_or_ranks, hvg_idx;
+                                    save_embed = bi <= MAX_EMBED_BATCHES)
+        end
+        push!(test_losses, mean(eval_losses))
+    end
+
+    println("epoch $epoch/$(sched.n_epochs) | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
+    if wb !== nothing
+        log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end], "val_loss" => val_losses[end],
+                        "target_variance" => target_variances[end], "global_step" => global_step, "lr" => lr)
+        is_last && (log_dict["test_loss"] = test_losses[end])
+        wb.log(log_dict)
     end
 end
 
-# save
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss";
-         val_losses=val_losses)
+# plots + outputs
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss"; val_losses=val_losses)
 
-if !isempty(saved_mse)
-    diag = Dict{String, Any}(
-        "mse" => saved_mse,
-        "cossim" => saved_cossim,
-        "positions" => saved_positions,
-        "target_variances" => target_variances,
-    )
-    if !isempty(sample_preds)
-        diag["sample_preds"] = reduce(hcat, sample_preds)
-        diag["sample_targets"] = reduce(hcat, sample_targets)
-        diag["sample_positions"] = sample_positions
+if !isempty(lrecon_diag.mse)
+    diag_out = Dict{Symbol, Any}(:mse => lrecon_diag.mse, :cossim => lrecon_diag.cossim, :positions => lrecon_diag.positions,
+                                 :target_variances => target_variances)
+    if !isempty(lrecon_diag.sample_preds)
+        diag_out[:sample_preds] = reduce(hcat, lrecon_diag.sample_preds)
+        diag_out[:sample_targets] = reduce(hcat, lrecon_diag.sample_targets)
+        diag_out[:sample_positions] = lrecon_diag.sample_positions
     end
-    diag_sym = Dict(Symbol(k) => v for (k, v) in diag)
-    jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag_sym...)
+    jldsave(joinpath(save_dir, "lrecon_diagnostics.jld2"); diag_out...)
 end
 
-if any(>(0), gene_error_counts)
-    plot_per_gene_error(gene_error_sums, gene_error_counts, n_coding, save_dir,
+if any(>(0), err_acc.gene_counts)
+    plot_per_gene_error(err_acc.gene_sums, err_acc.gene_counts, n_coding, save_dir,
                         "mean embedding MSE", "per_gene_error";
                         sorted_gene_path=get(config, "sorted_gene_path", ""))
-    plot_per_sample_rank_error(rank_error_sums, rank_error_counts, top_k, save_dir,
+    plot_per_sample_rank_error(err_acc.rank_sums, err_acc.rank_counts, seq_len, save_dir,
                                "mean embedding MSE", "per_rank_error")
 else
     println("  skipping per-gene/per-rank plots: no predictions collected")
 end
 
-# log_model(ema_model, save_dir, config)
 log_model(model, save_dir, config)
+use_exp && jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 mkpath(joinpath(save_dir, "ema"))
-log_model(ema_model, joinpath(save_dir, "ema"), config)  # teacher, needed to rebuild lrecon targets
-
-# save shard split for finetune reuse
-jldsave(joinpath(save_dir, "shard_split.jld2");
+log_model(ema_model, joinpath(save_dir, "ema"), config)   # teacher
+jldsave(joinpath(save_dir, "shard_split.jld2");   # reused by SC finetuning
         train_shards=train_shards, val_shards=val_shards, test_shards=test_shards)
-
 log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indices=Int[],
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
@@ -509,7 +220,6 @@ log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indic
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)
 run_hours, run_minutes = div(total_minutes, 60), rem(total_minutes, 60)
-
 log_params(config, gpu_info, run_hours, run_minutes, save_dir;
            skip=pretrain_skip, total_steps=global_step,
            best_epoch=best_epoch, best_val_loss=best_val_loss)

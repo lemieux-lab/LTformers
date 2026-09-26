@@ -184,9 +184,6 @@ function load_finetune_args()
         "--target_cell"
             help = "target cell line for lvl3 regression (default: PC3)"
             arg_type = String
-        # "--target_gene"
-        #     help = "target gene for lvl3 regression (default: IGFBP3)"
-        #     arg_type = String
         "--dose"
             help = "dose filter for lvl3 regression (e.g. '5.0' for Tahoe, '10.0' for LINCS; empty = no filter)"
             arg_type = String
@@ -264,9 +261,6 @@ function load_sc_finetune_args()
         "--seed"
             help = "random seed for reproducibility"
             arg_type = Int
-        # "--n_eval_shards"
-        #     help = "number of val/test shards to evaluate (0 = all)"
-        #     arg_type = Int
         "--ft_eval_shards"
             help = "SC finetune: number of val/test shards to evaluate (0 = all); separate from pretrain n_eval_shards (default.toml = 10)"
             arg_type = Int
@@ -289,6 +283,9 @@ function load_sc_finetune_args()
         "--hvg_path"
             help = "path to pre-computed HVG indices JLD2 (for ETF)"
             arg_type = String
+        "--rank_top_k"
+            help = "rlog/rmlp only: rank features for each cell's top-k genes (default: top_k; 0 = all genes -> <model>_full)"
+            arg_type = Int
         "--subset_shards"
             help = "max number of shards to use (0 = all); for debugging"
             arg_type = Int
@@ -305,15 +302,11 @@ function load_sc_finetune_args()
             help = "dose filter for lvl3 regression (e.g. '5.0'; empty = no filter)"
             arg_type = String
         "--sc_lvl3_percell"
-            # help = "use per-cell inputs for SC lvl3 instead of pseudo-bulking (PCA targets from PB data)"
             help = "no-op (per-cell is now the SC lvl3 default); kept so existing commands still parse"
             action = :store_true
         "--sc_lvl3_pseudobulk"
             help = "pseudo-bulk SC source cells for lvl3 instead of the default per-cell inputs"
             action = :store_true
-        # "--data_format"
-        #     help = "data format (ignored for SC; kept for CLI compatibility with PB sweep launchers)"
-        #     arg_type = String
         "--data_format"
             help = "data format (ignored for SC; kept for CLI compatibility with PB sweep launchers)"
             arg_type = String

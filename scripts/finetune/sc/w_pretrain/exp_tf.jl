@@ -32,7 +32,6 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
 # SC data loading
@@ -49,18 +48,6 @@ if hvg_path != "" && isfile(hvg_path)
 end
 
 top_k = get(config, "top_k", 1024)
-# d = load_sc_finetune_data(all_shards, config["level"], token_to_idx, n_coding, top_k, "etf";
-#                            pb_data_path=get(config, "pb_data_path", ""),
-#                            hvg_idx=hvg_idx,
-#                            subset_shards=get(config, "subset_shards", 0),
-#                            process_cell_topk_flat_fn=process_cell_topk_flat,
-#                            cell_to_dense_flat_fn=cell_to_dense_flat!,
-#                            oversmpl_fn=oversmpl,
-#                            source_cell=get(config, "source_cell", ""),
-#                            target_cell=get(config, "target_cell", ""),
-#                            dose=get(config, "dose", ""),
-#                            meta_dir=get(config, "meta_dir", ""),
-#                            regression_pairs_fn=get_regression_pairs_pca)
 # load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
 sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
 pb_expr_for_percell = nothing
@@ -105,8 +92,6 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
-# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-#                     "etf", config["task"], "e2e", timestamp)
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
                     config["modeltype"], config["task"], "e2e", timestamp)
 mkpath(save_dir)
@@ -138,6 +123,58 @@ n_total_epochs = if use_max_steps
     cld(ft_step_limit, max(bpe, 1))
 else
     config["n_epochs"]
+end
+
+# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+function run_test(m)
+    epoch_preds = is_regression ? Float32[] : Int[]
+    epoch_trues = is_regression ? Float32[] : Int[]
+    eval_losses = Float32[]
+    if is_streaming
+        println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
+        for (ti, shard_path) in enumerate(d.test_shard_paths)
+            cell_indices, cell_labels = d.test_shard_map[shard_path]
+            batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
+                                                   token_to_idx, n_coding, top_k,
+                                                   config["batch_size"], "etf", d.n_classifications;
+                                                   hvg_idx=hvg_idx, use_oversmpl=false,
+                                                   process_cell_topk_flat_fn=process_cell_topk_flat,
+                                                   cell_to_dense_flat_fn=cell_to_dense_flat!)
+            for (x_batch, y_batch) in batches
+                x_gpu = CuArray(x_batch)
+                y_gpu = CuArray(y_batch)
+                logits = m(x_gpu)
+                if is_regression
+                    push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                    append!(epoch_preds, vec(cpu(logits)))
+                    append!(epoch_trues, vec(cpu(y_gpu)))
+                else
+                    push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                    append!(epoch_preds, Flux.onecold(cpu(logits)))
+                    append!(epoch_trues, Flux.onecold(y_batch))
+                end
+                CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
+            end
+            if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
+        end
+    else
+        for s in 1:config["batch_size"]:size(d.X_test, 2)
+            e = min(s + config["batch_size"] - 1, size(d.X_test, 2))
+            x_gpu = cu(d.X_test[:, s:e])
+            y_gpu = cu(d.y_test[:, s:e])
+            logits = m(x_gpu)
+            if is_regression
+                push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
+                append!(epoch_preds, vec(cpu(logits)))
+                append!(epoch_trues, vec(cpu(y_gpu)))
+            else
+                push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+                append!(epoch_preds, Flux.onecold(cpu(logits)))
+                append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
+            end
+        end
+    end
+    return mean(eval_losses), epoch_preds, epoch_trues
 end
 
 for epoch in ProgressBar(1:n_total_epochs)
@@ -256,53 +293,10 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
 
+    #                                                    token_to_idx, n_coding, top_k,
     if is_last
-        eval_losses = Float32[]
-        if is_streaming
-            println("  test eval ($(length(d.test_shard_paths)) shards)"); flush(stdout)
-            for (ti, shard_path) in enumerate(d.test_shard_paths)
-                cell_indices, cell_labels = d.test_shard_map[shard_path]
-                batches = finetune_batches_from_shard(shard_path, cell_indices, cell_labels,
-                                                       token_to_idx, n_coding, top_k,
-                                                       config["batch_size"], "etf", d.n_classifications;
-                                                       hvg_idx=hvg_idx, use_oversmpl=false,
-                                                       process_cell_topk_flat_fn=process_cell_topk_flat,
-                                                       cell_to_dense_flat_fn=cell_to_dense_flat!)
-                for (x_batch, y_batch) in batches
-                    x_gpu = CuArray(x_batch)
-                    y_gpu = CuArray(y_batch)
-                    logits = ft_model(x_gpu)
-                    if is_regression
-                        push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                        append!(epoch_preds, vec(cpu(logits)))
-                        append!(epoch_trues, vec(cpu(y_gpu)))
-                    else
-                        push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                        append!(epoch_preds, Flux.onecold(cpu(logits)))
-                        append!(epoch_trues, Flux.onecold(y_batch))
-                    end
-                    CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
-                end
-                if ti % 200 == 0; println("    test shard $ti/$(length(d.test_shard_paths))"); flush(stdout); end
-            end
-        else
-            for s in 1:config["batch_size"]:size(d.X_test, 2)
-                e = min(s + config["batch_size"] - 1, size(d.X_test, 2))
-                x_gpu = cu(d.X_test[:, s:e])
-                y_gpu = cu(d.y_test[:, s:e])
-                logits = ft_model(x_gpu)
-                if is_regression
-                    push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
-                    append!(epoch_preds, vec(cpu(logits)))
-                    append!(epoch_trues, vec(cpu(y_gpu)))
-                else
-                    push!(eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
-                    append!(epoch_preds, Flux.onecold(cpu(logits)))
-                    append!(epoch_trues, Flux.onecold(cpu(y_gpu)))
-                end
-            end
-        end
-        push!(test_losses, mean(eval_losses))
+        final_test_loss, epoch_preds, epoch_trues = run_test(ft_model)
+        push!(test_losses, final_test_loss)
         append!(all_preds, epoch_preds)
         append!(all_trues, epoch_trues)
     end
@@ -339,9 +333,31 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
 end
 
+
+# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
+# all_preds / all_trues above come from the final model
+opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+best_cpu = load_best_cpu(ft_model, save_dir)
+best_preds, best_trues = if isnothing(best_cpu)
+    println("no best/ checkpoint found, best metrics = final model")
+    all_preds, all_trues
+else
+    best_model = fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(best_model)
+    _, bp, bt = run_test(best_model)
+    bp, bt
+end
+best_metrics = test_metrics(best_preds, best_trues, is_regression)
+final_metrics = test_metrics(all_preds, all_trues, is_regression)
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+println("test (best model, epoch $best_epoch): ", best_metrics)
+println("test (final model):         ", final_metrics)
+
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
     wb.summary["best_epoch"] = best_epoch
+    for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
+    for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
     wandb.finish()
 end
 
@@ -369,6 +385,8 @@ if is_regression
     end
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_skip, r2=r2, pearson=pearson, rmse=rmse,
+               best_r2=best_metrics.r2, best_pearson=best_metrics.pearson, best_rmse=best_metrics.rmse,
+               final_r2=final_metrics.r2, final_pearson=final_metrics.pearson, final_rmse=final_metrics.rmse,
                id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
                id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
                id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
@@ -376,6 +394,6 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-               skip=finetune_skip, accuracy=acc, total_steps=global_step,
+               skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_epoch=best_epoch, best_val_loss=best_val_loss)
 end
