@@ -67,6 +67,12 @@ function load_pretrain_args()
         "--ema_decay"
             help = "EMA decay rate for teacher model"
             arg_type = Float64
+        "--eval_every"
+            help = "PB pretrain: val/checkpoint/log every N train steps (0 = once per pass over the data)"
+            arg_type = Int
+        "--max_val_samples"
+            help = "PB pretrain: val on the first N val samples (0 = all)"
+            arg_type = Int
         "--wandb_mode"
             help = "wandb mode: disabled, online, or offline"
             arg_type = String

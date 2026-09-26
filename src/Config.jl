@@ -2,7 +2,7 @@ module Config
 
 using TOML, PyCall
 
-export load_config, gpu_lr, init_wandb, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
+export load_config, gpu_lr, init_wandb, wandb_project, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
 
 
 # dataset -> swept-HP config file (relative to repo root)
@@ -123,6 +123,14 @@ end
 
 function gpu_lr(base_lr::Float64, batch_size::Int; base_batch::Int = 128)
     return base_lr * (batch_size / base_batch)
+end
+
+# Sept 2026 WandB projects: <dataset>-<stage>-Sept, dataset from data_format (SC scripts pass sc=true)
+# stage: "PT" (pretrain), "npt-FT" (finetune, no pretrain), "FT" (finetune w/ pretrain)
+function wandb_project(config::Dict, stage::String; sc::Bool = false)
+    fmt = get(config, "data_format", "tahoe")
+    dataset = sc || fmt == "tahoe_sc" ? "TSC" : fmt == "lincs" ? "LINCS" : "TPB"
+    return "$dataset-$stage-Sept"
 end
 
 function init_wandb(config::Dict, project::String, run_name::String)

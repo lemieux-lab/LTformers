@@ -11,6 +11,7 @@ using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 args = load_pretrain_args()
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "mlm", args["modeltype"]])
+resolve_data_path!(config)   # data_path from local.toml is the tahoe file; pick the file for data_format (was: LINCS loaded tahoe)
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
@@ -132,7 +133,8 @@ if use_exp && @isdefined(hvg_idx)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
 
-wandb = init_wandb(config, "PB-PT-Aug", "mlm_$(fmt)_$(config["modeltype"])_$(timestamp)")
+# wandb = init_wandb(config, "PB-PT-Aug", "mlm_$(fmt)_$(config["modeltype"])_$(timestamp)")
+wandb = init_wandb(config, wandb_project(config, "PT"), "mlm_$(fmt)_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
 # train
@@ -154,9 +156,20 @@ best_val_loss = Inf32
 best_epoch = 0
 
 bpe = cld(size(X_train, 2), config["batch_size"])
-n_total_epochs = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
+# n_total_epochs = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
+# eval_every > 0: val/checkpoint/wandb log every eval_every train steps; "epoch" below is then one eval period,
+# not one pass over the data (LINCS: ~11k steps per pass, too coarse for hyperband). 0 = once per pass (old behavior)
+eval_every = get(config, "eval_every", 0)
+n_epochs_data = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
+n_total_epochs = eval_every > 0 ? cld(use_max_steps ? config["max_steps"] : n_epochs_data * bpe, eval_every) : n_epochs_data
+steps_per_period = eval_every > 0 ? eval_every : bpe
+# max_val_samples > 0: val on a fixed subset (first n of the shuffled val split); full LINCS val is ~141k samples
+n_val_eval = get(config, "max_val_samples", 0) > 0 ? min(config["max_val_samples"], size(X_val_masked, 2)) : size(X_val_masked, 2)
+train_pos = size(X_train, 2) + 1   # next train column; past the end -> re-mask and start a new pass
+println("eval every $(steps_per_period) steps ($(n_total_epochs) evals; $(bpe) steps per pass), val on $(n_val_eval) samples")
 # per-step lr schedule (matches SC pretrain); per-epoch version ran the whole last epoch at lr = 0
-total_steps = use_max_steps ? config["max_steps"] : n_total_epochs * bpe
+# total_steps = use_max_steps ? config["max_steps"] : n_total_epochs * bpe
+total_steps = use_max_steps ? config["max_steps"] : n_epochs_data * bpe
 warmup_steps = max(1, div(total_steps, 10))
 train_loss_maxes = Float32[]
 X_train_masked = similar(X_train)
@@ -166,18 +179,31 @@ for epoch in ProgressBar(1:n_total_epochs)
     done && break
     is_last = (epoch == n_total_epochs)
 
-    if use_exp
-        mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
-    else
-        mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
-    end
+    # if use_exp
+    #     mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
+    # else
+    #     mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
+    # end
+    # ^ moved into the step loop: re-masked at the start of every pass over the data
 
     # train epoch
     Flux.trainmode!(model)
     epoch_losses = Float32[]
 
-    for start_idx in 1:config["batch_size"]:size(X_train_masked, 2)
+    # for start_idx in 1:config["batch_size"]:size(X_train_masked, 2)
+    #     end_idx = min(start_idx + config["batch_size"] - 1, size(X_train_masked, 2))
+    for _ in 1:steps_per_period
+        if train_pos > size(X_train, 2)
+            if use_exp
+                mask_input_exp!(X_train_masked, y_train_masked, X_train, X_inv_ranks_train, config["mask_ratio"], -100)
+            else
+                mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
+            end
+            global train_pos = 1
+        end
+        start_idx = train_pos
         end_idx = min(start_idx + config["batch_size"] - 1, size(X_train_masked, 2))
+        global train_pos = end_idx + 1
 
         x_batch = CuArray(X_train_masked[:, start_idx:end_idx])
         y_batch = CuArray(y_train_masked[:, start_idx:end_idx])
@@ -199,8 +225,9 @@ for epoch in ProgressBar(1:n_total_epochs)
     # val eval (every epoch for checkpt + sweep selection)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
-    for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
-        end_idx = min(start_idx + config["batch_size"] - 1, size(X_val_masked, 2))
+    # for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
+    for start_idx in 1:config["batch_size"]:n_val_eval
+        end_idx = min(start_idx + config["batch_size"] - 1, n_val_eval)
         x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
         y_batch = CuArray(y_val_masked[:, start_idx:end_idx])
         loss_val, _, _ = masked_mlm_loss(model, x_batch, y_batch, n_classes)
@@ -283,7 +310,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
                         "val_loss" => val_losses[end],
                         "train_loss_max" => train_loss_maxes[end],
-                        "global_step" => global_step)
+                        "global_step" => global_step,
+                        "data_epoch" => global_step / bpe)
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
             log_dict["mean_rank_error"] = test_rank_errors[end]

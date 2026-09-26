@@ -59,7 +59,8 @@ timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-wandb = init_wandb(config, "SC-PT-Aug", "lrecon_$(config["modeltype"])_$(timestamp)")
+# wandb = init_wandb(config, "SC-PT-Aug", "lrecon_$(config["modeltype"])_$(timestamp)")
+wandb = init_wandb(config, wandb_project(config, "PT"; sc=true), "lrecon_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
 # schedule: batches/epoch estimated from one shard, per-step warmup + cosine lr

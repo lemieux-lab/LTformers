@@ -26,6 +26,8 @@ subset_shards = 0
 subset_ratio = 1.0
 # max_steps = 160000 # pre-train
 max_steps = 40000 # pre-train
+eval_every = 0 # PB pretrain: val/checkpoint every N steps (0 = once per pass over the data)
+max_val_samples = 0 # PB pretrain: val on the first N val samples (0 = all)
 split_seed = 42 # PB pretrain train/val/test split (shared across objectives + model types)
 
 # variable params

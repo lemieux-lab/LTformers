@@ -2193,3 +2193,5 @@ completed:
 
 i think i will just redo everything. 
 
+also updated 
+-- pretrain eval every N steps instead of epochs

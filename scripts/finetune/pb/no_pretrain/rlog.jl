@@ -81,7 +81,8 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, wandb_project(config, "npt-FT"), "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
