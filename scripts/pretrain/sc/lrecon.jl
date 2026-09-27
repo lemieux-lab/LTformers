@@ -59,7 +59,6 @@ timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-# wandb = init_wandb(config, "SC-PT-Aug", "lrecon_$(config["modeltype"])_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "PT"; sc=true), "lrecon_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
@@ -71,8 +70,8 @@ println("  $(n_cells_per_shard) cells/shard -> $(sched.bpe) batches/epoch, $(sch
 use_max_steps = config["max_steps"] > 0
 MAX_EMBED_BATCHES = 10   # test batches whose raw embeddings are kept in lrecon_diagnostics.jld2
 
-# statically masked val (checkpoint selection, every epoch) and test (final epoch) batches
-val_cache = sc_masked_cache(val_shards[1:min(config["n_eval_shards"], length(val_shards))], mc)
+n_val_shards = get(config, "n_val_shards", 0) > 0 ? config["n_val_shards"] : config["n_eval_shards"]
+val_cache = sc_masked_cache(val_shards[1:min(n_val_shards, length(val_shards))], mc)
 eval_cache = sc_masked_cache(test_shards[1:min(config["n_eval_shards"], length(test_shards))], mc)
 
 train_losses = Float32[]
@@ -88,44 +87,43 @@ done = false
 best_val_loss = Inf32
 best_epoch = 0
 
-for epoch in ProgressBar(1:sched.n_epochs)
+eval_every = get(config, "eval_every", 0)
+n_periods = eval_every > 0 ? cld(sched.total_steps, eval_every) : sched.n_epochs
+steps_per_period = eval_every > 0 ? eval_every : sched.bpe
+train_stream = Iterators.Stateful(Iterators.flatten(sc_shard_batches(s, mc)
+                                                    for _ in Iterators.countfrom(1) for s in shuffle(train_shards)))
+println("eval every $(steps_per_period) steps ($(n_periods) evals), val on $(length(val_cache)) batches")
+
+for epoch in ProgressBar(1:n_periods)
     done && break
     lr = compute_lr_step(global_step + 1, sched.total_steps, config["lr"], sched.warmup_steps)
 
     # train
     Flux.trainmode!(model)
     epoch_losses = Float32[]
-    shuffled_train = shuffle(train_shards)
-    for (si, shard_path) in enumerate(shuffled_train)
-        done && break
-        for batch in sc_shard_batches(shard_path, mc)
-            lr = compute_lr_step(global_step + 1, sched.total_steps, config["lr"], sched.warmup_steps)
-            Optimisers.adjust!(opt, lr)
-            b = sc_mask!(mask_bufs, batch, mc)
-            x_gpu, mask_gpu = CuArray(b.x), CuArray(Float32.(b.m))
-            targets = teacher_targets(ema_model, CuArray(b.clean), use_exp)
-            l_val, grads = Flux.withgradient(model) do m
-                masked_lrecon_loss(m, x_gpu, targets, mask_gpu)[1]
-            end
-            Flux.update!(opt, model, grads[1])
-            ema_update!(ema_model, model, Float32(config["ema_decay"]))
-            push!(epoch_losses, l_val)
-            isnothing(collapse_check_batch) && (global collapse_check_batch = copy(b.clean))
-            global global_step += 1
-            if use_max_steps && global_step >= config["max_steps"]
-                global done = true; break
-            end
+    for batch in Iterators.take(train_stream, steps_per_period)
+        lr = compute_lr_step(global_step + 1, sched.total_steps, config["lr"], sched.warmup_steps)
+        Optimisers.adjust!(opt, lr)
+        b = sc_mask!(mask_bufs, batch, mc)
+        x_gpu, mask_gpu = CuArray(b.x), CuArray(Float32.(b.m))
+        targets = teacher_targets(ema_model, CuArray(b.clean), use_exp)
+        l_val, grads = Flux.withgradient(model) do m
+            masked_lrecon_loss(m, x_gpu, targets, mask_gpu)[1]
         end
-        if si % 50 == 0 || done
-            println("  epoch $epoch shard $si/$(length(shuffled_train)) step=$global_step loss=$(round(mean(epoch_losses[max(1,end-49):end]), digits=4))")
+        Flux.update!(opt, model, grads[1])
+        ema_update!(ema_model, model, Float32(config["ema_decay"]))
+        push!(epoch_losses, l_val)
+        isnothing(collapse_check_batch) && (global collapse_check_batch = copy(b.clean))
+        global global_step += 1
+        if use_max_steps && global_step >= config["max_steps"]
+            global done = true; break
+        end
+        if global_step % 500 == 0 || done
+            println("  period $epoch step=$global_step loss=$(round(mean(epoch_losses[max(1,end-49):end]), digits=4))")
         end
     end
     push!(train_losses, mean(epoch_losses))
 
-    # collapse monitor: raw teacher variance across cells (standardized targets have var ≈ 1 by construction)
-    # raw_tgts = teacher_targets(ema_model, CuArray(collapse_check_batch), use_exp; normalize=false)
-    # push!(target_variances, Float32(mean(cpu(var(raw_tgts, dims=3)))))
-    # variance across cells over real tokens only (PAD positions of short cells excluded)
     raw_tgts, tgt_keep = teacher_targets(ema_model, CuArray(collapse_check_batch), use_exp; normalize=false, return_keep=true)
     if isnothing(tgt_keep)
         push!(target_variances, Float32(mean(cpu(var(raw_tgts, dims=3)))))
@@ -154,7 +152,7 @@ for epoch in ProgressBar(1:sched.n_epochs)
     end
 
     # test (final epoch, best student)
-    is_last = (epoch == sched.n_epochs) || done
+    is_last = (epoch == n_periods) || done
     if is_last
         best_cpu = load_best_cpu(model, save_dir)
         if !isnothing(best_cpu)
@@ -174,10 +172,11 @@ for epoch in ProgressBar(1:sched.n_epochs)
         push!(test_losses, mean(eval_losses))
     end
 
-    println("epoch $epoch/$(sched.n_epochs) | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
+    println("epoch $epoch/$(n_periods) | train=$(round(train_losses[end], digits=4)) val=$(round(val_losses[end], digits=4)) steps=$global_step lr=$(round(lr, sigdigits=3))")
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end], "val_loss" => val_losses[end],
-                        "target_variance" => target_variances[end], "global_step" => global_step, "lr" => lr)
+                        "target_variance" => target_variances[end], "global_step" => global_step, "lr" => lr,
+                        "data_epoch" => global_step / sched.bpe)
         is_last && (log_dict["test_loss"] = test_losses[end])
         wb.log(log_dict)
     end

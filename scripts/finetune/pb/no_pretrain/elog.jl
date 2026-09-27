@@ -84,11 +84,13 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
+seed_tag = isnothing(seed) ? "" : "_s$(seed)"
+# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
+# seed in dir name: seeded runs launched in the same minute would otherwise share a save dir
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, "$(timestamp)$(seed_tag)")
 mkpath(save_dir)
 println("save dir: $save_dir")
 
-seed_tag = isnothing(seed) ? "" : "_s$(seed)"
 # wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "npt-FT"), "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing

@@ -175,20 +175,17 @@ best_val_loss = Inf32
 best_epoch = 0
 
 bpe = cld(size(X_train, 2), config["batch_size"])
-# n_total_epochs = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
-# eval_every > 0: val/checkpoint/wandb log every eval_every train steps; "epoch" below is then one eval period,
-# not one pass over the data (LINCS: ~11k steps per pass, too coarse for hyperband). 0 = once per pass (old behavior)
+
 eval_every = get(config, "eval_every", 0)
 n_epochs_data = use_max_steps ? cld(config["max_steps"], bpe) : config["n_epochs"]
 n_total_epochs = eval_every > 0 ? cld(use_max_steps ? config["max_steps"] : n_epochs_data * bpe, eval_every) : n_epochs_data
 steps_per_period = eval_every > 0 ? eval_every : bpe
-# max_val_samples > 0: val on a fixed subset (first n of the shuffled val split); full LINCS val is ~141k samples
+
 n_val_eval = get(config, "max_val_samples", 0) > 0 ? min(config["max_val_samples"], size(X_val_masked, 2)) : size(X_val_masked, 2)
 train_pos = size(X_train, 2) + 1   # next train column; past the end -> re-mask and start a new pass
 println("eval every $(steps_per_period) steps ($(n_total_epochs) evals; $(bpe) steps per pass), val on $(n_val_eval) samples")
 warmup_epochs = max(1, div(n_total_epochs, 10)) # still used for the frozen-teacher snapshot
-# per-step lr schedule (matches SC pretrain); per-epoch version ran the whole last epoch at lr = 0
-# total_steps = use_max_steps ? config["max_steps"] : n_total_epochs * bpe
+
 total_steps = use_max_steps ? config["max_steps"] : n_epochs_data * bpe
 warmup_steps = max(1, div(total_steps, 10))
 train_loss_maxes = Float32[]
@@ -209,19 +206,10 @@ for epoch in ProgressBar(1:n_total_epochs)
     done && break
     is_last = (epoch == n_total_epochs)
 
-    # if use_exp
-    #     corrupt_expr!(X_train_masked, train_corrupt_mask, X_train, config["mask_ratio"])
-    # else
-    #     mask_input!(X_train_masked, y_train_masked, X_train, config["mask_ratio"], -100, MASK_ID, false)
-    # end
-    # ^ moved into the step loop: re-masked at the start of every pass over the data
-
     # train epoch
     Flux.trainmode!(model)
     epoch_losses = Float32[]
 
-    # for start_idx in 1:config["batch_size"]:size(X_train_masked, 2)
-    #     end_idx = min(start_idx + config["batch_size"] - 1, size(X_train_masked, 2))
     for _ in 1:steps_per_period
         if train_pos > size(X_train, 2)
             if use_exp
@@ -301,7 +289,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         push!(val_losses_frozen, NaN32)
     else
         frozen_eval_losses = Float32[]
-        # for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
+
         for start_idx in 1:config["batch_size"]:n_val_eval
             end_idx = min(start_idx + config["batch_size"] - 1, n_val_eval)
             x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
@@ -327,8 +315,6 @@ for epoch in ProgressBar(1:n_total_epochs)
     # test eval (final epoch only)
     is_last = is_last || done
 
-    # save the end-of-training student + teacher before the best reload: finetuning uses <run>/final for lrecon
-    # (moving-teacher val picks the epoch with the easiest targets, not the best representation)
     if is_last
         mkpath(joinpath(save_dir, "final", "ema"))
         log_model(model, joinpath(save_dir, "final"), config)
@@ -431,15 +417,12 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # moved above the reload
-    #     log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
 end
 
 # log
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "MSE loss";
          val_losses=val_losses)
 
-# cap diagnostics to avoid multi-GB files (sep24figs uses 200k tokens, >=100 per position)
 MAX_DIAG_TOKENS = 250_000
 diag_idx = length(saved_preds) > MAX_DIAG_TOKENS ?
     sort(randperm(length(saved_preds))[1:MAX_DIAG_TOKENS]) : collect(1:length(saved_preds))
@@ -465,7 +448,6 @@ log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indic
            target_variances=target_variances, train_loss_maxes=train_loss_maxes,
            X_test_masked=X_test_masked,
            y_test_masked=use_exp ? test_corrupt_mask : y_test_masked)
-           # X_test=use_exp ? X_expr[:, test_indices] : X_test)  # ignored by log_info
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

@@ -8,6 +8,7 @@ notes/prev/
 notes/wip/
 tmp/
 sh/
+wb/
 
 # environments
 aarch64/
@@ -20,3 +21,4 @@ config/LocalPreferences.toml
 *.sh
 *.log
 *.yaml
+prev_results/

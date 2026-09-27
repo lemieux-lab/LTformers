@@ -2179,6 +2179,7 @@ a2 (TAHOE)
 -- pre-train
     -- pb
         -- TODO all sweeps
+            -- RUNNING (6)
 -- fine-tune
     -- pb
         -- waiting on pre-train
@@ -2195,3 +2196,86 @@ i think i will just redo everything.
 
 also updated 
 -- pretrain eval every N steps instead of epochs
+
+cd /home/golem/scratch/chans/transformers
+for s in mlm_rtf ; do
+.venv-x86_64/bin/wandb sweep scripts/pretrain/pb/wb/sweep_${s}_tpb.yaml
+done
+# then, with each printed sweep ID:
+run_sweep gh200_sbatch  TPB_mlm_rtf serena-chan-/TPB-PT-Sept/2m5tfypy
+run_sweep gh18_sbatch  TPB_mlm_etf serena-chan-/TPB-PT-Sept/ubn9svv2
+run_sweep gh18_sbatch  TPB_er_rtf  serena-chan-/TPB-PT-Sept/7wwqywov
+run_sweep gh18_sbatch  TPB_er_etf  serena-chan-/TPB-PT-Sept/hnifwed7
+run_sweep gh18_sbatch  TPB_lr_rtf  serena-chan-/TPB-PT-Sept/3xfcvgqw
+run_sweep gh18_sbatch  TPB_lr_etf  serena-chan-/TPB-PT-Sept/mwhpxgop
+
+need to run mlm rtf on gh200... depending on mask_ratio so whatever
+
+also updated sc scripts to be shorter max steps, eval every n steps, only 2 val and 2 test shards
+bigger batchsize? and run cap of 15 
+
+ok so:
+5/7 MiG for TPB pre-train
+1/1 GH200 for TPB pre-train
+2/7 MiG for 
+
+later:
+to-run all sc sweeps on gh200 i guess... since cq is trolling
+
+for log baselines (L, TPB):
+cd /home/golem/scratch/chans/transformers
+source sh/ft_nopt.sh rank_rerun
+This runs TPB elog (HVG-1024 and full) and rlog (top-1024 and full), plus LINCS elog and rlog (978 genes, which is already the full set). All of them run lvl1 and lvl2, for 40k steps each.
+
+for npt tf sweeps (TPB):
+cd /home/golem/scratch/chans/transformers
+WB=scripts/finetune/pb/no_pretrain/wb
+for y in emlp_lvl1_tpb emlp_lvl2_tpb emlp_lvl1_tpb_full emlp_lvl2_tpb_full \
+        rmlp_lvl1_tpb rmlp_lvl2_tpb rmlp_lvl1_tpb_full rmlp_lvl2_tpb_full \
+        etf_lvl1_tpb etf lvl1_tpb \
+        rtf_lvl1_tpb rtf_lvl2_tpb; do
+    .venv-x86_64/bin/wandb sweep $WB/sweep_$y.yaml 2>&1 | grep "wandb agent"
+done
+Then run run_sweep for each sweep ID it prints, using the pattern from the YAML headers:
+run_sweep gh18_sbatch TPB_emlp_lvl1 serena-chan-/TPB-npt-FT-Sept/<id>
+run_sweep gh18_sbatch L_rtf_lvl1   serena-chan-/LINCS-npt-FT-Sept/<id>
+
+for npt mlp sweeps (TPB):
+
+
+for npt tf sweeps (L):
+
+for npt mlp sweeps (L):
+
+
+running:
+-- TPB pt sweeps (gh18)
+-- TPB, TSC, L elog/rlog (lvl1, lvl2) (tty)
+-- testing TSC pt (CQ)
+    -- pt.sh on lrecon rtf fails at 500bs, good at 400bs for 1 h100
+
+next:
+-- TPB pt good runs (gh18)
+-- TSC pt sweeps (GH200)
+-- TPB, TSC, L emlp/rmlp sweeps (lvl1, lvl2) (mega)
+-- TPB, TSC, L emlp/rmlp good runs (lvl1, lvl2) (tty or mega)
+
+next next:
+-- L pt sweeps (MiGs)
+-- TPB, TSC, L etf/rtf sweeps (lvl1, lvl2) (gh18 or mega)
+-- TPB, TSC, L etf/rtf good runs (lvl1, lvl2) (gh18 or mega)
+
+next next next: 
+-- L
+
+from valence blog posts:
+-- for lvl3 task:
+    --  given a perturbation and cellular context, predict whether a target gene is differentially expressed and, if so, whether its expression increases or decreases.
+        -- how does it choose the target gene?
+        -- https://valencelabs.substack.com/p/towards-reasoning-in-virtual-cells
+    -- TxPert task?
+-- TxPert baseline
+-- what if i were to do a umap on the embeddings to see if it can actually stratify by compound? or is this precisely what the compound prediction does?
+
+-- can also add a random chance baseline
+-- or wahtever the txpert did
