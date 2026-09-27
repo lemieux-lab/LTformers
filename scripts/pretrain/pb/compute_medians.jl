@@ -1,4 +1,4 @@
-# per-gene nonzero medians over ALL PB samples 
+# per-gene nonzero medians over all PB samples
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -11,7 +11,7 @@ using Preprocess, Args, Config
 
 args = load_pretrain_args()
 config = load_config(args["config"], args)
-resolve_data_path!(config)   # same data file the finetune scripts load for this data_format
+resolve_data_path!(config)
 
 fmt = get(config, "data_format", "tahoe")
 data_key = fmt == "lincs" ? "filtered_data" : "df"

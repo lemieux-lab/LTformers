@@ -13,9 +13,7 @@ data_vec_euclid_dir = "results/lincs/data/vectors/euclid"
 save_prefix = "lincs"
 
 n_genes, N = size(expr)
-# gene_medians = vec(median(expr, dims=2)) .+ 1f-10
-# shared ranking rule (src/Preprocess.jl, 2026-09-26): per-gene nonzero medians over all samples, computed once
-# (scripts/pretrain/pb/compute_medians.jl); undetected genes rank after detected ones, ties by gene index (no noise)
+# train nonzero medians, detected first
 gene_medians = let p = "data/lincs/gene_medians.jld2"
     if isfile(p) && length(load(p, "medians")) == size(expr, 1)
         Float32.(load(p, "medians"))
@@ -29,7 +27,6 @@ println("dataset=lincs  n_genes=$n_genes  N=$N")
 mkpath(fig_vec_cosine_dir); mkpath(fig_vec_euclid_dir); mkpath(fig_var_dir)
 mkpath(data_vec_cosine_dir); mkpath(data_vec_euclid_dir)
 
-#######################################################################################################################################
 
 function rank_genes(expr, medians)
     n, m = size(expr)
@@ -40,8 +37,6 @@ function rank_genes(expr, medians)
     for j in 1:m
         unsorted_expr_col = view(expr, :, j)
         @. normalized_col = unsorted_expr_col / medians
-        # randn!(noise)
-        # @. normalized_col += noise * 1f-10 # only doing the noise here bc thats what we doing in the single-cell   # no noise: ties by gene index, like the models
         sortperm!(sorted_ind_col, normalized_col, rev=true)
         data_ranked[:, j] .= sorted_ind_col
     end
@@ -50,7 +45,6 @@ end
 
 ranked = rank_genes(expr, gene_medians)
 
-#######################################################################################################################################
 
 n_pairs = 100_000
 
@@ -76,18 +70,15 @@ rank_kendall = Vector{Float32}(undef, n_pairs)
 for k in 1:n_pairs
     σ = view(ranked, :, idx_a[k])
     τ = view(ranked, :, idx_b[k])
-    # rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
-    # tau-b on x / median: same order as the ranking, and undetected genes tie (absent for the models) instead of
-    # being ordered by gene index
+    # tau-b on x / median, undetected tie
     rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
                                                 Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
 end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
-#######################################################################################################################################
 
-# hexbin plots: euclidean vs kendall, cosine vs kendall
+# hexbin: euclid/cosine vs kendall
 
 begin
     fig = Figure(size=(600, 400))
@@ -116,9 +107,8 @@ begin
     display(fig)
 end
 
-#######################################################################################################################################
 
-### LINCS: diagnose upper blob using det_plate / pert_id / sample_id
+# LINCS upper blob diagnosis
 
 mfc = load("data/lincs/lincs_trt_inst.jld2")["mfc"]
 pert_id = load("data/lincs/lincs_trt_inst.jld2")["pert_id"]
@@ -128,7 +118,7 @@ sample_ids = inst.sample_id
 det_plates = inst.det_plate
 cmap_names = inst.cmap_name
 
-# frequency in upper tail
+# upper tail frequency
 tail_threshold = 0.10f0
 tail_mask = expr_cosine .> tail_threshold
 tail_indices = findall(tail_mask)
@@ -139,7 +129,7 @@ function tail_freq(ids, idx_a, idx_b, tail_indices)
         [ids[idx_b[k]] for k in tail_indices]))
 end
 
-# compounds (pert_id + cmap_name)
+# compounds
 tail_perts = tail_freq(pert_id, idx_a, idx_b, tail_indices)
 tail_perts_sorted = sort(collect(tail_perts), by=x->-x[2])
 overall_perts = countmap(pert_id)
@@ -151,14 +141,14 @@ for (pid, count) in tail_perts_sorted[1:min(20, length(tail_perts_sorted))]
     println("$pid ($name): $count tail appearances (overall: $overall_count samples, $overall_frac%)")
 end
 
-# individual samples (sample_id)
+# samples
 tail_samples = tail_freq(sample_ids, idx_a, idx_b, tail_indices)
 tail_samples_sorted = sort(collect(tail_samples), by=x->-x[2])
 for (sid, count) in tail_samples_sorted[1:min(20, length(tail_samples_sorted))]
     println("$sid: $count")
 end
 
-# plates (det_plate)
+# plates
 tail_plates = tail_freq(det_plates, idx_a, idx_b, tail_indices)
 tail_plates_sorted = sort(collect(tail_plates), by=x->-x[2])
 overall_plates = countmap(det_plates)
@@ -168,11 +158,7 @@ for (plate, count) in tail_plates_sorted[1:min(20, length(tail_plates_sorted))]
     println("$plate: $count tail appearances (overall: $overall_count samples, $overall_frac%)")
 end
 
-#=
-from the above, we see that REP.A010_JURKAT_24H_X3_B32 is the main cause of the upper blob;
-this is part of det_plate
-so we can remove it and redo:
-=#
+# upper blob is plate REP.A010_JURKAT_24H_X3_B32, removed below
 
 bad_plate = Symbol("REP.A010_JURKAT_24H_X3_B32")
 clean_mask = [(det_plates[idx_a[k]] != bad_plate) && (det_plates[idx_b[k]] != bad_plate) for k in 1:n_pairs]
@@ -202,7 +188,6 @@ save("$fig_vec_euclid_dir/euc_ken_cleaned_$(n_pairs_str)_noself.png", fig)
 begin
     fig = Figure(size=(600, 500))
     ax = Axis(fig[1, 1], xlabel="Kendall Tau distance", ylabel="Cosine distance")
-            #   title="Pairwise distances in expression vs. ranked vectors")
     rx = (maximum(clean_kendall) - minimum(clean_kendall)) / 100
     ry = (maximum(clean_cosine) - minimum(clean_cosine)) / 100
     hb = hexbin!(ax, Float64.(clean_kendall), Float64.(clean_cosine), cellsize=(rx, ry), colorscale=log10)
@@ -210,10 +195,8 @@ begin
     display(fig)
 end
 
-###################################################################################################################################
 
-# confounder summary: overlaid histograms for each distance metric (3 figures)
-# uses cleaned data (bad plate removed)
+# confounder histograms (cleaned data)
 
 clean_plate_a = det_plates[idx_a[clean_mask]]
 clean_plate_b = det_plates[idx_b[clean_mask]]
@@ -223,7 +206,7 @@ clean_pert_b  = pert_id[idx_b[clean_mask]]
 same_plate = clean_plate_a .== clean_plate_b
 same_pert  = clean_pert_a .== clean_pert_b
 
-# euclidean version
+# euclidean
 begin
     fig_conf_e = Figure(size=(700, 600))
 
@@ -241,7 +224,7 @@ begin
 end
 save("$fig_var_dir/confounder_euclidean_$(n_pairs_str).png", fig_conf_e)
 
-# cosine version
+# cosine
 begin
     fig_conf_c = Figure(size=(700, 600))
 
@@ -259,7 +242,7 @@ begin
 end
 save("$fig_var_dir/confounder_cosine_$(n_pairs_str).png", fig_conf_c)
 
-# kendall tau version
+# kendall
 begin
     fig_conf_k = Figure(size=(700, 600))
 

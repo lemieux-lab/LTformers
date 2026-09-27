@@ -11,9 +11,7 @@ data_vec_dir = "results/tahoe/pb/data/vectors"
 save_prefix = "pb"
 
 n_genes, N = size(expr)
-# gene_medians = vec(median(expr, dims=2)) .+ 1f-10
-# shared ranking rule (src/Preprocess.jl, 2026-09-26): per-gene nonzero medians over all samples, computed once
-# (scripts/pretrain/pb/compute_medians.jl); undetected genes rank after detected ones, ties by gene index (no noise)
+# train nonzero medians, detected first
 gene_medians = let p = "data/tahoe/pb_gene_medians.jld2"
     if isfile(p) && length(load(p, "medians")) == size(expr, 1)
         Float32.(load(p, "medians"))
@@ -26,7 +24,6 @@ println("dataset=tahoe  n_genes=$n_genes  N=$N")
 
 mkpath(fig_vec_dir); mkpath(fig_var_dir); mkpath(data_vec_dir)
 
-#######################################################################################################################################
 
 function rank_genes(expr, medians)
     n, m = size(expr)
@@ -37,8 +34,6 @@ function rank_genes(expr, medians)
     for j in 1:m
         unsorted_expr_col = view(expr, :, j)
         @. normalized_col = unsorted_expr_col / medians
-        # randn!(noise)
-        # @. normalized_col += noise * 1f-10 # only doing the noise here bc thats what we doing in the single-cell   # no noise: ties by gene index, like the models
         sortperm!(sorted_ind_col, normalized_col, rev=true)
         data_ranked[:, j] .= sorted_ind_col
     end
@@ -47,7 +42,6 @@ end
 
 ranked = rank_genes(expr, gene_medians)
 
-#######################################################################################################################################
 
 n_pairs = 100_000
 
@@ -74,24 +68,21 @@ rank_kendall = Vector{Float32}(undef, n_pairs)
 for k in 1:n_pairs
     σ = view(ranked, :, idx_a[k])
     τ = view(ranked, :, idx_b[k])
-    # rank_kendall[k] = (1f0 - Float32(corkendall(invperm(σ), invperm(τ)))) / 2f0  # rank of each gene
-    # tau-b on x / median: same order as the ranking, and undetected genes tie (absent for the models) instead of
-    # being ordered by gene index
+    # tau-b on x / median, undetected tie
     rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
                                                 Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
 end
 
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
-# cosine/kendall pairs for sep24figs.jl + comparison.jl (overwrites the aug 5 file made with the sortperm kendall bug)
+# cosine/kendall pairs for sep24figs.jl + comparison.jl
 jldsave("$data_vec_dir/cos_ken_$(n_pairs_str)_noself.jld2"; cosine=expr_cosine, kendall=rank_kendall,
         euclidean=expr_euclid, idx_a=idx_a, idx_b=idx_b)
 
-#######################################################################################################################################
 
-### gene overlap analysis — contrast with single-cell
+# gene overlap vs single-cell
 
-# per-sample library complexity
+# library complexity
 pb_n_expressed_per_sample = vec(sum(expr .> 0f0, dims=1))
 println("\n=== PB library complexity (genes expressed per pseudobulk) ===")
 println("  median: $(median(pb_n_expressed_per_sample))  mean: $(round(mean(pb_n_expressed_per_sample), digits=1))  std: $(round(std(pb_n_expressed_per_sample), digits=1))")
@@ -99,7 +90,7 @@ println("  min: $(minimum(pb_n_expressed_per_sample))  max: $(maximum(pb_n_expre
 println("  median sparsity: $(round(1 - median(pb_n_expressed_per_sample)/n_genes, digits=3))")
 println("  fraction fully dense (all genes expressed): $(round(mean(pb_n_expressed_per_sample .== n_genes), digits=3))")
 
-# per-pair overlap metrics
+# pairwise overlap
 pb_n_shared = Vector{Int}(undef, n_pairs)
 pb_n_union = Vector{Int}(undef, n_pairs)
 pb_jaccard = Vector{Float32}(undef, n_pairs)
@@ -139,7 +130,7 @@ println("\n=== PB euclidean distance decomposition ===")
 println("  fraction of ||a-b||² from non-overlapping genes:")
 println("    median=$(round(median(pb_frac_from_mismatch), digits=3))  mean=$(round(mean(pb_frac_from_mismatch), digits=3))")
 
-# save overlap data
+# save overlap
 mkpath(data_vec_dir)
 jldsave("$data_vec_dir/pb_overlap_$(n_pairs).jld2";
     n_expressed_per_sample=pb_n_expressed_per_sample,
@@ -148,7 +139,7 @@ jldsave("$data_vec_dir/pb_overlap_$(n_pairs).jld2";
     euclid_from_shared=pb_euclid_from_shared,
     frac_from_mismatch=pb_frac_from_mismatch)
 
-### PB overlap plots
+# PB overlap plots
 
 begin
     fig_lc = Figure(size=(600, 400))
@@ -163,7 +154,7 @@ begin
 end
 save("$fig_vec_dir/$(save_prefix)_library_complexity.png", fig_lc)
 
-# cosine vs kendall colored by jaccard
+# cosine vs kendall by jaccard
 begin
     fig_jac = Figure(size=(700, 500))
     ax_jac = Axis(fig_jac[1, 1],
@@ -182,7 +173,7 @@ begin
 end
 save("$fig_vec_dir/$(save_prefix)_cosken_by_jaccard.png", fig_jac)
 
-# cosine vs kendall colored by fraction of euclidean from non-overlapping genes
+# cosine vs kendall by non-overlap euclid fraction
 begin
     fig_frac = Figure(size=(700, 500))
     ax_frac = Axis(fig_frac[1, 1],
@@ -232,9 +223,8 @@ begin
 end
 save("$fig_vec_dir/$(save_prefix)_euclid_decomposition.png", fig_decomp)
 
-#######################################################################################################################################
 
-# hexbin plots: euclidean vs kendall, cosine vs kendall
+# hexbin: euclid/cosine vs kendall
 
 begin
     fig = Figure(size=(600, 400))
@@ -263,9 +253,8 @@ begin
     display(fig)
 end
 
-#######################################################################################################################################
 
-### Tahoe: diagnose two-blob structure using drug / cell_line / plate / dose
+# Tahoe two-blob diagnosis
 
 drugs_a = df.drug[idx_a]
 drugs_b = df.drug[idx_b]
@@ -278,7 +267,7 @@ same_cl   = cl_a .== cl_b
 println("\n=== blob diagnosis ===")
 println("total pairs: $n_pairs")
 
-low_cos  = expr_cosine .< 0.07  # threshold between the two blobs
+low_cos  = expr_cosine .< 0.07
 high_cos = expr_cosine .>= 0.07
 
 println("\nlow cosine blob (< 0.07):  n = $(sum(low_cos))")
@@ -289,7 +278,7 @@ println("\nhigh cosine blob (>= 0.07): n = $(sum(high_cos))")
 println("  same cell line: $(sum(same_cl .& high_cos)) / $(sum(high_cos)) = $(round(mean(same_cl[high_cos]), digits=3))")
 println("  same drug:      $(sum(same_drug .& high_cos)) / $(sum(high_cos)) = $(round(mean(same_drug[high_cos]), digits=3))")
 
-# break down by pair type
+# by pair type
 for (label, mask) in [
     ("same_cl & same_drug",   same_cl .& same_drug),
     ("same_cl & diff_drug",   same_cl .& .!same_drug),
@@ -303,7 +292,7 @@ for (label, mask) in [
     println("  kendall dist:   median=$(round(median(rank_kendall[mask]), digits=4)), mean=$(round(mean(rank_kendall[mask]), digits=4))")
 end
 
-# DMSO control vs treated
+# DMSO vs treated
 is_dmso_a = drugs_a .== :DMSO
 is_dmso_b = drugs_b .== :DMSO
 both_dmso   = is_dmso_a .& is_dmso_b
@@ -321,7 +310,7 @@ for (label, mask) in [("both DMSO", both_dmso), ("both treated", both_trt), ("mi
     println("  fraction in low blob: $(round(mean(low_cos[mask]), digits=3))")
 end
 
-# scatter plots colored by cell line
+# colored by cell line
 begin
     fig2 = Figure(size=(900, 400))
 
@@ -347,26 +336,25 @@ expected_same_cl = sum((c/N)^2 for (_, c) in cl_counts)
 println("expected same-CL rate (random pairs): $(round(expected_same_cl, digits=3))")
 println("observed same-CL rate:                $(round(mean(same_cl), digits=3))")
 
-###################################################################################################################################
 
-# distribution of each distance metric split by same vs different cell line
+# distances by same vs diff cell line
 
 begin
     fig_cl = Figure(size=(1200, 800))
 
-    # cosine distance
+    # cosine
     ax_c1 = Axis(fig_cl[1, 1], xlabel="cosine distance", ylabel="density", title="same cell line")
     hist!(ax_c1, Float64.(expr_cosine[same_cl]), bins=100, normalization=:pdf, color=(:blue, 0.5))
     ax_c2 = Axis(fig_cl[1, 2], xlabel="cosine distance", ylabel="density", title="different cell line")
     hist!(ax_c2, Float64.(expr_cosine[.!same_cl]), bins=100, normalization=:pdf, color=(:red, 0.5))
 
-    # euclidean distance
+    # euclidean
     ax_e1 = Axis(fig_cl[2, 1], xlabel="euclidean distance", ylabel="density")
     hist!(ax_e1, Float64.(expr_euclid[same_cl]), bins=100, normalization=:pdf, color=(:blue, 0.5))
     ax_e2 = Axis(fig_cl[2, 2], xlabel="euclidean distance", ylabel="density")
     hist!(ax_e2, Float64.(expr_euclid[.!same_cl]), bins=100, normalization=:pdf, color=(:red, 0.5))
 
-    # kendall tau distance
+    # kendall
     ax_k1 = Axis(fig_cl[3, 1], xlabel="kendall tau distance", ylabel="density")
     hist!(ax_k1, Float64.(rank_kendall[same_cl]), bins=100, normalization=:pdf, color=(:blue, 0.5))
     ax_k2 = Axis(fig_cl[3, 2], xlabel="kendall tau distance", ylabel="density")
@@ -376,7 +364,7 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_cl_distributions_$(n_pairs_str).png", fig_cl)
 
-# overlaid version
+# overlaid
 begin
     fig_ov = Figure(size=(600, 800))
 
@@ -399,7 +387,7 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_cl_overlay_$(n_pairs_str).png", fig_ov)
 
-# standalone density vs kendall tau: same cell line vs different cell line
+# density vs kendall by cell line
 begin
     fig_clk = Figure(size=(700, 450))
     ax_clk = Axis(fig_clk[1, 1],
@@ -415,9 +403,8 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_cl_kendall_density_$(n_pairs_str).png", fig_clk)
 
-###################################################################################################################################
 
-# additional confounder checks: plate, dose, same-drug-same-dose, diff-CL pair identities
+# more confounders
 
 plate_a = df.plate[idx_a]
 plate_b = df.plate[idx_b]
@@ -443,7 +430,7 @@ println("same-drug-dose base rate: $(round(mean(same_drug_dose), digits=4))")
 println("same-drug-dose in low blob:  $(round(mean(same_drug_dose[low_cos]), digits=4))")
 println("same-drug-dose in high blob: $(round(mean(same_drug_dose[high_cos]), digits=4))")
 
-# which diff-CL pairs land in the low-cosine blob?
+# diff-CL pairs in low-cosine blob
 diff_cl_low = .!same_cl .& low_cos
 println("\n=== diff-CL pairs in low cosine blob (n=$(sum(diff_cl_low))) ===")
 if sum(diff_cl_low) > 0
@@ -456,7 +443,7 @@ if sum(diff_cl_low) > 0
     end
 end
 
-# scatter plots colored by each confounder
+# colored by confounder
 # plate
 begin
     fig_plate = Figure(size=(900, 400))
@@ -483,7 +470,7 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_dose_diagnosis.png", fig_dose)
 
-# combined confounder summary: overlaid cosine histograms
+# confounder cosine histograms
 begin
     fig_conf = Figure(size=(700, 900))
 
@@ -511,7 +498,7 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_confounder_cosine_$(n_pairs_str).png", fig_conf)
 
-# euclidean version of confounder summary
+# confounder euclid histograms
 begin
     fig_conf_e = Figure(size=(700, 900))
 
@@ -539,7 +526,7 @@ begin
 end
 save("$fig_var_dir/$(save_prefix)_confounder_euclidean_$(n_pairs_str).png", fig_conf_e)
 
-# kendall tau version of confounder summary
+# confounder kendall histograms
 begin
     fig_conf_k = Figure(size=(700, 900))
 

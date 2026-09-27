@@ -3,7 +3,7 @@ arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
 using JLD2, StatsBase, Statistics, CairoMakie, DataFrames
 
-dataset = "tahoe" # for pseudobulk
+dataset = "tahoe"
 
 if dataset == "lincs"
     expr = load("data/lincs/data_expr.jld2")["data_expr"]
@@ -19,9 +19,7 @@ elseif dataset == "tahoe"
 end
 
 n_genes, N = size(expr)
-# gene_medians = vec(median(expr, dims=2)) .+ 1f-10
-# shared ranking rule (src/Preprocess.jl, 2026-09-26): per-gene nonzero medians over all samples, computed once
-# (scripts/pretrain/pb/compute_medians.jl); undetected genes rank after detected ones, ties by gene index (no noise)
+# train nonzero medians, detected first
 gene_medians = let p = dataset == "lincs" ? "data/lincs/gene_medians.jld2" : "data/tahoe/pb_gene_medians.jld2"
     if isfile(p) && length(load(p, "medians")) == size(expr, 1)
         Float32.(load(p, "medians"))
@@ -33,7 +31,6 @@ end
 
 mkpath(fig_dir); mkpath(data_dir)
 
-#######################################################################################################################################
 
 function rank_genes(expr, medians)
     n, m = size(expr)
@@ -51,9 +48,8 @@ end
 
 ranked = rank_genes(expr, gene_medians)
 
-#######################################################################################################################################
 
-### calculating entropy per rank position
+# entropy per rank
 
 function calculate_entropy(row)
     n = length(row)
@@ -66,13 +62,7 @@ function calculate_entropy(row)
     return entropy
 end
 
-# entropies = Float64[]
-# for row in eachrow(ranked)
-#     e = calculate_entropy(row)
-#     push!(entropies, e)
-# end
-# only samples where rank r is a detected gene (undetected genes are absent for the models; counting them would
-# measure the gene-index tie order). LINCS: every gene detected -> unchanged
+# detected genes only
 n_det = vec(sum(expr .> 0, dims=1))
 entropies = Float64[]
 for r in 1:n_genes
@@ -85,7 +75,6 @@ begin
         xlabel="Rank (1 = highest expression)",
         ylabel="Shannon entropy",
         xtickformat=values -> [string(Int(round(v))) for v in values])
-        # title="Shannon entropy by gene rank position")
     scatter!(ax, 1:n_genes, entropies, alpha=0.5, color=:black)
     display(fig)
 end
@@ -93,7 +82,7 @@ end
 save("$fig_dir/$(save_prefix)_rank_entropy.png", fig)
 jldsave("$data_dir/$(save_prefix)_ranked_entropies.jld2"; entropies=entropies)
 
-### sparsity per rank position (fraction of samples where gene at that rank has zero expression)
+# sparsity per rank
 
 sparsities = Float64[]
 for r in 1:n_genes
@@ -108,9 +97,7 @@ end
 
 jldsave("$data_dir/$(save_prefix)_ranked_sparsities.jld2"; sparsities=sparsities)
 
-### unique count diversity per rank position
-# For each rank r, count unique expression values at positions r through n_genes
-# Averaged across samples, normalized by rank-1 value
+# unique count diversity per rank
 
 unique_diversity_sum = zeros(Float64, n_genes)
 for j in 1:N
@@ -125,7 +112,7 @@ unique_diversity_norm = unique_diversity ./ unique_diversity[1]
 
 jldsave("$data_dir/$(save_prefix)_ranked_unique_diversity.jld2"; unique_diversity=unique_diversity, unique_diversity_norm=unique_diversity_norm)
 
-### entropy + sparsity overlay
+# entropy + sparsity overlay
 
 begin
     fig_overlay = Figure(size=(600, 500))
@@ -149,7 +136,7 @@ begin
 end
 save("$fig_dir/$(save_prefix)_rank_entropy_sparsity.png", fig_overlay)
 
-### unique count diversity plot (normalized)
+# unique count diversity (normalized)
 
 begin
     fig_ud = Figure(size=(600, 500))
@@ -163,7 +150,7 @@ begin
 end
 save("$fig_dir/$(save_prefix)_rank_unique_diversity.png", fig_ud)
 
-### mean expression per gene (sorted by mean expression)
+# mean expression per gene
 
 gene_means = vec(mean(expr, dims=2))
 gene_std_devs = vec(std(expr, dims=2))
@@ -181,7 +168,7 @@ begin
 end
 save("$fig_dir/gene_exp_mean.png", fig_mean)
 
-### std dev per gene (sorted by mean expression)
+# std per gene
 
 begin
     fig_std = Figure(size=(600, 400))

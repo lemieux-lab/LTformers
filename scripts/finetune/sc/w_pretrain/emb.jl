@@ -34,11 +34,11 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 start_time = now()
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
-# SC data loading
+# data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 all_shards = list_shards(config["data_dir"])
 
-# gene selection based on modeltype
+# gene selection
 hvg_idx = nothing
 if config["modeltype"] == "etf"
     hvg_path = get(config, "hvg_path", "")
@@ -50,7 +50,7 @@ if config["modeltype"] == "etf"
 end
 
 top_k = get(config, "top_k", 1024)
-# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
+# PB data for per-cell lvl3
 sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
@@ -79,32 +79,29 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            pb_expr=pb_expr_for_percell,
                            pb_df=pb_df_for_percell,
                            identity_baseline_fn=identity_baseline)
-is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+is_streaming = d.train_shard_map !== nothing
 
-id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
+id_baseline = is_regression ? d.id_baseline : nothing
 
-# X_val, X_test = d.X_val, d.X_test  # no longer materialized in streaming mode
 
 if config["modeltype"] == "rtf"
-    # RTF: data is Int32 gene IDs, top_k truncated
+    # RTF: gene ids, top_k
     seq_len = top_k
-    n_genes_for_model = d.n_genes  # n_coding — full vocab for embedding lookup
+    n_genes_for_model = d.n_genes
 else
-    # ETF: data is Float32 expression, HVG already applied in load
-    # seq_len = size(X_val, 1)  # no longer materialized in streaming mode
-    seq_len = d.n_genes  # n_hvg or n_coding
-    n_genes_for_model = n_coding  # pretrained vocab size for weight loading
+    # ETF: expression, HVG applied
+    seq_len = d.n_genes
+    n_genes_for_model = n_coding
 end
 
 if is_streaming
-    # streaming embedding extraction: build pretrained encoder, extract embeddings shard-by-shard
-    # then train MLP on the embedding matrix (fits in RAM ~10GB for 256d × 10M cells)
+    # stream embeddings shard-by-shard, then train MLP
 
-    # 1) build pretrained encoder (same logic as build_embm but without running on X_train)
+    # 1) pretrained encoder
     ac = FTModels._load_arch_config(config["model_dir"], config)
     state = JLD2.load("$(config["model_dir"])/model_state.jld2")["model_state"]
 
-    # select embedding extraction function based on modeltype/task
+    # embedding fn per task
     if config["modeltype"] == "etf"
         embed_fn = get_embeds_exp
     elseif config["task"] in ("lrecon", "erecon")
@@ -113,7 +110,7 @@ if is_streaming
         embed_fn = get_embeds
     end
 
-    # build and load pretrained model
+    # load pretrained model
     if config["modeltype"] == "etf" && config["task"] == "lrecon"
         pt_model = ExpLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
@@ -135,7 +132,7 @@ if is_streaming
         pt_model = RankEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_heads=ac["n_heads"],
             hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    else  # rtf + mlm
+    else
         pt_model = RankModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
             n_layers=ac["n_layers"], n_classes=n_genes_for_model,
             n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
@@ -148,7 +145,7 @@ if is_streaming
 
     embed_dim = ac["embed_dim"]
 
-    # helper: extract embedding from a batch through pretrained encoder
+    # batch embedding
     function _encode_batch(x_batch, pt_model, modeltype, task)
         if modeltype == "etf"
             x_gpu = cu(Float32.(x_batch))
@@ -162,24 +159,14 @@ if is_streaming
             CUDA.unsafe_free!(x_gpu)
         else
             x_gpu = cu(Int32.(x_batch))
-            # if task in ("lrecon", "erecon")
-            #     embedded = pt_model.embedding(x_gpu)
-            #     pos_ids = cu(Int32.(1:size(embedded, 2)))
-            #     encoded = embedded .+ pt_model.pos_emb(pos_ids)
-            #     dropped = pt_model.emb_dropout(encoded)
-            #     transformed = pt_model.transformer(dropped)
-            #     emb = cpu(dropdims(mean(transformed, dims=2), dims=2))
-            # else
-            #     emb = cpu(dropdims(mean(encode(pt_model, x_gpu), dims=2), dims=2))
-            # end
-            # all rank objectives share the PAD-aware encoder; mean over real tokens only (Models.encode_rank)
+            # PAD-aware masked mean pool
             emb = cpu(masked_mean_pool(encode_rank(pt_model, x_gpu)...))
             CUDA.unsafe_free!(x_gpu)
         end
         return emb
     end
 
-    # helper: stream-extract embeddings from shard maps into pre-allocated matrix
+    # stream embeddings into preallocated matrix
     function _stream_extract_embeddings!(output_mat, output_labels, shard_paths, shard_map,
                                           pt_model, n_total, label; n_cls=d.n_classifications)
         col_offset = 0
@@ -207,7 +194,7 @@ if is_streaming
         return col_offset
     end
 
-    # 2) stream-extract train embeddings
+    # 2) train embeddings
     n_train = d.n_train_cells
     train_input = zeros(Float32, embed_dim, n_train)
     y_train = zeros(Float32, d.n_classifications, n_train)
@@ -219,7 +206,7 @@ if is_streaming
         y_train = y_train[:, 1:col_train]
     end
 
-    # 3) stream-extract val embeddings
+    # 3) val embeddings
     n_val = d.n_val_cells
     val_input = zeros(Float32, embed_dim, n_val)
     y_val = zeros(Float32, d.n_classifications, n_val)
@@ -231,7 +218,7 @@ if is_streaming
         y_val = y_val[:, 1:col_val]
     end
 
-    # 4) stream-extract test embeddings
+    # 4) test embeddings
     n_test = d.n_test_cells
     test_input = zeros(Float32, embed_dim, n_test)
     y_test = zeros(Float32, d.n_classifications, n_test)
@@ -243,12 +230,12 @@ if is_streaming
         y_test = y_test[:, 1:col_test]
     end
 
-    # free pretrained model from GPU
+    # free pretrained model
     pt_model = nothing
     GC.gc(true)
     CUDA.reclaim()
 
-    # 4) build MLP head
+    # 5) MLP head
     ft_model = Flux.Chain(
         Flux.Dense(embed_dim => config["hidden_dim"], gelu),
         Flux.LayerNorm(config["hidden_dim"]),
@@ -257,7 +244,7 @@ if is_streaming
     ft_model = fix_gpu_dropout(cu(ft_model))
     opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 else
-    # non-streaming path: use build_embm as before (lvl3 pseudo-bulked data)
+    # non-streaming (lvl3)
     X_train = d.X_train
     X_val, X_test = d.X_val, d.X_test
     ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
@@ -277,7 +264,6 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "SC-FT-Aug", "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -294,10 +280,10 @@ use_max_steps = ft_step_limit > 0
 done = false
 best_val_loss = Inf32
 best_epoch = 0
-# build oversampling indices from y_train if needed (for streaming, d.cidx_dict not available)
+# oversampling indices from y_train
 if use_oversmpl
     if is_streaming
-        # build class→indices dict from y_train one-hot matrix
+        # class -> indices
         cidx_dict = Dict{Int, Vector{Int}}()
         for j in 1:size(y_train, 2)
             cls = argmax(y_train[:, j])
@@ -316,7 +302,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -376,7 +362,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(ft_model)
     val_eval_losses = Float32[]
     n_val = size(val_input, 2)
@@ -393,7 +379,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -438,9 +424,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(ft_model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")

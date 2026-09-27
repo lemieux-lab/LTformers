@@ -5,7 +5,7 @@ using TOML, PyCall
 export load_config, gpu_lr, init_wandb, wandb_project, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
 
 
-# dataset -> swept-HP config file (relative to repo root)
+# hp config per dataset
 const HP_CONFIGS = Dict(
     "tahoe"    => "config/tpb.toml",
     "lincs"    => "config/lincs.toml",
@@ -16,7 +16,7 @@ const HP_CONFIGS = Dict(
 function _merge_local!(config::Dict, toml_path::String)
     local_path = replace(toml_path, r"\.toml$" => ".local.toml")
     if !isfile(local_path)
-        # also check for local.toml in the same directory
+        # fallback local.toml
         local_path = joinpath(dirname(toml_path), "local.toml")
     end
     if isfile(local_path)
@@ -29,20 +29,7 @@ function _merge_local!(config::Dict, toml_path::String)
     return config
 end
 
-"""
-    _merge_hp!(config, hp_section, args; dataset="")
-
-Merge dataset-specific swept hyperparameters into `config`.
-
-`hp_section` is the full vector of TOML keys to the leaf section,
-e.g. `["pretrain", "mlm", "rtf"]` or `["finetune", "no_pretrain", "emlp", "lvl1"]`.
-The dataset file is chosen from `HP_CONFIGS` using `data_format`
-(or the explicit `dataset` kwarg for SC scripts).
-
-Values from the HP file override `default.toml` / `local.toml`, but
-any key explicitly passed via CLI (`args` with non-nothing value) is
-kept as-is, so WandB sweep overrides still win.
-"""
+# merge dataset hps into config, cli wins
 function _merge_hp!(config::Dict, hp_section::Vector{String},
                     args::Union{Dict{String,Any}, Nothing} = nothing;
                     dataset::String = "")
@@ -69,11 +56,11 @@ function _merge_hp!(config::Dict, hp_section::Vector{String},
 
     n_merged = 0
     for (k, v) in node
-        # skip if CLI explicitly set this key
+        # skip cli-set keys
         if !isnothing(args) && !isnothing(get(args, k, nothing))
             continue
         end
-        # skip placeholder zeros (sweep params not yet filled in)
+        # skip placeholder zeros
         if v isa Number && v == 0
             continue
         end
@@ -104,10 +91,9 @@ function load_config(toml_path::String, args::Dict{String, Any};
     config = TOML.parsefile(toml_path)
     _merge_local!(config, toml_path)
 
-    # merge dataset-specific HP *before* CLI args so sweeps override
+    # merge hps before cli so sweeps win
     if !isempty(hp_section)
-        # need data_format + modeltype to resolve the section;
-        # pull from args first (since they aren't merged yet), fall back to config
+        # data_format + modeltype from args, else config
         for key in ("data_format", "modeltype")
             v = get(args, key, nothing)
             !isnothing(v) && (config[key] = v)
@@ -125,8 +111,8 @@ function gpu_lr(base_lr::Float64, batch_size::Int; base_batch::Int = 128)
     return base_lr * (batch_size / base_batch)
 end
 
-# Sept 2026 WandB projects: <dataset>-<stage>-Sept, dataset from data_format (SC scripts pass sc=true)
-# stage: "PT" (pretrain), "npt-FT" (finetune, no pretrain), "FT" (finetune w/ pretrain)
+# wandb project: <dataset>-<stage>-Sept
+# stage: PT, npt-FT, FT
 function wandb_project(config::Dict, stage::String; sc::Bool = false)
     fmt = get(config, "data_format", "tahoe")
     dataset = sc || fmt == "tahoe_sc" ? "TSC" : fmt == "lincs" ? "LINCS" : "TPB"
@@ -212,8 +198,7 @@ function resolve_data_path!(config::Dict)
     fmt = get(config, "data_format", "tahoe")
     repo_root = abspath(joinpath(@__DIR__, ".."))
 
-    # if data_path was already set (e.g. from local.toml or CLI), use it
-    # but only if it matches the requested data_format
+    # use existing data_path if format matches
     existing = get(config, "data_path", "")
     if existing != "" && isfile(existing) && haskey(DATA_PATHS, fmt) && contains(existing, fmt)
         println("resolved data_path: $existing (from config)")
@@ -222,7 +207,6 @@ function resolve_data_path!(config::Dict)
         if !haskey(DATA_PATHS, fmt)
             error("resolve_data_path!: unknown data_format '$fmt' (expected lincs or tahoe)")
         end
-        # repo_root = abspath(joinpath(@__DIR__, ".."))
         path = DATA_PATHS[fmt]
         if !isabspath(path)
             path = joinpath(repo_root, path)
@@ -244,25 +228,18 @@ function resolve_data_path!(config::Dict)
 end
 
 
-"""
-    resolve_lvl3_cells!(config)
-
-When `level == "lvl3"`, set `source_cell`, `target_cell`, and `dose`
-from the per-dataset defaults in `default.toml` (e.g. `lincs_source_cell`,
-`tahoe_source_cell`) based on `data_format`.  CLI / sweep overrides that
-already set these keys are preserved.
-"""
+# set lvl3 source/target cell + dose from defaults
 function resolve_lvl3_cells!(config::Dict)
     get(config, "level", "") != "lvl3" && return config
 
     fmt = get(config, "data_format", "tahoe")
-    prefix = fmt == "lincs" ? "lincs" : "tahoe"  # tahoe and tahoe_sc share the same pair
+    prefix = fmt == "lincs" ? "lincs" : "tahoe"
 
     for field in ("source_cell", "target_cell", "dose")
         dataset_key = "$(prefix)_$(field)"
         dataset_val = get(config, dataset_key, "")
         current_val = get(config, field, "")
-        # only override if the current value is empty (no CLI/sweep override)
+        # only fill if empty
         if dataset_val != "" && current_val == ""
             config[field] = dataset_val
         end

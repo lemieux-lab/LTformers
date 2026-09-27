@@ -17,7 +17,6 @@ config = load_config(args["config"], args,
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
 config["modeltype"] == "emlp" || error("emlp.jl is MLP only; use elog.jl for -t elog (got $(config["modeltype"]))")
-# resolve_model_dir!(config)  # no pretrain weights needed
 
 # seed
 seed = get(config, "seed", nothing)
@@ -37,20 +36,12 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 start_time = now()
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
-# data — SC shard loading
+# data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 all_shards = list_shards(config["data_dir"])
 
-# HVG loading (MLP uses expression features like ETF)
-# hvg_idx = nothing
-# hvg_path = get(config, "hvg_path", "")
-# if hvg_path != "" && isfile(hvg_path)
-#     hvg_data = JLD2.load(hvg_path)
-#     hvg_idx = hvg_data["hvg_idx"]
-#     println("loaded $(length(hvg_idx)) HVG indices")
-# end
-# ^ a missing HVG file silently trained on all genes under the HVG folder name
-# default: HVGs from hvg_path (1024, scripts/pretrain/sc/compute_hvg.jl); --n_hvg 0 = all genes -> <model>_full
+# HVG loading
+# --n_hvg 0 = all genes
 hvg_idx = nothing
 n_hvg = something(get(config, "n_hvg", nothing), 1024)
 hvg_path = get(config, "hvg_path", "")
@@ -64,8 +55,8 @@ model_tag = gene_set_tag(config["modeltype"], isnothing(hvg_idx) ? n_coding : le
 println("gene set: $(isnothing(hvg_idx) ? n_coding : length(hvg_idx)) of $n_coding genes → saving as $model_tag")
 
 top_k = get(config, "top_k", 1024)
-# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
-sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)  # per-cell is the default
+# PB data for per-cell lvl3
+sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
 if sc_lvl3_percell && config["level"] == "lvl3"
@@ -94,9 +85,9 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            pb_df=pb_df_for_percell,
                            actual_modeltype=config["modeltype"],
                            identity_baseline_fn=identity_baseline)
-is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+is_streaming = d.train_shard_map !== nothing
 
-# cap val/test eval to first ft_eval_shards shards (0 = all), same subset for every run
+# cap eval shards (0 = all)
 n_eval = something(get(config, "ft_eval_shards", 0), 0)
 if is_streaming
     val_paths  = n_eval > 0 ? d.val_shard_paths[1:min(n_eval, length(d.val_shard_paths))]   : d.val_shard_paths
@@ -104,10 +95,10 @@ if is_streaming
     println("eval shards: val=$(length(val_paths))/$(length(d.val_shard_paths)) test=$(length(test_paths))/$(length(d.test_shard_paths))")
 end
 
-id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
+id_baseline = is_regression ? d.id_baseline : nothing
 
-# model — MLP with linearly interpolated layer sizes
-# nonlinear MLP: tapered layers with relu + dropout
+# model
+# tapered relu MLP
 sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
          for i in 0:config["n_layers"]+1]
 layers = []
@@ -123,14 +114,11 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
 save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "SC-FT-Aug", "$(config["modeltype"])_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
-# wandb = init_wandb(config, "SC-FT-Aug", "$(model_tag)_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "npt-FT"; sc=true), "$(model_tag)_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -158,7 +146,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -219,7 +207,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_losses = Float32[]
 
     if is_streaming
-        # shard-level streaming training (matches SC pretraining pattern)
+        # streaming train
         shuffled_shards = shuffle(d.train_shard_paths)
         for (si, shard_path) in enumerate(shuffled_shards)
             done && break
@@ -253,7 +241,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             end
         end
     else
-        # non-streaming path (lvl3 pseudo-bulked data, fits in memory)
+        # non-streaming (lvl3)
         n_train = size(d.X_train, 2)
         num_batches = div(n_train, config["batch_size"])
         perm = randperm(n_train)
@@ -280,7 +268,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
@@ -321,12 +309,11 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
 
-    #                                                    token_to_idx, n_coding, top_k,
     if is_last
         final_test_loss, epoch_preds, epoch_trues = run_test(model)
         push!(test_losses, final_test_loss)
@@ -365,9 +352,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")
@@ -400,7 +386,7 @@ log_info(; save_dir=save_dir, train_indices=d.train_idx, val_indices=d.val_idx, 
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
-           X_test=nothing)  # streaming: X_test not materialized
+           X_test=nothing)
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

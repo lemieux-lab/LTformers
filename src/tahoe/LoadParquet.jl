@@ -8,7 +8,7 @@ using Base.Threads, CxxWrap, SparseArrays
 export FromParquet
 
 
-# Absolute path to your built wrapper (arch-specific build directory)
+# wrapper .so path
 const LIBARROW_WRAP = joinpath(@__DIR__, "../cxx/ArrowWrap/build-$(Sys.ARCH)/libarrow_wrap.so") |> normpath
 
 function __init__()

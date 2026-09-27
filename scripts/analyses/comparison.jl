@@ -15,7 +15,7 @@ sc = load("$sc_data/sc_distances_100000.jld2")
 # euclidean & kendall
 lincs_euc = load("$lincs_data/euclid/euc_ken_cleaned_100K_noself.jld2")
 tahoe_euc = load("$tahoe_data/euc_ken_100K_noself.jld2")
-# sc uses same file for all distance types
+# sc: same file for all metrics
 sc_euc = sc
 
 fig_dir = "results/tahoe/pb/figures/lincs_comparison"
@@ -24,14 +24,13 @@ fig_euc_dir = "$fig_dir/euclid"
 fig_ent_dir = "$fig_dir/entropy"
 mkpath(fig_cos_dir); mkpath(fig_euc_dir); mkpath(fig_ent_dir)
 
-#######################################################################################################################################
 
-# stacked hexbin: cosine vs kendall
+# hexbin: cosine vs kendall
 
 begin
     fig = Figure(size=(700, 1200))
 
-    # LINCS (top)
+    # LINCS
     ax1 = Axis(fig[1, 1],
         ylabel="cosine distance",
         title="LINCS (978 genes, 100K pairs)")
@@ -42,7 +41,7 @@ begin
         cellsize=(rx1, ry1), colorscale=log10)
     Colorbar(fig[1, 2], hb1, label="count (log10)")
 
-    # Tahoe PB (middle)
+    # Tahoe PB
     ax2 = Axis(fig[2, 1],
         ylabel="cosine distance",
         title="Tahoe pseudo-bulk (19,020 genes, 100K pairs)")
@@ -53,7 +52,7 @@ begin
         cellsize=(rx2, ry2), colorscale=log10)
     Colorbar(fig[2, 2], hb2, label="count (log10)")
 
-    # Tahoe SC (bottom)
+    # Tahoe SC
     ax3 = Axis(fig[3, 1],
         xlabel="kendall tau distance",
         ylabel="cosine distance",
@@ -75,14 +74,13 @@ begin
 end
 save("$fig_cos_dir/lts_cosine_kendall_100K.png", fig)
 
-#######################################################################################################################################
 
-# stacked hexbin: euclid vs kendall
+# hexbin: euclid vs kendall
 
 begin
     fig = Figure(size=(700, 1200))
 
-    # LINCS (top)
+    # LINCS
     ax1 = Axis(fig[1, 1],
         ylabel="euclidean distance",
         title="LINCS L1000 (978 genes, 100K pairs)")
@@ -93,7 +91,7 @@ begin
         cellsize=(rx1, ry1), colorscale=log10)
     Colorbar(fig[1, 2], hb1, label="count (log10)")
 
-    # Tahoe PB (middle)
+    # Tahoe PB
     ax2 = Axis(fig[2, 1],
         ylabel="euclidean distance",
         title="Tahoe pseudobulk (19,020 genes, 100K pairs)")
@@ -104,7 +102,7 @@ begin
         cellsize=(rx2, ry2), colorscale=log10)
     Colorbar(fig[2, 2], hb2, label="count (log10)")
 
-    # Tahoe SC (bottom)
+    # Tahoe SC
     ax3 = Axis(fig[3, 1],
         xlabel="kendall tau distance",
         ylabel="euclidean distance",
@@ -126,9 +124,8 @@ begin
 end
 save("$fig_euc_dir/lts_euclid_kendall_100K.png", fig)
 
-#######################################################################################################################################
 
-# stacked overlaid histograms for each metric
+# histograms per metric
 
 begin
     fig2 = Figure(size=(700, 750))
@@ -155,7 +152,6 @@ begin
     display(fig2)
 end
 
-#######################################################################################################################################
 
 # entropy comparison
 
@@ -165,7 +161,7 @@ tahoe_ent = load("results/tahoe/pb/data/entropies/ranked_pseudobulks_a10k_entrop
 lincs_H = lincs_ent["entropies"]
 tahoe_H = tahoe_ent["entropies"]
 
-# entropy by rank position (overlaid)
+# entropy by rank
 
 begin
     fig_rank = Figure(size=(700, 400))
@@ -183,9 +179,8 @@ begin
     display(fig_rank)
 end
 
-#######################################################################################################################################
 
-# entropy/sparsity comparison
+# entropy/sparsity
 
 tahoe_spar = load("results/tahoe/pb/data/entropies/pb_ranked_sparsities.jld2")
 sc_ent = load("results/tahoe/sc/data/entropies/ranked_sc_entropies.jld2")
@@ -195,7 +190,7 @@ pb_S = tahoe_spar["sparsities"]
 sc_H = sc_ent["entropies"]
 sc_S = sc_spar["sparsities"]
 
-n_genes = length(tahoe_H)  # 19020, same for all
+n_genes = length(tahoe_H)
 
 begin
     fig_overlay = Figure(size=(700, 500))
@@ -212,19 +207,19 @@ begin
     hidespines!(ax_spar)
     hidexdecorations!(ax_spar)
 
-    # entropy: scatter (marker = metric type)
+    # entropy scatter
     scatter!(ax_ent, 1:n_genes, Float64.(tahoe_H),
         markersize=4, alpha=0.5, color=Makie.wong_colors()[1])
     scatter!(ax_ent, 1:n_genes, Float64.(sc_H),
         markersize=4, alpha=0.5, color=Makie.wong_colors()[2])
 
-    # sparsity: dashed lines (linestyle = metric type)
+    # sparsity lines
     lines!(ax_spar, 1:n_genes, Float64.(pb_S),
         linewidth=3, linestyle=:dash, color=Makie.wong_colors()[1])
     lines!(ax_spar, 1:n_genes, Float64.(sc_S),
         linewidth=3, linestyle=:dash, color=Makie.wong_colors()[2])
 
-    # legend: color = dataset, style = metric
+    # legend
     Legend(fig_overlay[0, 1],
         [MarkerElement(color=Makie.wong_colors()[1], marker=:circle, markersize=8),
          MarkerElement(color=Makie.wong_colors()[2], marker=:circle, markersize=8),
@@ -237,9 +232,8 @@ begin
 end
 save("$fig_ent_dir/pb_vs_sc_entropy_sparsity.png", fig_overlay)
 
-#######################################################################################################################################
 
-# unique count diversity comparison (PB vs SC)
+# unique count diversity (PB vs SC)
 
 pb_ud = load("results/tahoe/pb/data/entropies/pb_ranked_unique_diversity.jld2")
 sc_ud = load("results/tahoe/sc/data/entropies/ranked_sc_unique_diversity.jld2")

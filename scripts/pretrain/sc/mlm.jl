@@ -1,6 +1,4 @@
-# SC masked-language-model pretraining (Tahoe single-cell shards, streamed)
-#   RTF: top-k gene ids by rank, predict the gene id at masked ranks
-#   ETF: expression at the 1024 HVGs in fixed gene order (data/hvg_indices.jld2), predict each masked gene's rank
+# SC mlm pretraining
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -33,7 +31,7 @@ top_k = config["top_k"]
 MASK_ID = Int32(n_coding + 1)
 hvg_idx = use_exp ? load_hvg_idx(get(config, "hvg_path", "")) : nothing
 seq_len = use_exp ? length(hvg_idx) : top_k
-n_classes = use_exp ? seq_len : n_coding   # ETF: rank within the HVG set; RTF: gene id
+n_classes = use_exp ? seq_len : n_coding
 
 mc = (obj=:mlm, use_exp=use_exp, seq_len=seq_len, mask_ratio=config["mask_ratio"], mask_id=MASK_ID,
       batch_size=config["batch_size"], coding_tokens=coding_tokens, n_coding=n_coding, top_k=top_k,
@@ -61,13 +59,13 @@ println("save dir: $save_dir")
 wandb = init_wandb(config, wandb_project(config, "PT"; sc=true), "mlm_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
-# schedule: batches/epoch estimated from one shard, per-step warmup + cosine lr
+# lr schedule
 n_cells_per_shard = load_shard_pyarrow(train_shards[1]).n_cells
 sched = step_schedule(n_cells_per_shard, length(train_shards), config["batch_size"], config["max_steps"], config["n_epochs"])
 println("  $(n_cells_per_shard) cells/shard -> $(sched.bpe) batches/epoch, $(sched.n_epochs) epochs, " *
         "$(sched.total_steps) steps (warmup $(sched.warmup_steps))")
 use_max_steps = config["max_steps"] > 0
-max_pred_batches = 5 * cld(n_cells_per_shard, config["batch_size"])   # cap predstrues at ~5 shards
+max_pred_batches = 5 * cld(n_cells_per_shard, config["batch_size"])
 
 n_val_shards = get(config, "n_val_shards", 0) > 0 ? config["n_val_shards"] : config["n_eval_shards"]
 val_cache = sc_masked_cache(val_shards[1:min(n_val_shards, length(val_shards))], mc)
@@ -120,7 +118,7 @@ for epoch in ProgressBar(1:n_periods)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val (every epoch, checkpoint selection)
+    # val
     Flux.testmode!(model)
     push!(val_losses, mean(Float32(sc_masked_loss(model, CuArray(c.x), CuArray(c.y), n_classes)[1]) for c in val_cache))
     if val_losses[end] < best_val_loss
@@ -129,7 +127,7 @@ for epoch in ProgressBar(1:n_periods)
         save_best(model, save_dir, config)
     end
 
-    # test (final epoch, on the best checkpoint)
+    # test
     is_last = (epoch == n_periods) || done
     if is_last
         best_cpu = load_best_cpu(model, save_dir)
@@ -188,7 +186,7 @@ plot_per_sample_rank_error(err_acc.rank_sums, err_acc.rank_counts, seq_len, save
 
 log_model(model, save_dir, config)
 use_exp && jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
-jldsave(joinpath(save_dir, "shard_split.jld2");   # reused by SC finetuning
+jldsave(joinpath(save_dir, "shard_split.jld2");
         train_shards=train_shards, val_shards=val_shards, test_shards=test_shards)
 log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indices=Int[],
            n_epochs=length(train_losses), train_losses=train_losses,

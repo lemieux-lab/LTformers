@@ -2279,3 +2279,5 @@ from valence blog posts:
 
 -- can also add a random chance baseline
 -- or wahtever the txpert did
+
+-- also running tsc pt

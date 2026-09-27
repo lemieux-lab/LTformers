@@ -1,6 +1,6 @@
 module EvalSC
 
-# test-set error accumulation for SC pretraining (per-gene / per-within-sample-rank errors, lrecon diagnostics)
+# SC pretrain test-set error accumulation
 
 using LinearAlgebra: dot, norm
 
@@ -8,7 +8,7 @@ export ErrorAcc, accumulate_rank_errors!, accumulate_sq_errors!
 export LreconDiag, accumulate_lrecon_diag!
 
 
-# running per-gene (indexed by gene id) and per-rank (indexed by within-sample rank) error sums
+# per-gene / per-rank error sums
 struct ErrorAcc
     gene_sums::Vector{Float32}
     gene_counts::Vector{Int}
@@ -26,13 +26,10 @@ function _add!(acc::ErrorAcc, gene, rank, err)
     acc.rank_counts[rank] += 1
 end
 
-# gene / rank of the token at (pos, j):
-#   RTF (hvg_idx = nothing): position = rank, ids_or_ranks holds gene ids
-#   ETF-HVG: position = HVG slot (gene = hvg_idx[pos]), ids_or_ranks holds within-HVG ranks
+# gene / rank of token at (pos, j)
 _gene_rank(pos, v, hvg_idx) = isnothing(hvg_idx) ? (Int(v), pos) : (hvg_idx[pos], Int(v))
 
-# mlm: errs = rank error per masked token (gpu_rank_errors), in the loss's column-major mask order.
-# labels are gene ids (RTF) or ranks (ETF-HVG); -100 = unmasked
+# mlm rank errors
 function accumulate_rank_errors!(acc::ErrorAcc, errs, y_labels, n_classes, hvg_idx)
     masked_idx = 0
     @inbounds for j in axes(y_labels, 2), pos in axes(y_labels, 1)
@@ -44,7 +41,7 @@ function accumulate_rank_errors!(acc::ErrorAcc, errs, y_labels, n_classes, hvg_i
     end
 end
 
-# erecon: squared error per masked position; preds/targets are the masked values in column-major mask order
+# erecon squared errors
 function accumulate_sq_errors!(acc::ErrorAcc, preds, targets, mask, ids_or_ranks, hvg_idx)
     masked_idx = 0
     @inbounds for j in axes(mask, 2), pos in axes(mask, 1)
@@ -56,11 +53,11 @@ function accumulate_sq_errors!(acc::ErrorAcc, preds, targets, mask, ids_or_ranks
 end
 
 
-# lrecon per-token diagnostics: embedding MSE + cosine for every masked token, plus a capped sample of raw embeddings
+# lrecon per-token diagnostics
 struct LreconDiag
     mse::Vector{Float32}
     cossim::Vector{Float32}
-    positions::Vector{Int32}          # within-sample rank of each token
+    positions::Vector{Int32}
     sample_preds::Vector{Vector{Float32}}
     sample_targets::Vector{Vector{Float32}}
     sample_positions::Vector{Int32}
@@ -68,7 +65,7 @@ end
 
 LreconDiag() = LreconDiag(Float32[], Float32[], Int32[], Vector{Float32}[], Vector{Float32}[], Int32[])
 
-# dec / tgt: (embed_dim, n_masked) decoded and target embeddings in column-major mask order
+# dec / tgt: (embed_dim, n_masked)
 function accumulate_lrecon_diag!(acc::ErrorAcc, diag::LreconDiag, dec, tgt, mask, ids_or_ranks, hvg_idx;
                                  save_embed::Bool)
     embed_dim = size(dec, 1)

@@ -1,6 +1,5 @@
 module Log
 
-# using Flux, JLD2
 using Flux, JLD2, Statistics
 
 export pretrain_skip, finetune_skip, finetune_no_pt_skip, mlp_skip
@@ -32,17 +31,16 @@ function log_model(model, save_dir::String)
     jldsave("$save_dir/model_state.jld2"; model_state=Flux.state(model_cpu))
 end
 
-# cpu copy of `model` with the best-val checkpoint from <save_dir>/best loaded (the in-memory final model is untouched);
-# nothing if no checkpoint was saved. caller moves it to gpu: fix_gpu_dropout(cu(m))
+# load best-val checkpoint on cpu
 function load_best_cpu(model, save_dir::String)
     path = joinpath(save_dir, "best", "model_state.jld2")
     isfile(path) || return nothing
-    m = deepcopy(cpu(model))   # cpu() is a no-op (no copy) for a model already on cpu
+    m = deepcopy(cpu(model))
     Flux.loadmodel!(m, load(path)["model_state"])
     return m
 end
 
-# test metrics from collected predictions: accuracy (classification) or r2/pearson/rmse (regression)
+# test metrics
 function test_metrics(preds, trues, is_regression::Bool)
     if is_regression
         isempty(preds) && return (r2=NaN, pearson=NaN, rmse=NaN)
@@ -94,7 +92,7 @@ function log_info(; train_indices,
         loss_kwargs[:target_variances] = target_variances
     end
     if !isnothing(train_loss_maxes)
-        loss_kwargs[:train_loss_maxes] = train_loss_maxes # per-epoch max batch loss (spike diagnostic)
+        loss_kwargs[:train_loss_maxes] = train_loss_maxes  # max batch loss
     end
     jldsave(joinpath(save_dir, "losses.jld2"); loss_kwargs...)
 
@@ -140,7 +138,7 @@ function log_params(config::Dict, gpu_info::String, run_hours, run_minutes, save
             end
             printed_header && println(io)
         end
-        # any remaining config keys not in the groups above
+        # remaining config keys
         remaining = sort(collect(k for k in keys(config) if !(k in logged) && !(k in skip)))
         if !isempty(remaining)
             println(io, "# other")
@@ -161,8 +159,7 @@ function log_params(config::Dict, gpu_info::String, run_hours, run_minutes, save
 end
 
 
-
-# best-val checkpoint -> <save_dir>/best (+ best/ema for an EMA teacher); reload with load_best_cpu
+# save best-val checkpoint
 function save_best(model, save_dir::String, config::Dict; ema = nothing)
     best = joinpath(save_dir, "best")
     mkpath(best)

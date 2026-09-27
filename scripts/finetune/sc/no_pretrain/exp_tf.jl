@@ -14,7 +14,6 @@ args = load_sc_finetune_args()
 config = load_config(args["config"], args)
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
-# resolve_model_dir!(config)  # no pretrain weights needed
 
 # seed
 seed = get(config, "seed", nothing)
@@ -34,7 +33,7 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 start_time = now()
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
-# data — SC shard loading
+# data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 all_shards = list_shards(config["data_dir"])
 
@@ -48,8 +47,8 @@ if hvg_path != "" && isfile(hvg_path)
 end
 
 top_k = get(config, "top_k", 1024)
-# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
-sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)  # per-cell is the default
+# PB data for per-cell lvl3
+sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
 if sc_lvl3_percell && config["level"] == "lvl3"
@@ -78,9 +77,9 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            pb_df=pb_df_for_percell,
                            actual_modeltype=config["modeltype"],
                            identity_baseline_fn=identity_baseline)
-is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+is_streaming = d.train_shard_map !== nothing
 
-# cap val/test eval to first ft_eval_shards shards (0 = all), same subset for every run
+# cap eval shards (0 = all)
 n_eval = something(get(config, "ft_eval_shards", 0), 0)
 if is_streaming
     val_paths  = n_eval > 0 ? d.val_shard_paths[1:min(n_eval, length(d.val_shard_paths))]   : d.val_shard_paths
@@ -88,13 +87,11 @@ if is_streaming
     println("eval shards: val=$(length(val_paths))/$(length(d.val_shard_paths)) test=$(length(test_paths))/$(length(d.test_shard_paths))")
 end
 
-id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
+id_baseline = is_regression ? d.id_baseline : nothing
 
 n_genes = d.n_genes
 n_classifications = d.n_classifications
-# X_val, X_test = d.X_val, d.X_test  # no longer materialized in streaming mode
 train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
-# cidx_dict, cs = d.cidx_dict, d.cs  # oversampling handled per-shard in streaming mode
 
 # model
 model = ExpClassifier(n_genes=n_genes, embed_dim=config["embed_dim"],
@@ -111,7 +108,6 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "SC-FT-Aug", "etf_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "npt-FT"; sc=true), "etf_nopt_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -139,7 +135,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -200,7 +196,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_losses = Float32[]
 
     if is_streaming
-        # shard-level streaming training (matches SC pretraining pattern)
+        # streaming train
         shuffled_shards = shuffle(d.train_shard_paths)
         for (si, shard_path) in enumerate(shuffled_shards)
             done && break
@@ -234,7 +230,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             end
         end
     else
-        # non-streaming path (lvl3 pseudo-bulked data, fits in memory)
+        # non-streaming (lvl3)
         n_train = size(d.X_train, 2)
         num_batches = div(n_train, config["batch_size"])
         perm = randperm(n_train)
@@ -261,7 +257,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     if is_streaming
@@ -302,12 +298,11 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
 
-    #                                                    token_to_idx, n_coding, top_k,
     if is_last
         final_test_loss, epoch_preds, epoch_trues = run_test(model)
         push!(test_losses, final_test_loss)
@@ -348,9 +343,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")
@@ -383,7 +377,7 @@ log_info(; save_dir=save_dir, train_indices=train_idx, val_indices=val_idx, test
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
-           X_test=nothing)  # streaming: X_test not materialized
+           X_test=nothing)
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

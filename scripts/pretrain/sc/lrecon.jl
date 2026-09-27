@@ -1,6 +1,4 @@
-# SC latent-reconstruction pretraining (data2vec-style EMA teacher; Tahoe single-cell shards, streamed)
-#   student sees the masked/corrupted input and regresses the teacher's (batch-standardized) embeddings of the clean input
-#   RTF: top-k gene ids by rank, masked ids; ETF: expression at the 1024 HVGs in fixed gene order, donor-swap corruption
+# SC lrecon pretraining
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -62,13 +60,13 @@ println("save dir: $save_dir")
 wandb = init_wandb(config, wandb_project(config, "PT"; sc=true), "lrecon_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
-# schedule: batches/epoch estimated from one shard, per-step warmup + cosine lr
+# lr schedule
 n_cells_per_shard = load_shard_pyarrow(train_shards[1]).n_cells
 sched = step_schedule(n_cells_per_shard, length(train_shards), config["batch_size"], config["max_steps"], config["n_epochs"])
 println("  $(n_cells_per_shard) cells/shard -> $(sched.bpe) batches/epoch, $(sched.n_epochs) epochs, " *
         "$(sched.total_steps) steps (warmup $(sched.warmup_steps))")
 use_max_steps = config["max_steps"] > 0
-MAX_EMBED_BATCHES = 10   # test batches whose raw embeddings are kept in lrecon_diagnostics.jld2
+MAX_EMBED_BATCHES = 10
 
 n_val_shards = get(config, "n_val_shards", 0) > 0 ? config["n_val_shards"] : config["n_eval_shards"]
 val_cache = sc_masked_cache(val_shards[1:min(n_val_shards, length(val_shards))], mc)
@@ -77,7 +75,7 @@ eval_cache = sc_masked_cache(test_shards[1:min(config["n_eval_shards"], length(t
 train_losses = Float32[]
 val_losses = Float32[]
 test_losses = Float32[]
-target_variances = Float32[]   # raw (un-standardized) teacher embedding variance on a fixed batch: collapse monitor
+target_variances = Float32[]  # collapse monitor
 err_acc = ErrorAcc(n_coding, seq_len)
 lrecon_diag = LreconDiag()
 collapse_check_batch = nothing
@@ -137,7 +135,7 @@ for epoch in ProgressBar(1:n_periods)
     end
     target_variances[end] < 1f-6 && println("WARNING epoch $epoch: target embedding variance = $(target_variances[end]) — possible collapse")
 
-    # val (every epoch, checkpoint selection; student scored against the current teacher)
+    # val
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for c in val_cache
@@ -151,7 +149,7 @@ for epoch in ProgressBar(1:n_periods)
         save_best(model, save_dir, config; ema=ema_model)
     end
 
-    # test (final epoch, best student)
+    # test
     is_last = (epoch == n_periods) || done
     if is_last
         best_cpu = load_best_cpu(model, save_dir)
@@ -209,8 +207,8 @@ end
 log_model(model, save_dir, config)
 use_exp && jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 mkpath(joinpath(save_dir, "ema"))
-log_model(ema_model, joinpath(save_dir, "ema"), config)   # teacher
-jldsave(joinpath(save_dir, "shard_split.jld2");   # reused by SC finetuning
+log_model(ema_model, joinpath(save_dir, "ema"), config)
+jldsave(joinpath(save_dir, "shard_split.jld2");
         train_shards=train_shards, val_shards=val_shards, test_shards=test_shards)
 log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indices=Int[],
            n_epochs=length(train_losses), train_losses=train_losses,

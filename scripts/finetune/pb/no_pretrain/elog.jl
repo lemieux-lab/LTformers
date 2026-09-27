@@ -41,14 +41,13 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data isa Matrix{Float32} ? data : Float32.(data.expr)
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = Float32.(reduce(hcat, data.expr))
     meta_df = data
 end
 
 n_hvg = get(config, "n_hvg", 0)
-# lvl3: HVGs are selected on the same data as lvl1/2 but applied AFTER pairing (dsplit hvg_idx_lvl3), so the PC1
-# target, split and identity baseline use all genes and are identical between the full and HVG runs
+# lvl3: HVGs applied after pairing
 n_genes_all = size(data_expr, 1)
 hvg_idx_lvl3 = nothing
 if n_hvg > 0 && n_hvg < n_genes_all
@@ -72,11 +71,11 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes,
            hvg_idx_lvl3=hvg_idx_lvl3)
 
-# identity baseline for lvl3
-id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
+# lvl3 identity baseline
+id_baseline = is_regression ? d.id_baseline : nothing
 
 # model
-# single linear layer, no activation, no dropout: logistic reg (lvl1/2, CE) / linear reg (lvl3, MSE)
+# linear layer: logreg (lvl1/2) / linreg (lvl3)
 config["lr"] = 0.001
 model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
 model = cu(model)
@@ -85,13 +84,10 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, timestamp)
-# seed in dir name: seeded runs launched in the same minute would otherwise share a save dir
 save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag, "$(timestamp)$(seed_tag)")
 mkpath(save_dir)
 println("save dir: $save_dir")
 
-# wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "npt-FT"), "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -115,7 +111,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -175,7 +171,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     n_val = size(d.X_val, 2)
@@ -192,7 +188,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -235,9 +231,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")

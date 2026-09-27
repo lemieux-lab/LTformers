@@ -39,7 +39,7 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data isa Matrix{Float32} ? data : Float32.(data.expr)
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = Float32.(reduce(hcat, data.expr))
     meta_df = data
 end
@@ -62,11 +62,11 @@ d = dsplit(data_expr, config;
            gene_df=(fmt == "lincs" && !isa(data, Matrix) ? data.gene : nothing),
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes)
 
-# identity baseline for lvl3
-id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
+# lvl3 identity baseline
+id_baseline = is_regression ? d.id_baseline : nothing
 
 if config["modeltype"] == "rtf"
-    # RTF: top-k + truncation
+    # RTF: top-k
     top_k = get(config, "top_k", 1024)
     if top_k < d.n_genes
         d = merge(d, (X_train = d.X_train[1:top_k, :],
@@ -75,14 +75,14 @@ if config["modeltype"] == "rtf"
         println("top_k truncation: $(d.n_genes) → $top_k ranked genes per sample")
     end
     seq_len = top_k
-    n_genes_for_model = d.n_genes  # full vocab for embedding lookup
+    n_genes_for_model = d.n_genes
 else
-    # ETF: HVG already applied above; seq_len = n_hvg, n_genes_orig for pretrained model loading
-    seq_len = d.n_genes  # after HVG
-    n_genes_for_model = n_genes_orig  # pretrained vocab size for weight loading
+    # ETF: HVG applied above
+    seq_len = d.n_genes
+    n_genes_for_model = n_genes_orig
 end
 
-# build embedding-only model
+# embedding-only model
 ft_model, train_input, val_input, test_input = build_embm(config, d.X_train, d.X_test,
                                                 n_genes_for_model, d.n_classifications; X_val=d.X_val,
                                                 seq_len=seq_len)
@@ -96,7 +96,6 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "PB-FT-Aug", "emb_$(fmt)_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "FT"), "emb_$(fmt)_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -120,7 +119,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -180,7 +179,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(ft_model)
     val_eval_losses = Float32[]
     n_val = size(val_input, 2)
@@ -197,7 +196,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -242,9 +241,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(ft_model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")

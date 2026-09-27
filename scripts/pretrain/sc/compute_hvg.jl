@@ -1,4 +1,4 @@
-# SLURM_TIME="7-00:00" cpu_sbatch sc_hvgidx_100 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 100
+# usage: SLURM_TIME="7-00:00" cpu_sbatch sc_hvgidx_100 julia scripts/pretrain/sc/compute_hvg.jl --config config/local.toml -t etf --hvg_n_shards 100
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -10,7 +10,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src/tahoe"))
 using Args, Config, LoadSC, ProcessSC
 
-# load_pretrain_args requires -t (modeltype); pass -t etf since HVG is for ETF
+# -t etf required by arg parser
 args = load_pretrain_args()
 config = load_config(args["config"], args)
 
@@ -26,7 +26,7 @@ n_scan = min(n_shards_to_scan, length(all_shards))
 scan_shards = shuffle(all_shards)[1:n_scan]
 println("Scanning $n_scan shards to compute HVG (n_hvg=$n_hvg)")
 
-# Welford's online algorithm for variance: track count, mean, M2 per gene
+# welford variance per gene
 gene_count = zeros(Int64, n_coding)
 gene_mean = zeros(Float64, n_coding)
 gene_m2 = zeros(Float64, n_coding)
@@ -42,7 +42,7 @@ for (si, shard_path) in enumerate(scan_shards)
     for ci in 1:shard.n_cells
         cell_to_dense_flat!(dense, shard.genes_flat, shard.offsets, shard.expr_flat,
                             ci, token_to_idx)
-        # Welford update for each gene
+        # welford update
         for g in 1:n_coding
             x = Float64(dense[g])
             gene_count[g] += 1
@@ -64,7 +64,7 @@ end
 total_time = round((now() - t_start).value / 1000, digits=1)
 println("Total scan time: $(total_time)s ($(round(total_time/60, digits=1)) min)")
 
-# compute variance
+# variance
 gene_var = zeros(Float64, n_coding)
 for g in 1:n_coding
     if gene_count[g] > 1
@@ -72,9 +72,9 @@ for g in 1:n_coding
     end
 end
 
-# select top n_hvg by variance
+# top n_hvg
 hvg_idx = sortperm(gene_var, rev=true)[1:n_hvg]
-sort!(hvg_idx)  # sorted by gene index for consistent ordering
+sort!(hvg_idx)
 
 println("\nResults:")
 println("  Scanned $total_cells cells across $n_scan shards")

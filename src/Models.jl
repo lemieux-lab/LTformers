@@ -37,11 +37,7 @@ end
 
 Flux.@layer Transf
 
-# function (tf::Transf)(input)
-#     normed = tf.att_norm(input)
-#     atted = tf.mha(normed, normed, normed)[1]
-# mask: nothing, or a Bool array broadcastable to (kv_len, q_len, nheads, batch), true = attend (NNlib convention);
-# encode_rank passes a key-padding mask of size (seq, 1, 1, batch)
+# mask: true = attend, shape (kv, q, heads, batch)
 (tf::Transf)(input) = tf(input, nothing)
 
 function (tf::Transf)(input, mask)
@@ -55,16 +51,8 @@ function (tf::Transf)(input, mask)
     return residualed + mlp_out_reshaped
 end
 
-# function encode(components, x)
-#     embedded = components.embedding(x)
-#     pos_ids = cu(Int32.(1:size(embedded, 2)))
-#     encoded = embedded .+ components.pos_emb(pos_ids)
-#     dropped = components.emb_dropout(encoded)
-#     transformed = components.transformer(dropped)
-#     return transformed
-# end
 
-# keep[pos, sample] = true for real tokens, false for PAD (= pad_token_id(n_genes) = embedding rows + 1)
+# keep = true for real tokens, false for PAD
 function rank_keep_mask(embedding::Flux.Embedding, x)
     pad = pad_token_id(size(embedding.weight, 2) - 1)
     keep = x .!= pad
@@ -72,10 +60,7 @@ function rank_keep_mask(embedding::Flux.Embedding, x)
     return keep, has_pad
 end
 
-# rank-token encoder shared by every RTF model (Geneformer-style padding): PAD positions are swapped to MASK for the
-# embedding lookup and excluded as attention keys. batches without PAD skip the mask (identical to the old encode).
-# components: any model / NamedTuple with embedding, pos_emb, emb_dropout, transformer (Chain of Transf)
-# returns (hidden (D, seq, bs), keep (seq, bs))
+# PAD-aware rank encoder, returns (hidden, keep)
 function encode_rank(components, x)
     keep, has_pad = rank_keep_mask(components.embedding, x)
     x_lookup = has_pad ? ifelse.(keep, x, eltype(x)(size(components.embedding.weight, 2))) : x
@@ -92,13 +77,12 @@ end
 
 encode(components, x) = first(encode_rank(components, x))
 
-# mean over sequence positions, excluding PAD; plain mean when nothing is padded (identical to the old pooling)
+# masked mean pool
 function masked_mean_pool(h, keep)
     Flux.ChainRulesCore.ignore_derivatives(() -> all(keep)) && return dropdims(mean(h, dims=2), dims=2)
     w = reshape(Float32.(keep), 1, size(keep)...)
     return dropdims(sum(h .* w, dims=2) ./ max.(sum(w, dims=2), 1f0), dims=2)
 end
-
 
 
 # mlm
@@ -196,12 +180,7 @@ function RankLReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
 end
 
 function (m::RankLReconModel)(input)
-    # embedded = m.embedding(input)
-    # pos_ids = cu(Int32.(1:size(embedded, 2)))
-    # encoded = embedded .+ m.pos_emb(pos_ids)
-    # dropped = m.emb_dropout(encoded)
-    # transformed = m.transformer(dropped)
-    transformed = encode(m, input)   # PAD-aware (encode_rank)
+    transformed = encode(m, input)
     embed_dim, seq_len, batch_size = size(transformed)
     flat = reshape(transformed, embed_dim, seq_len * batch_size)
     decoded = reshape(m.decoder(flat), embed_dim, seq_len, batch_size)
@@ -276,12 +255,7 @@ function RankEReconModel(; n_genes::Int, embed_dim::Int, n_layers::Int,
 end
 
 function (m::RankEReconModel)(input)
-    # embedded = m.embedding(input)
-    # pos_ids = cu(Int32.(1:size(embedded, 2)))
-    # encoded = embedded .+ m.pos_emb(pos_ids)
-    # dropped = m.emb_dropout(encoded)
-    # transformed = m.transformer(dropped)
-    transformed = encode(m, input)   # PAD-aware (encode_rank)
+    transformed = encode(m, input)
     embed_dim, seq_len, batch_size = size(transformed)
     flat = reshape(transformed, embed_dim, seq_len * batch_size)
     out = reshape(m.regressor(flat), seq_len, batch_size)
@@ -330,7 +304,7 @@ function (m::ExpEReconModel)(x)
 end
 
 
-# encode exp 
+# encode exp
 function encode(model::Union{ExpModel, ExpLReconModel, ExpEReconModel}, x)
     x3d = reshape(x, 1, size(x)...)
     projected = model.proj(x3d)

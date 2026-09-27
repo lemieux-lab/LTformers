@@ -11,7 +11,7 @@ using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 args = load_pretrain_args()
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "lrecon", args["modeltype"]])
-resolve_data_path!(config)   # data_path from local.toml is the tahoe file; pick the file for data_format (was: LINCS loaded tahoe)
+resolve_data_path!(config)
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
@@ -21,7 +21,7 @@ use_exp = config["modeltype"] == "etf"
 
 start_time = now()
 
-# normalize=false returns raw teacher output (for the collapse monitor; standardized targets always have var ≈ 1)
+# normalize=false returns raw teacher output
 function get_target_embeds(model, x_clean, use_exp; normalize::Bool = true)
     if use_exp
         projected = model.proj(reshape(x_clean, 1, size(x_clean)...))
@@ -45,7 +45,7 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data.expr
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = reduce(hcat, data.expr)
     meta_df = data
 end
@@ -57,7 +57,7 @@ if config["subset_ratio"] < 1.0
     println("subset: $(length(subset_idx))/$(n_total) samples")
 end
 
-# gene selection: ETF = top-n HVGs, RTF = full gene vocab + per-sample top_k truncation (matches mlm + finetune)
+# gene selection
 n_hvg = get(config, "n_hvg", 0)
 if use_exp
     if n_hvg > 0 && n_hvg < size(data_expr, 1)
@@ -69,7 +69,7 @@ else
     println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
-# train-split medians from file (scripts/pretrain/pb/compute_medians.jl), HVG subset for etf
+# train-split medians
 gene_medians = gene_medians_for(config, data_expr; hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 X_ranks = rank_genes(data_expr, gene_medians)
 
@@ -83,7 +83,7 @@ end
 seq_len = use_exp ? n_genes : min(top_k, n_genes)
 
 # splits
-# seeded so every PB pretrain objective/modeltype shares one split; reseed after so masks/donors stay random per run
+# seeded split, reseed after
 Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 Random.seed!()
@@ -98,7 +98,7 @@ else
     X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
-X_ranks_test = use_exp ? X_ranks[:, test_indices] : X_test # only test ranks are used (per-gene/per-rank diagnostics)
+X_ranks_test = use_exp ? X_ranks[:, test_indices] : X_test
 if use_exp
     inv_ranks_test = inverse_ranks(X_ranks_test)
 end
@@ -146,15 +146,14 @@ dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
-# save split now (survives a crash before log_info) and next to every checkpoint (finetune reads <model_dir>/indices.jld2)
+# save split now
 save_indices(dir) = jldsave(joinpath(dir, "indices.jld2");
                             train_indices=train_indices, val_indices=val_indices, test_indices=test_indices)
 save_indices(save_dir)
-if @isdefined(hvg_idx) # not defined when HVG filter skipped (RTF, or LINCS 978 < n_hvg)
+if @isdefined(hvg_idx)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
 
-# wandb = init_wandb(config, "PB-PT-Aug", "lrecon_$(fmt)_$(config["modeltype"])_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "PT"), "lrecon_$(fmt)_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
@@ -182,14 +181,14 @@ n_total_epochs = eval_every > 0 ? cld(use_max_steps ? config["max_steps"] : n_ep
 steps_per_period = eval_every > 0 ? eval_every : bpe
 
 n_val_eval = get(config, "max_val_samples", 0) > 0 ? min(config["max_val_samples"], size(X_val_masked, 2)) : size(X_val_masked, 2)
-train_pos = size(X_train, 2) + 1   # next train column; past the end -> re-mask and start a new pass
+train_pos = size(X_train, 2) + 1
 println("eval every $(steps_per_period) steps ($(n_total_epochs) evals; $(bpe) steps per pass), val on $(n_val_eval) samples")
-warmup_epochs = max(1, div(n_total_epochs, 10)) # still used for the frozen-teacher snapshot
+warmup_epochs = max(1, div(n_total_epochs, 10))
 
 total_steps = use_max_steps ? config["max_steps"] : n_epochs_data * bpe
 warmup_steps = max(1, div(total_steps, 10))
 train_loss_maxes = Float32[]
-# val against a frozen teacher snapshot (taken after warmup): comparable across epochs, unlike the moving-teacher val_loss
+# frozen-teacher val
 frozen_teacher = nothing
 val_losses_frozen = Float32[]
 X_train_masked = similar(X_train)
@@ -259,10 +258,9 @@ for epoch in ProgressBar(1:n_total_epochs)
         println("UH OH epoch $epoch: target embedding variance = $tgt_var")
     end
 
-    # val eval (every epoch for checkpt + sweep selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
-    # for start_idx in 1:config["batch_size"]:size(X_val_masked, 2)
     for start_idx in 1:config["batch_size"]:n_val_eval
         end_idx = min(start_idx + config["batch_size"] - 1, n_val_eval)
         x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
@@ -280,7 +278,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # frozen-teacher val: snapshot the teacher at the end of warmup, then score the student against its targets
+    # frozen-teacher val
     if epoch == warmup_epochs
         global frozen_teacher = deepcopy(ema_model)
         Flux.testmode!(frozen_teacher)
@@ -301,14 +299,14 @@ for epoch in ProgressBar(1:n_total_epochs)
         push!(val_losses_frozen, mean(frozen_eval_losses))
     end
 
-    # save best before the last-epoch reload so a best final epoch isn't overwritten by the older checkpoint
+    # save best before reload
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
         mkpath(joinpath(save_dir, "best"))
         log_model(model, joinpath(save_dir, "best"), config)
         mkpath(joinpath(save_dir, "best", "ema"))
-        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)  # teacher, needed to rebuild lrecon targets
+        log_model(ema_model, joinpath(save_dir, "best", "ema"), config)
         isfile(joinpath(save_dir, "best", "indices.jld2")) || save_indices(joinpath(save_dir, "best"))
     end
 
@@ -322,7 +320,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         save_indices(joinpath(save_dir, "final"))
     end
 
-    # reload best checkpoint for test eval
+    # reload best
     if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
         best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
         model_cpu = cpu(model)
@@ -330,7 +328,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         global model = fix_gpu_dropout(cu(model_cpu))
         Flux.testmode!(model)
         println("reloaded best model (epoch $best_epoch) for test eval")
-        # also reload the best-epoch teacher so test targets match the student
+        # reload best teacher
         ema_path = joinpath(save_dir, "best", "ema", "model_state.jld2")
         if isfile(ema_path)
             ema_cpu = cpu(ema_model)
@@ -441,7 +439,7 @@ plot_per_sample_rank_error(rank_error_sums, rank_error_counts, n_genes, save_dir
 
 log_model(model, save_dir, config)
 mkpath(joinpath(save_dir, "ema"))
-log_model(ema_model, joinpath(save_dir, "ema"), config)  # teacher, needed to rebuild lrecon targets
+log_model(ema_model, joinpath(save_dir, "ema"), config)
 log_info(; save_dir=save_dir, train_indices=train_indices, val_indices=val_indices, test_indices=test_indices,
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,

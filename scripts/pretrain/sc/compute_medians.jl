@@ -1,4 +1,4 @@
-# per-gene nonzero medians of SC log1p CP10k over a seeded random sample of ALL shards 
+# per-gene nonzero medians over sampled SC shards
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -27,7 +27,6 @@ const N_BINS = 2000
 const V_MAX = 10f0
 const BIN_W = V_MAX / N_BINS
 
-# (was a top-level loop over non-const globals: ~12 min/shard; inside a function it's type-stable)
 function scan_medians(scan_shards, token_to_idx, n_coding)
     hist = zeros(Int32, N_BINS, n_coding)
     n_nonzero = zeros(Int64, n_coding)
@@ -49,7 +48,7 @@ function scan_medians(scan_shards, token_to_idx, n_coding)
         total_cells += shard.n_cells
         println("  [$si/$(length(scan_shards))] $(basename(shard_path)): $(shard.n_cells) cells ($(round(time() - t_start, digits=1))s total)"); flush(stdout)
     end
-    # median of the nonzero values per gene from the histogram; never-detected genes get 1 (they rank last anyway)
+    # nonzero median per gene from histogram
     medians = ones(Float32, n_coding)
     for g in 1:n_coding
         n = n_nonzero[g]

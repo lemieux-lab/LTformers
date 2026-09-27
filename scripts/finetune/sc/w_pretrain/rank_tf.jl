@@ -34,12 +34,12 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 start_time = now()
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
 
-# SC data loading
+# data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
 all_shards = list_shards(config["data_dir"])
 
 top_k = get(config, "top_k", 1024)
-# load PB data for per-cell SC lvl3 (PCA targets from PB compound-means)
+# PB data for per-cell lvl3
 sc_lvl3_percell = !get(config, "sc_lvl3_pseudobulk", false)
 pb_expr_for_percell = nothing
 pb_df_for_percell = nothing
@@ -67,13 +67,11 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            pb_expr=pb_expr_for_percell,
                            pb_df=pb_df_for_percell,
                            identity_baseline_fn=identity_baseline)
-is_streaming = d.train_shard_map !== nothing  # false for lvl3 (pseudo-bulked, small)
+is_streaming = d.train_shard_map !== nothing
 
-id_baseline = is_regression ? d.id_baseline : nothing  # identity baseline from the lvl3 loader
+id_baseline = is_regression ? d.id_baseline : nothing
 
-# build e2e model from pre-trained
-# n_genes = n_coding (full vocab for embedding lookup)
-# seq_len = top_k for pos_emb
+# e2e model from pretrained
 ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=top_k)
 ft_model = fix_gpu_dropout(cu(ft_model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
@@ -86,7 +84,6 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "SC-FT-Aug", "rtf_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "rtf_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -114,7 +111,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -175,7 +172,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     epoch_losses = Float32[]
 
     if is_streaming
-        # shard-level streaming training (RTF e2e with pretrained weights)
+        # streaming train
         shuffled_shards = shuffle(d.train_shard_paths)
         for (si, shard_path) in enumerate(shuffled_shards)
             done && break
@@ -209,7 +206,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             end
         end
     else
-        # non-streaming path (lvl3 pseudo-bulked data, fits in memory)
+        # non-streaming (lvl3)
         n_train = size(d.X_train, 2)
         num_batches = div(n_train, config["batch_size"])
         perm = randperm(n_train)
@@ -236,7 +233,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(ft_model)
     val_eval_losses = Float32[]
     if is_streaming
@@ -277,12 +274,11 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
 
-    #                                                    token_to_idx, n_coding, top_k,
     if is_last
         final_test_loss, epoch_preds, epoch_trues = run_test(ft_model)
         push!(test_losses, final_test_loss)
@@ -323,9 +319,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(ft_model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")
@@ -358,7 +353,7 @@ log_info(; save_dir=save_dir, train_indices=d.train_idx, val_indices=d.val_idx, 
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
-           X_test=nothing)  # streaming: X_test not materialized
+           X_test=nothing)
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

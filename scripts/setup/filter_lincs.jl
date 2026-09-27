@@ -1,6 +1,6 @@
 using LincsProject, DataFrames, CSV, Dates, JSON, StatsBase
 
-# load in beta data via terminal if not present
+# download beta data
 #=
 wget https://s3.amazonaws.com/macchiato.clue.io/builds/LINCS2020/level3/level3_beta_all_n3026460x12328.gctx
 wget https://s3.amazonaws.com/macchiato.clue.io/builds/LINCS2020/cellinfo_beta.txt
@@ -9,12 +9,12 @@ wget https://s3.amazonaws.com/macchiato.clue.io/builds/LINCS2020/geneinfo_beta.t
 wget https://s3.amazonaws.com/macchiato.clue.io/builds/LINCS2020/instinfo_beta.txt
 =#
 
-### load in lincs dataset (this is the one filtered for lea's project)
+# load lincs dataset
 @time lincs_data = LincsProject.Lincs("data/lincs_loading_files/",
                                       "level3_beta_all_n3026460x12328.gctx",
                                       "data/lincs_data.jld2")
 
-# into jld2                                      
+# into jld2
 function jld2_lincs(lincs_data, filter::Dict, out_file::String)
     filter_idx = LincsProject.create_filter(lincs_data, filter)
     filtered_lincs = lincs_data[filter_idx]
@@ -37,9 +37,8 @@ function csv_lincs(lincs_data, filtered_expr, filtered_lincs, csv_file::String)
     CSV.write(csv_file, df)
 end
 
-####################################################################################################################
 
-### filter for untreated cell lines, 978 x 100425
+# untreated cell lines, 978 x 100425
 untreated_filter = Dict(
     :qc_pass => [Symbol("1")],
     :pert_type => [:ctl_untrt, :ctl_vehicle]
@@ -49,7 +48,7 @@ untreated_data = jld2_lincs(lincs_data, untreated_filter, untreated_file)
 loaded_untreated_data = load_lincs(untreated_file)
 
 
-### on all cell line profiles (trt + untrt), 978 x 1412595
+# all cell line profiles, 978 x 1412595
 all_filter = Dict(
     :qc_pass => [Symbol("1")],
     :pert_type => [:ctl_untrt, :ctl_vehicle, :trt_cp]
@@ -57,7 +56,6 @@ all_filter = Dict(
 all_file = "data/lincs_trt_untrt_data.jld2"
 all_data = jld2_lincs(lincs_data, all_filter, all_file)
 loaded_all_data = load_lincs(all_file)
-
 
 
 #=

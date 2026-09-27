@@ -3,7 +3,6 @@ module Train
 using Flux, CUDA, Statistics, Random, StatsBase
 
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
-# using Models: encode
 using Models: encode, encode_rank
 
 export mask_input!, mask_input_exp!, mask_input_erecon!, mask_input_exp_erecon!
@@ -24,9 +23,8 @@ function mask_input!(X_masked, mask_labels, X::Matrix, mask_ratio::Float64, # ra
     n_rows, n_samples = size(X)
     idx = (1 + offset):n_rows
     num_masked = ceil(Int, length(idx) * mask_ratio)
-    pad = mask_id + 1   # Preprocess.pad_token_id: PAD tail (never masked); PB never pads
+    pad = mask_id + 1
     for j in 1:n_samples
-        # mask_pos = sample(idx, num_masked, replace=false)
         n_valid = count(!=(pad), view(X, :, j))
         mask_pos = n_valid == n_rows ? sample(idx, num_masked, replace=false) :
             sample((1 + offset):n_valid, ceil(Int, (n_valid - offset) * mask_ratio), replace=false)
@@ -60,14 +58,13 @@ function mask_input_erecon!(X_masked, expr_labels, X_ranks::Matrix, X_expr::Matr
     fill!(expr_labels, mask_val)
     n_rows, n_samples = size(X_ranks)
     num_masked = ceil(Int, n_rows * mask_ratio)
-    pad = mask_id + 1   # PAD tail is never masked (its label would index X_expr out of bounds); PB never pads
+    pad = mask_id + 1  # PAD never masked
     for j in 1:n_samples
-        # mask_pos = sample(1:n_rows, num_masked, replace=false)
         n_valid = count(!=(pad), view(X_ranks, :, j))
         mask_pos = n_valid == n_rows ? sample(1:n_rows, num_masked, replace=false) :
             sample(1:n_valid, ceil(Int, n_valid * mask_ratio), replace=false)
         for pos in mask_pos
-            # look up expression of the gene actually at rank pos (not gene pos)
+            # expression of gene at rank pos
             expr_labels[pos, j] = X_expr[X_ranks[pos, j], j]
             X_masked[pos, j] = mask_id
         end
@@ -230,8 +227,7 @@ function compute_lr(epoch::Int, n_epochs::Int, base_lr::Float64, warmup_epochs::
     end
 end
 
-# per-step lr: linear warmup then cosine decay to 0 at total_steps
-# (epoch-level compute_lr breaks when there are only ~2 epochs: epoch 2 gets lr = 0)
+# per-step lr: warmup + cosine
 function compute_lr_step(step::Int, total_steps::Int, base_lr::Float64, warmup_steps::Int)
     if step <= warmup_steps
         return base_lr * step / warmup_steps
@@ -250,9 +246,7 @@ function ema_update!(ema_model, model, decay::Float32)
 end
 
 
-
-# streaming step schedule: batches/epoch from one shard's cell count, epochs to cover max_steps
-# (or n_epochs when max_steps == 0), warmup = 10% of total steps (for compute_lr_step)
+# streaming step schedule
 function step_schedule(n_cells_per_shard::Int, n_train_shards::Int, batch_size::Int, max_steps::Int, n_epochs::Int)
     bpe = cld(n_cells_per_shard * n_train_shards, batch_size)
     n_ep = max_steps > 0 ? cld(max_steps, bpe) : n_epochs
@@ -260,24 +254,7 @@ function step_schedule(n_cells_per_shard::Int, n_train_shards::Int, batch_size::
     return (bpe=bpe, n_epochs=n_ep, total_steps=total, warmup_steps=max(1, div(total, 10)))
 end
 
-# lrecon EMA-teacher targets: teacher encoding of the clean input, standardized over the batch (dims=3).
-# normalize=false returns the raw embeddings (collapse monitor; standardized targets have var ≈ 1 by construction)
-# function teacher_targets(model, x_clean, use_exp::Bool; normalize::Bool = true)
-#     if use_exp
-#         projected = model.proj(reshape(x_clean, 1, size(x_clean)...))
-#         encoded = projected .+ model.pos_emb(cu(Int32.(1:size(x_clean, 1))))
-#     else
-#         embedded = model.embedding(x_clean)
-#         encoded = embedded .+ model.pos_emb(cu(Int32.(1:size(embedded, 2))))
-#     end
-#     raw = model.transformer(model.emb_dropout(encoded))
-#     normalize || return raw
-#     return (raw .- mean(raw, dims=3)) ./ (std(raw, dims=3) .+ 1f-6)
-# end
-# RTF inputs may carry PAD (SC cells with < top_k detected genes): the teacher uses the PAD-aware encoder, and the
-# per-(dim, position) standardization across the batch uses valid cells only; PAD entries (and positions with < 2
-# valid cells) are set to 0. never-masked PAD positions never enter the loss. return_keep=true also returns keep
-# (seq, bs) so callers (collapse monitor) can exclude PAD
+# lrecon EMA teacher targets, PAD-aware, standardized over valid cells
 function teacher_targets(model, x_clean, use_exp::Bool; normalize::Bool = true, return_keep::Bool = false)
     if use_exp
         projected = model.proj(reshape(x_clean, 1, size(x_clean)...))
@@ -294,7 +271,7 @@ function teacher_targets(model, x_clean, use_exp::Bool; normalize::Bool = true, 
         (raw .- mean(raw, dims=3)) ./ (std(raw, dims=3) .+ 1f-6)
     else
         w = reshape(Float32.(keep), 1, size(keep)...)          # (1, seq, bs)
-        n = sum(w, dims=3)                                       # valid cells per position
+        n = sum(w, dims=3)
         mu = sum(raw .* w, dims=3) ./ max.(n, 1f0)
         sd = sqrt.(sum(((raw .- mu) .* w) .^ 2, dims=3) ./ max.(n .- 1f0, 1f0))
         ((raw .- mu) ./ (sd .+ 1f-6)) .* w .* Float32.(n .>= 2f0)

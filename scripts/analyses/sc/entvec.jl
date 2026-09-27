@@ -12,14 +12,13 @@ n_parquets_to_use = 300
 save_dir = "results/tahoe/sc/figures/vectors/$(n_parquets_to_use)_pqs"
 mkpath(save_dir)
 
-#######################################################################################################################################
 
 # loading
 
 tahoe_data_dir = "data/tahoe/data"
 tahoe_meta_dir = "data/tahoe/metadata"
 
-# load gene vocabulary (token_id -> gene_symbol)
+# gene vocab
 gene_vocab = Dict{Int,String}()
 open(joinpath(tahoe_meta_dir, "gene_vocabulary.jsonl")) do f
     for line in eachline(f)
@@ -28,20 +27,18 @@ open(joinpath(tahoe_meta_dir, "gene_vocabulary.jsonl")) do f
     end
 end
 
-# load protein-coding gene list and build token filter
+# coding genes filter
 df_coding = CSV.read("data/tahoe/protein-coding_gene.txt", DataFrame; delim='\t')
 coding_symbols = Set(df_coding.symbol)
 coding_tokens = Set(tid for (tid, sym) in gene_vocab if sym in coding_symbols)
 n_coding = length(coding_tokens)
 println("Protein-coding tokens: $n_coding")
 
-# build contiguous index: sorted coding token_id -> 1:n_coding
+# coding token -> 1:n_coding
 sorted_coding = sort(collect(coding_tokens))
 token_to_idx = Dict{Int,Int}(tid => i for (i, tid) in enumerate(sorted_coding))
 
-# shared ranking rule (src/Preprocess.jl + ProcessSC, 2026-09-26): log1p CP10k / per-gene nonzero median (all-shard
-# file from scripts/pretrain/sc/compute_medians.jl); detected genes first, undetected after in gene-index order
-# (stable sortperm, no noise); undetected genes are absent (PAD) for the models, so rank analyses skip them
+# train nonzero medians, detected first, undetected = PAD
 sc_meds = let p = "data/tahoe/sc_gene_medians.jld2"
     if isfile(p) && length(load(p, "medians")) == n_coding
         Float32.(load(p, "medians"))
@@ -51,7 +48,7 @@ sc_meds = let p = "data/tahoe/sc_gene_medians.jld2"
     end
 end
 
-# get parquet paths
+# parquet paths
 parquet_files = sort(filter(f -> endswith(f, ".parquet"), readdir(tahoe_data_dir)))
 n_parquets = length(parquet_files)
 println("Total parquets: $n_parquets")
@@ -69,10 +66,7 @@ end
 
 function process_cell_to_ranked(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
     vec = cell_to_dense(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n_coding)
-    # noise = randn(Float32, n_coding) .* 1f-10
-    # vec .+= noise
     ranked = Vector{Int32}(undef, n_coding)
-    # sortperm!(ranked, vec, rev=true)
     sortperm!(ranked, vec ./ sc_meds, rev=true)
     return ranked
 end
@@ -108,16 +102,15 @@ function cell_to_dense(genes_flat, offsets, expr_flat, cell_idx, token_to_idx, n
     return vec
 end
 
-#######################################################################################################################################
 
-### entropy per rank
+# entropy per rank
 
 sampled_parquet_idx = sort(sample(1:n_parquets, min(n_parquets_to_use, n_parquets), replace=false))
 sampled_parquet_files = parquet_files[sampled_parquet_idx]
 
 rank_counts = [Dict{Int32,Int}() for _ in 1:n_coding]
-rank_zero_counts = zeros(Int, n_coding)   # count of zero-expression genes at each rank
-rank_unique_sums = zeros(Float64, n_coding)  # accumulate unique count diversity per rank
+rank_zero_counts = zeros(Int, n_coding)
+rank_unique_sums = zeros(Float64, n_coding)
 total_cells_processed = 0
 
 println("Entropy: $n_parquets_to_use / $n_parquets parquets")
@@ -137,24 +130,19 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
                 end
             end
         end
-        # noise = randn(Float32, n_coding) .* 1f-10
-        # dense .+= noise
         ranked = Vector{Int32}(undef, n_coding)
-        # sortperm!(ranked, dense, rev=true)
         sortperm!(ranked, dense ./ sc_meds, rev=true)
 
         for (rank_pos, gene_idx) in enumerate(ranked)
-            # d = rank_counts[rank_pos]
-            # d[gene_idx] = get(d, gene_idx, 0) + 1
             if raw[gene_idx] == 0.0f0
-                rank_zero_counts[rank_pos] += 1   # sparsity: fraction of cells where this rank is absent
+                rank_zero_counts[rank_pos] += 1
             else
-                d = rank_counts[rank_pos]          # entropy: detected genes only (undetected = absent/PAD)
+                d = rank_counts[rank_pos]
                 d[gene_idx] = get(d, gene_idx, 0) + 1
             end
         end
 
-        # unique count diversity: sweep from tail using raw counts (not log-normalized)
+        # unique count diversity from tail
         seen = Set{Float32}()
         for r in n_coding:-1:1
             push!(seen, raw[ranked[r]])
@@ -166,7 +154,7 @@ end
 elapsed = time() - t0
 println("Total cells processed: $total_cells_processed in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
 
-# calculate entropy per rank position (only positions with data)
+# entropy per rank
 max_populated_rank = findlast(d -> !isempty(d), rank_counts)
 sc_entropies = Vector{Float64}(undef, max_populated_rank)
 for r in 1:max_populated_rank
@@ -184,7 +172,7 @@ mkpath(sc_ent_dir)
 jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies)
 println("Saved SC entropies to $sc_ent_dir/ranked_sc_entropies.jld2 ($(length(sc_entropies)) ranks)")
 
-# sparsity per rank position (fraction of cells where gene at that rank has zero expression)
+# sparsity per rank
 sc_sparsities = rank_zero_counts[1:max_populated_rank] ./ total_cells_processed
 jldsave("$sc_ent_dir/ranked_sc_sparsities.jld2"; sparsities=sc_sparsities)
 println("Saved SC sparsities to $sc_ent_dir/ranked_sc_sparsities.jld2")
@@ -206,7 +194,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy.png", fig_sc_ent)
 
-### entropy + sparsity overlay (dual y-axis scatter)
+# entropy + sparsity overlay
 
 begin
     fig_sc_overlay = Figure(size=(600, 500))
@@ -236,7 +224,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_sparsity.png", fig_sc_overlay)
 
-### unique count diversity plot (normalized)
+# unique count diversity (normalized)
 
 begin
     fig_sc_ud = Figure(size=(600, 500))
@@ -250,7 +238,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_unique_diversity.png", fig_sc_ud)
 
-# zoomed entropy plots for top-1024 and top-2048
+# zoomed entropy, top 1024/2048
 begin
     n_show = min(1024, max_populated_rank)
     fig_1k = Figure(size=(600, 500))
@@ -277,9 +265,8 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_top2048.png", fig_2k)
 
-#######################################################################################################################################
 
-### mean/std dev expression
+# mean/std expression
 
 sc_gene_count = zeros(Int, n_coding)
 sc_gene_mean = zeros(Float64, n_coding)
@@ -304,7 +291,7 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
             s += 1
         end
 
-        # log-normalize this cell
+        # log-normalize
         total = 0f0
         for i in s:e
             total += ef[i]
@@ -352,9 +339,8 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_gene_exp_stddev.png", fig_sc_std, px_per_unit=2)
 
-#######################################################################################################################################
 
-### pairwise vector distances
+# pairwise distances
 
 n_cells_to_sample = 100_000
 n_parquets_to_sample = min(n_parquets_to_use, length(parquet_files))
@@ -373,7 +359,7 @@ for si in ProgressBar(sampled_parquets)
     parquet_path = joinpath(tahoe_data_dir, parquet_files[si])
     parquet = read_parquet(parquet_path)
 
-    # read cell line metadata for this parquet
+    # cell line metadata
     parquet_t = pq.read_table(parquet_path, columns=["cell_line_id"])
     parquet_cl = [string(parquet_t.column("cell_line_id").__getitem__(i-1).as_py()) for i in 1:parquet.n_cells]
 
@@ -384,8 +370,6 @@ for si in ProgressBar(sampled_parquets)
     batch_rank = Matrix{Int32}(undef, n_coding, n_take)
     for (j, ci) in enumerate(cell_idxs)
         batch_expr[:, j] = cell_to_dense(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
-        # noisy = view(batch_expr, :, j) .+ randn(Float32, n_coding) .* 1f-10
-        # sortperm!(view(batch_rank, :, j), noisy, rev=true)
         sortperm!(view(batch_rank, :, j), view(batch_expr, :, j) ./ sc_meds, rev=true)
     end
 
@@ -395,29 +379,26 @@ for si in ProgressBar(sampled_parquets)
     global cells_collected += n_take
 end
 sc_N = size(sc_expr, 2)
-sc_ndet = vec(sum(sc_expr .> 0f0, dims=1))   # detected genes per cell (top-k lists stop here; the rest is absent)
+sc_ndet = vec(sum(sc_expr .> 0f0, dims=1))
 elapsed = time() - t0
 println("Sampled $sc_N single cells in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
 
-# kendall distance helpers
-# NOTE: corkendall on sortperm output (gene ids at each rank) compares gene index numbers, not gene ranks,
-# so it depends on arbitrary gene numbering and sits at ~0.5 regardless of similarity. use values (or ranks) per gene instead.
-# tau-b on expression values: zeros are ties (no noise tie-breaking needed)
+# kendall helpers
+# corkendall on sortperm output is wrong, use per-gene values
 kendall_dist(a, b) = (1f0 - Float32(corkendall(Float64.(a), Float64.(b)))) / 2f0
 
-# top-k list kendall: genes in the union of both top-k sets; genes outside a cell's top-k tie at the bottom
-# la / lb: listed length per cell = min(k, detected genes) (undetected genes are absent, not ranked)
+# top-k kendall, outside top-k tied at bottom
 function topk_kendall_dist(top_a, top_b, k; la::Integer = k, lb::Integer = k)
     genes = union(view(top_a, 1:la), view(top_b, 1:lb))
     pos_a = Dict(g => i for (i, g) in enumerate(view(top_a, 1:la)))
     pos_b = Dict(g => i for (i, g) in enumerate(view(top_b, 1:lb)))
-    # score = k+1 - rank position (higher = more expressed), 0 = not in top-k
+    # score = k+1 - rank, 0 outside top-k
     sa = Float64[k + 1 - get(pos_a, g, k + 1) for g in genes]
     sb = Float64[k + 1 - get(pos_b, g, k + 1) for g in genes]
     return (1f0 - Float32(corkendall(sa, sb))) / 2f0
 end
 
-# sanity: identical -> 0, reversed -> 1
+# sanity: identical 0, reversed 1
 let x = rand(Float32, 100)
     @assert kendall_dist(x, x) < 1f-6
     @assert kendall_dist(x, -x) > 1f0 - 1f-6
@@ -425,12 +406,12 @@ let x = rand(Float32, 100)
     @assert topk_kendall_dist(p, p, 50) < 1f-6
 end
 
-# pairwise distances (kendall on ~19K-length vectors is slow, so fewer pairs than pseudobulk)
+# pairwise distances
 sc_n_pairs = 100_000
 sc_idx_a = rand(1:sc_N, sc_n_pairs)
 sc_idx_b = rand(1:sc_N, sc_n_pairs)
 
-# remove self-pairs
+# drop self-pairs
 keep = sc_idx_a .!= sc_idx_b
 sc_idx_a = sc_idx_a[keep]
 sc_idx_b = sc_idx_b[keep]
@@ -449,11 +430,10 @@ end
 
 sc_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
 for k in 1:sc_n_pairs
-    # sc_rank_kendall[k] = kendall_dist(view(sc_expr, :, sc_idx_a[k]), view(sc_expr, :, sc_idx_b[k]))
     sc_rank_kendall[k] = kendall_dist(view(sc_expr, :, sc_idx_a[k]) ./ sc_meds, view(sc_expr, :, sc_idx_b[k]) ./ sc_meds)
 end
 
-# save distance vectors
+# save distances
 data_vec_dir = "results/tahoe/sc/data/vectors/$(n_parquets_to_use)_pqs"
 mkpath(data_vec_dir)
 jldsave("$data_vec_dir/sc_distances_$(sc_n_pairs).jld2";
@@ -487,24 +467,23 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall.png", fig)
 
-#######################################################################################################################################
 
-### gene overlap analysis — why the blob is diagonal and distances are large
+# gene overlap
 
-# per-cell library complexity (number of detected genes)
+# library complexity
 n_detected_per_cell = vec(sum(sc_expr .> 0f0, dims=1))
 println("\n=== library complexity (genes detected per cell) ===")
 println("  median: $(median(n_detected_per_cell))  mean: $(round(mean(n_detected_per_cell), digits=1))  std: $(round(std(n_detected_per_cell), digits=1))")
 println("  min: $(minimum(n_detected_per_cell))  max: $(maximum(n_detected_per_cell))  total genes: $n_coding")
 println("  median sparsity: $(round(1 - median(n_detected_per_cell)/n_coding, digits=3))")
 
-# per-pair overlap metrics
+# pairwise overlap
 sc_n_detected_a = Vector{Int}(undef, sc_n_pairs)
 sc_n_detected_b = Vector{Int}(undef, sc_n_pairs)
-sc_n_shared = Vector{Int}(undef, sc_n_pairs)        # genes nonzero in both
-sc_n_union = Vector{Int}(undef, sc_n_pairs)          # genes nonzero in at least one
-sc_n_only_a = Vector{Int}(undef, sc_n_pairs)         # nonzero only in a
-sc_n_only_b = Vector{Int}(undef, sc_n_pairs)         # nonzero only in b
+sc_n_shared = Vector{Int}(undef, sc_n_pairs)
+sc_n_union = Vector{Int}(undef, sc_n_pairs)
+sc_n_only_a = Vector{Int}(undef, sc_n_pairs)
+sc_n_only_b = Vector{Int}(undef, sc_n_pairs)
 sc_jaccard = Vector{Float32}(undef, sc_n_pairs)
 
 for k in 1:sc_n_pairs
@@ -530,7 +509,7 @@ println("  union:    median=$(median(sc_n_union))  mean=$(round(mean(sc_n_union)
 println("  only-a:   median=$(median(sc_n_only_a))  mean=$(round(mean(sc_n_only_a), digits=1))")
 println("  only-b:   median=$(median(sc_n_only_b))  mean=$(round(mean(sc_n_only_b), digits=1))")
 
-# euclidean contribution from non-overlapping genes (where one is 0 and the other isn't)
+# euclid from non-overlapping genes
 sc_euclid_from_mismatch = Vector{Float32}(undef, sc_n_pairs)
 sc_euclid_from_shared = Vector{Float32}(undef, sc_n_pairs)
 for k in 1:sc_n_pairs
@@ -549,7 +528,7 @@ println("\n=== euclidean distance decomposition ===")
 println("  fraction of ||a-b||² from non-overlapping genes:")
 println("    median=$(round(median(frac_from_mismatch), digits=3))  mean=$(round(mean(frac_from_mismatch), digits=3))")
 
-# save overlap data
+# save overlap
 jldsave("$data_vec_dir/sc_overlap_$(sc_n_pairs).jld2";
     n_detected_per_cell=n_detected_per_cell,
     jaccard=sc_jaccard, n_shared=sc_n_shared, n_union=sc_n_union,
@@ -558,7 +537,7 @@ jldsave("$data_vec_dir/sc_overlap_$(sc_n_pairs).jld2";
     euclid_from_shared=sc_euclid_from_shared,
     frac_from_mismatch=frac_from_mismatch)
 
-### plot 1: library complexity histogram
+# plot 1: library complexity
 begin
     fig_lc = Figure(size=(600, 400))
     ax_lc = Axis(fig_lc[1, 1],
@@ -572,13 +551,13 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_library_complexity.png", fig_lc)
 
-### plot 2: cosine vs kendall colored by jaccard overlap
+# plot 2: cosine vs kendall by jaccard
 begin
     fig_jac = Figure(size=(700, 500))
     ax_jac = Axis(fig_jac[1, 1],
         xlabel="Kendall tau distance",
         ylabel="Cosine distance")
-    # subsample for scatter readability
+    # subsample
     n_plot = min(20_000, sc_n_pairs)
     plot_idx = sample(1:sc_n_pairs, n_plot, replace=false)
     sc = scatter!(ax_jac,
@@ -592,7 +571,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_jaccard.png", fig_jac)
 
-### plot 3: cosine vs kendall colored by fraction of euclidean from non-overlapping genes
+# plot 3: cosine vs kendall by non-overlap euclid fraction
 begin
     fig_frac = Figure(size=(700, 500))
     ax_frac = Axis(fig_frac[1, 1],
@@ -609,7 +588,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_mismatch_frac.png", fig_frac)
 
-### plot 4: jaccard overlap vs cosine distance (direct relationship)
+# plot 4: jaccard vs cosine
 begin
     fig_jc = Figure(size=(600, 500))
     ax_jc = Axis(fig_jc[1, 1],
@@ -623,7 +602,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_jaccard_vs_cosine.png", fig_jc)
 
-### plot 5: jaccard overlap vs euclidean distance
+# plot 5: jaccard vs euclid
 begin
     fig_je = Figure(size=(600, 500))
     ax_je = Axis(fig_je[1, 1],
@@ -637,7 +616,7 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_jaccard_vs_euclidean.png", fig_je)
 
-### plot 6: euclidean decomposition — shared vs mismatch contribution
+# plot 6: euclid decomposition
 begin
     fig_decomp = Figure(size=(600, 500))
     ax_decomp = Axis(fig_decomp[1, 1],
@@ -650,14 +629,14 @@ begin
         colormap=:viridis,
         markersize=3, alpha=0.6)
     Colorbar(fig_decomp[1, 2], sc3, label="Jaccard overlap")
-    # add identity line
+    # identity line
     max_val = max(maximum(sc_euclid_from_shared), maximum(sc_euclid_from_mismatch))
     lines!(ax_decomp, [0, max_val], [0, max_val], color=:red, linewidth=1, linestyle=:dash)
     display(fig_decomp)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_euclid_decomposition.png", fig_decomp)
 
-### plot 7: cosine vs kendall colored by number of shared genes
+# plot 7: cosine vs kendall by shared genes
 begin
     fig_nsh = Figure(size=(700, 500))
     ax_nsh = Axis(fig_nsh[1, 1],
@@ -674,9 +653,8 @@ begin
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_shared.png", fig_nsh)
 
-#######################################################################################################################################
 
-### pairwise vector distances — top-k truncated
+# pairwise distances, top-k
 
 for top_k in [1024, 2048]
     println("=== Pairwise distances for top-$top_k ===")
@@ -703,7 +681,6 @@ for top_k in [1024, 2048]
 
     tk_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
     for k in 1:sc_n_pairs
-        # tk_rank_kendall[k] = topk_kendall_dist(view(sc_ranked, :, sc_idx_a[k]), view(sc_ranked, :, sc_idx_b[k]), top_k)
         tk_rank_kendall[k] = topk_kendall_dist(view(sc_ranked, :, sc_idx_a[k]), view(sc_ranked, :, sc_idx_b[k]), top_k;
                                                la=min(top_k, sc_ndet[sc_idx_a[k]]), lb=min(top_k, sc_ndet[sc_idx_b[k]]))
     end
@@ -747,9 +724,8 @@ for top_k in [1024, 2048]
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_top$(top_k).png", fig_cos)
 end
 
-#######################################################################################################################################
 
-### pairwise vector distances — HVG-filtered (global top-1024 genes by variance)
+# pairwise distances, HVG-1024
 
 begin
     hvg_k = 1024
@@ -773,7 +749,6 @@ begin
     for k in 1:sc_n_pairs
         a = view(sc_expr, hvg_idx, sc_idx_a[k])
         b = view(sc_expr, hvg_idx, sc_idx_b[k])
-        # hvg_rank_kendall[k] = kendall_dist(a, b)
         hvg_rank_kendall[k] = kendall_dist(a ./ view(sc_meds, hvg_idx), b ./ view(sc_meds, hvg_idx))
     end
 
@@ -816,9 +791,8 @@ begin
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_hvg$(hvg_k).png", fig_cos)
 end
 
-#######################################################################################################################################
 
-### model-matched: cosine on HVG-1024 (ETF input) vs kendall on per-cell top-1024 (RTF input), same pairs
+# cosine on HVG-1024 vs kendall on top-1024
 
 begin
     local tk = load("$data_vec_dir/sc_distances_$(sc_n_pairs)_top1024.jld2")
@@ -839,25 +813,9 @@ begin
     println("model-matched spearman(cosine, kendall) = $(round(corspearman(Float64.(hvg_expr_cosine), Float64.(mm_rank_kendall)), digits=3))")
 end
 
-#######################################################################################################################################
 
-### depth subsampling — is cosine-Jaccard relationship a depth property?
-# subsample high-depth cells to low depth (multinomial resampling of UMI counts)
-# then recompute cosine distance and Jaccard to see if the relationship appears
+# depth: thin pseudo-bulks to sc depth
 
-#
-#     # use raw counts (not log-normalized) for subsampling — need to re-read a subset
-#     # instead, approximate by exponentiating log-normalized values: raw ≈ total * (expm1(x) / 10000)
-#     # but we don't have total counts. simpler: use the already-loaded sc_expr and subsample by zeroing genes
-#
-#     # alternative approach: for each cell, keep only a random fraction of detected genes
-#     # this simulates reduced detection sensitivity (low depth → fewer genes detected)
-#
-#                 # subsample: randomly zero out (1-frac_keep) of detected genes
-#   depth from single-cell effects (and real low depth drops lowly expressed genes first, not uniformly)
-
-# instead: build high-depth pseudo-bulks from raw sc counts (cell line × drug × sample), then downsample their
-# UMIs to sc-like depths. if thinned pseudo-bulks reproduce the sc cosine-jaccard pattern -> depth property,
 
 begin
     println("\n=== Depth subsampling test (pseudo-bulk → sc depth) ===")
@@ -867,7 +825,7 @@ begin
 
     pb_sums = Dict{Tuple{String,String,String},Vector{Float32}}()
     pb_ncells = Dict{Tuple{String,String,String},Int}()
-    sc_totals = Float32[]   # raw UMIs per cell (for sc median depth)
+    sc_totals = Float32[]
     for parquet_file in ProgressBar(depth_parquets)
         parquet_path = joinpath(tahoe_data_dir, parquet_file)
         parquet = read_parquet(parquet_path)
@@ -894,7 +852,7 @@ begin
     # same log-normalization as cell_to_dense
     lognorm(v) = (t = sum(v); t > 0 ? Float32.(ifelse.(v .> 0, log1p.(10000f0 .* v ./ t), 0f0)) : Float32.(v))
 
-    # multinomial downsampling of a raw count vector to `depth` UMIs
+    # multinomial downsampling
     function downsample_counts(v, depth)
         out = zeros(Float32, length(v))
         depth >= sum(v) && return Float32.(v)
@@ -938,7 +896,7 @@ begin
     println("  sc native     median detected=$(round(Int, median(n_detected_per_cell)))  " *
             "spearman(jac, cos)=$(round(corspearman(Float64.(sc_jaccard), Float64.(sc_expr_cosine)), digits=3))")
 
-    # panels: pseudo-bulk at each depth + sc native for reference
+    # pseudo-bulk per depth + sc
     local panels = vcat([(l, depth_results[l]...) for (l, _) in depth_conditions],
                         [("Single-cell (native)", sc_expr_cosine, sc_jaccard)])
     local fig = Figure(size=(320 * length(panels), 340))
@@ -951,7 +909,7 @@ begin
     display(fig)
     save("$save_dir/sc_$(n_parquets_to_use)_depth_downsample_pb.png", fig, px_per_unit=2)
 
-    # secondary: within sc, does the relationship shift with native depth? (bin pairs by mean detected genes)
+    # sc: bin pairs by detected genes
     local pair_det = (n_detected_per_cell[sc_idx_a] .+ n_detected_per_cell[sc_idx_b]) ./ 2
     local qs = quantile(pair_det, [0, 1/3, 2/3, 1])
     for i in 1:3
@@ -961,9 +919,8 @@ begin
     end
 end
 
-#######################################################################################################################################
 
-### cell line blob diagnosis (same-CL vs diff-CL pairwise distances)
+# cell line blob diagnosis
 
 
 cl_a = sc_cell_lines[sc_idx_a]
@@ -986,7 +943,7 @@ if sum(high_cos) > 0
     println("  same cell line: $(sum(same_cl .& high_cos)) / $(sum(high_cos)) = $(round(mean(same_cl[high_cos]), digits=3))")
 end
 
-# break down distances by same vs different cell line
+# same vs diff cell line
 for (label, mask) in [
     ("same cell line",      same_cl),
     ("different cell line", .!same_cl)]
@@ -998,7 +955,7 @@ for (label, mask) in [
     println("  kendall dist:   median=$(round(median(sc_rank_kendall[mask]), digits=4)), mean=$(round(mean(sc_rank_kendall[mask]), digits=4))")
 end
 
-# cell line frequency distribution
+# cell line frequencies
 cl_counts = sort(collect(countmap(sc_cell_lines)), by=x->x[2], rev=true)
 println("\n=== cell line distribution (top 10) ===")
 for (cl, cnt) in cl_counts[1:min(10, length(cl_counts))]
@@ -1008,7 +965,7 @@ expected_same_cl = sum((c/sc_N)^2 for (_, c) in cl_counts)
 println("expected same-CL rate (random pairs): $(round(expected_same_cl, digits=3))")
 println("observed same-CL rate:                $(round(mean(same_cl), digits=3))")
 
-# plot: cosine vs kendall colored by same/diff cell line
+# cosine vs kendall by cell line
 begin
     fig_cl = Figure(size=(900, 400))
 
@@ -1024,7 +981,7 @@ begin
     display(fig_cl)
 end
 
-# plot: euclidean vs kendall colored by same/diff cell line
+# euclid vs kendall by cell line
 begin
     fig_cl2 = Figure(size=(900, 400))
 

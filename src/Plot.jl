@@ -17,7 +17,7 @@ function plot_loss(n_epochs::Int, train_losses, test_losses, save_dir::String, l
     if length(test_losses) == n_epochs
         lines!(ax_loss, 1:n_epochs, test_losses, label="Test", linewidth=2)
     elseif length(test_losses) >= 1
-        # test evaluated only at end — plot as marker(s) at the correct epoch(s)
+        # test only at end, plot as markers
         test_epochs = (n_epochs - length(test_losses) + 1):n_epochs
         scatter!(ax_loss, collect(test_epochs), collect(test_losses),
                  label="Test", markersize=8)

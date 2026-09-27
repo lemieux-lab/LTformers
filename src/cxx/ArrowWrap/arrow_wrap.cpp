@@ -10,9 +10,7 @@
 #include <chrono>
 
 
-// -----------------------------------------------------------------------------
-// Julia CxxWrap interop for jl_sym_t*
-// -----------------------------------------------------------------------------
+// jl_sym_t* interop
 namespace jlcxx {
     template<>
     struct MappingTrait<jl_sym_t*> {
@@ -27,9 +25,7 @@ namespace jlcxx {
     };
 }
 
-// -----------------------------------------------------------------------------
-// ParquetReaderWrapper: reads Parquet files via Apache Arrow C++
-// -----------------------------------------------------------------------------
+// parquet reader via Arrow
 class ParquetReaderWrapper {
 public:
     std::shared_ptr<arrow::io::ReadableFile> infile;
@@ -37,9 +33,7 @@ public:
     int32_t nb;  // number of nonzero entries
     int32_t m;   // number of columns (cells)
 
-    // -------------------------------------------------------------------------
-    // Constructor: open Parquet file and compute basic sizes
-    // -------------------------------------------------------------------------
+    // open file, compute sizes
     ParquetReaderWrapper(const std::string& filename) {
         PARQUET_ASSIGN_OR_THROW(
             infile,
@@ -70,17 +64,15 @@ public:
         return std::make_tuple(m, nb);
     }
 
-    // -------------------------------------------------------------------------
-    // load_expr: populate CSC arrays (colptr, rowval, nzval)
-    // -------------------------------------------------------------------------
+    // load_expr: fill CSC arrays
     void load_expr(jlcxx::ArrayRef<int32_t, 1> colptr,
                    jlcxx::ArrayRef<int32_t, 1> rowval,
                    jlcxx::ArrayRef<float,   1> nzval)
     {
         int num_row_groups = reader->num_row_groups();
 
-        int row_idx = 0;  // current column index
-        int nb_idx  = 0;  // current nonzero index
+        int row_idx = 0;  // current column
+        int nb_idx  = 0;  // current nonzero
 
         for (int rg = 0; rg < num_row_groups; ++rg) {
             std::shared_ptr<parquet::arrow::RowGroupReader> rowgroup = reader->RowGroup(rg);
@@ -106,7 +98,7 @@ public:
             int64_t num_rows = genes->length();
 
             for (int64_t i = 0; i < num_rows; ++i) {
-                // mark start of this column (Julia uses 1-based indices)
+                // column start (1-based)
                 colptr[row_idx] = nb_idx + 1;
 
                 int32_t g_start = gene_offsets[i];
@@ -125,16 +117,13 @@ public:
             }
         }
 
-        // ✅ FIX: ensure the final sentinel value for colptr
-        // colptr must have length (ncols + 1), and the last entry = nnz + 1
+        // final colptr sentinel = nnz + 1
         if (row_idx < static_cast<int>(colptr.size())) {
             colptr[row_idx] = nb_idx + 1;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // load_syms: load string column as Julia Symbols
-    // -------------------------------------------------------------------------
+    // load_syms: string column -> Symbols
     void load_syms(jlcxx::ArrayRef<jl_sym_t*> res, int32_t col) {
         int num_row_groups = reader->num_row_groups();
 
@@ -160,9 +149,7 @@ public:
     }
 };
 
-// -----------------------------------------------------------------------------
-// Julia module registration
-// -----------------------------------------------------------------------------
+// module registration
 JLCXX_MODULE define_julia_module(jlcxx::Module& mod) {
     mod.add_type<ParquetReaderWrapper>("ParquetReaderWrapper")
        .constructor<const std::string&>()

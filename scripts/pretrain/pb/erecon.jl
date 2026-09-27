@@ -11,7 +11,7 @@ using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 args = load_pretrain_args()
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "erecon", args["modeltype"]])
-resolve_data_path!(config)   # data_path from local.toml is the tahoe file; pick the file for data_format (was: LINCS loaded tahoe)
+resolve_data_path!(config)
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
@@ -27,7 +27,7 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data.expr
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = reduce(hcat, data.expr)
     meta_df = data
 end
@@ -39,7 +39,7 @@ if config["subset_ratio"] < 1.0
     println("subset: $(length(subset_idx))/$(n_total) samples")
 end
 
-# gene selection: ETF = top-n HVGs, RTF = full gene vocab + per-sample top_k truncation (matches mlm + finetune)
+# gene selection
 n_hvg = get(config, "n_hvg", 0)
 if use_exp
     if n_hvg > 0 && n_hvg < size(data_expr, 1)
@@ -51,10 +51,10 @@ else
     println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
-# train-split medians from file (scripts/pretrain/pb/compute_medians.jl), HVG subset for etf
+# train-split medians
 gene_medians = gene_medians_for(config, data_expr; hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 X_ranks = rank_genes(data_expr, gene_medians)
-X_expr = data_expr isa Matrix{Float32} ? data_expr : Float32.(data_expr) # avoid a full copy when already Float32
+X_expr = data_expr isa Matrix{Float32} ? data_expr : Float32.(data_expr)
 
 n_genes = size(X_ranks, 1)
 MASK_ID = n_genes + 1
@@ -66,7 +66,7 @@ end
 seq_len = use_exp ? n_genes : min(top_k, n_genes)
 
 # splits
-# seeded so every PB pretrain objective/modeltype shares one split; reseed after so masks/donors stay random per run
+# seeded split, reseed after
 Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 Random.seed!()
@@ -80,7 +80,6 @@ else
     X_val = X_ranks[:, val_indices]
     X_test = X_ranks[:, test_indices]
 end
-# ETF: X_* already are the expression splits (no second copy); RTF: full expression needed for label lookup
 X_expr_train, X_expr_val, X_expr_test = use_exp ? (X_train, X_val, X_test) :
     (X_expr[:, train_indices], X_expr[:, val_indices], X_expr[:, test_indices])
 X_ranks_test = use_exp ? X_ranks[:, test_indices] : X_test
@@ -131,7 +130,7 @@ println("save dir: $save_dir")
 save_indices(dir) = jldsave(joinpath(dir, "indices.jld2");
                             train_indices=train_indices, val_indices=val_indices, test_indices=test_indices)
 save_indices(save_dir)
-if @isdefined(hvg_idx) # not defined when HVG filter skipped (RTF, or LINCS 978 < n_hvg)
+if @isdefined(hvg_idx)
     jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
 end
 
@@ -162,7 +161,7 @@ n_total_epochs = eval_every > 0 ? cld(use_max_steps ? config["max_steps"] : n_ep
 steps_per_period = eval_every > 0 ? eval_every : bpe
 
 n_val_eval = get(config, "max_val_samples", 0) > 0 ? min(config["max_val_samples"], size(X_val_masked, 2)) : size(X_val_masked, 2)
-train_pos = size(X_train, 2) + 1   # next train column; past the end -> re-mask and start a new pass
+train_pos = size(X_train, 2) + 1
 println("eval every $(steps_per_period) steps ($(n_total_epochs) evals; $(bpe) steps per pass), val on $(n_val_eval) samples")
 
 total_steps = use_max_steps ? config["max_steps"] : n_epochs_data * bpe
@@ -223,7 +222,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     push!(train_losses, mean(epoch_losses))
     push!(train_loss_maxes, maximum(epoch_losses))
 
-    # val eval (every epoch for checkpt + sweep selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for start_idx in 1:config["batch_size"]:n_val_eval
@@ -241,7 +240,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # save best before the last-epoch reload so a best final epoch isn't overwritten by the older checkpoint
+    # save best before reload
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -253,7 +252,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     # test eval (final epoch only)
     is_last = is_last || done
 
-    # reload best checkpoint for test eval
+    # reload best
     if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
         best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
         model_cpu = cpu(model)
@@ -290,14 +289,14 @@ for epoch in ProgressBar(1:n_total_epochs)
                     batch_len = size(m_cpu, 2)
                     masked_idx = 0
                     for j in 1:batch_len
-                        for pos in 1:n_genes # ETF: pos = gene index
+                        for pos in 1:n_genes
                             m_cpu[pos, j] || continue
                             masked_idx += 1
                             sq_err = (preds_cpu[masked_idx] - y_cpu[masked_idx])^2
-                            gene_error_sums[pos] += sq_err # per-gene
+                            gene_error_sums[pos] += sq_err
                             gene_error_counts[pos] += 1
-                            r = inv_ranks_batch[pos, j] # rank of gene pos
-                            rank_error_sums[r] += sq_err # per-rank
+                            r = inv_ranks_batch[pos, j]
+                            rank_error_sums[r] += sq_err
                             rank_error_counts[r] += 1
                         end
                     end
@@ -319,14 +318,14 @@ for epoch in ProgressBar(1:n_total_epochs)
                     batch_len = size(y_labels_cpu, 2)
                     masked_idx = 0
                     for j in 1:batch_len
-                        for pos in 1:size(y_labels_cpu, 1) # RTF: pos = rank position (top_k rows)
+                        for pos in 1:size(y_labels_cpu, 1)
                             (y_labels_cpu[pos, j] == -100f0) && continue
                             masked_idx += 1
                             sq_err = (preds_cpu[masked_idx] - y_cpu_masked[masked_idx])^2
-                            rank_error_sums[pos] += sq_err # per-rank
+                            rank_error_sums[pos] += sq_err
                             rank_error_counts[pos] += 1
-                            gene_id = ranks_batch[pos, j] # gene at rank pos
-                            gene_error_sums[gene_id] += sq_err # per-gene
+                            gene_id = ranks_batch[pos, j]
+                            gene_error_sums[gene_id] += sq_err
                             gene_error_counts[gene_id] += 1
                         end
                     end
@@ -349,7 +348,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # moved above the reload
 
     if is_last
         append!(all_preds, epoch_preds)

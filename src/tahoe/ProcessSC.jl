@@ -1,12 +1,10 @@
 module ProcessSC
 
-# using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays, Base.Threads
 using Flux, CUDA, Statistics, Random, StatsBase, SparseArrays, Base.Threads, JLD2
 
 let d = joinpath(@__DIR__, ".."); d in LOAD_PATH || push!(LOAD_PATH, d); end
 using Preprocess: pad_token_id
 
-# encode (sc_masked_loss) and the shared expression corruption (sc_mask!)
 let s = joinpath(@__DIR__, ".."); s in LOAD_PATH || push!(LOAD_PATH, s); end
 using Models: encode
 using Train: corrupt_expr!
@@ -43,7 +41,7 @@ function cell_to_dense_flat!(dense::Vector{Float32},
     fill!(dense, 0f0)
     s = offsets[cell_idx] + 1
     e = offsets[cell_idx + 1]
-    # skip sentinel (negative expression = metadata flag)
+    # skip sentinel
     if s <= e && expr_flat[s] < 0
         s += 1
     end
@@ -55,8 +53,7 @@ function cell_to_dense_flat!(dense::Vector{Float32},
     log_normalize_col!(dense)
 end
 
-# per-gene nonzero medians (log1p CP10k) on SC train shards, from scripts/pretrain/sc/compute_hvg.jl.
-# loaded once per process (lazily, thread-safe); override the path with ENV["SC_MEDIANS_PATH"] or set_sc_gene_medians!
+# SC train-shard nonzero medians, loaded lazily
 const _SC_MEDIANS = Ref{Union{Nothing,Vector{Float32}}}(nothing)
 const _SC_MEDIANS_LOADED = Ref(false)
 const _SC_MEDIANS_LOCK = ReentrantLock()
@@ -89,27 +86,8 @@ function sc_gene_medians(n_coding::Int)
     return _SC_MEDIANS[]
 end
 
-# function process_cell_topk_flat(dense::Vector{Float32},
-#                                 genes_flat::Vector{Int64}, offsets::Vector{Int64},
-#                                 expr_flat::Vector{Float32}, cell_idx::Int,
-#                                 token_to_idx::Dict{Int,Int}, n_coding::Int, top_k::Int)
-#     cell_to_dense_flat!(dense, genes_flat, offsets, expr_flat, cell_idx, token_to_idx)
-#
-#     @inbounds for i in 1:n_coding
-#         dense[i] += randn(Float32) * 1f-10
-#     end
-#     perm = partialsortperm(dense, 1:top_k, rev=true)  # O(n + k log k) vs O(n log n)
-#     top_gene_ids = Int32.(perm)
-#     top_expr_vals = dense[perm]
-#     return top_gene_ids, top_expr_vals
-# end
-# ^ no median normalization, and undetected genes were ordered by random noise (cells with < top_k detected genes)
 
-# geneformer-style (same rules as PB, see Preprocess.jl): detected genes by log1p CP10k / nonzero median, stable ties
-# (gene index); if fewer than top_k are detected, the tail is PAD (pad_token_id(n_coding), expression 0), which the
-# model ignores (Models.encode_rank attention mask + masked pooling). was: undetected genes in gene-index order.
-# a cell with 0 detected genes keeps position 1 as the undetected gene 1 so attention never sees an all-PAD row.
-# returns (gene ids in rank order, their expression values, number of detected genes)
+# top-k gene ids by expr / median, PAD tail
 function process_cell_topk_flat(dense::Vector{Float32},
                                 genes_flat::Vector{Int64}, offsets::Vector{Int64},
                                 expr_flat::Vector{Float32}, cell_idx::Int,
@@ -118,23 +96,13 @@ function process_cell_topk_flat(dense::Vector{Float32},
     meds = sc_gene_medians(n_coding)
     det = findall(>(0f0), dense)
     ratio = isnothing(meds) ? dense[det] : dense[det] ./ view(meds, det)
-    order = det[sortperm(ratio; rev=true)]   # sortperm is stable -> ties by gene index
+    order = det[sortperm(ratio; rev=true)]
     n_det = length(order)
     top_gene_ids = Vector{Int32}(undef, top_k)
     m = min(top_k, n_det)
     @inbounds for r in 1:m
         top_gene_ids[r] = order[r]
     end
-    # if m < top_k
-    #     r = m
-    #     @inbounds for g in 1:n_coding
-    #         dense[g] > 0f0 && continue
-    #         r += 1
-    #         top_gene_ids[r] = g
-    #         r == top_k && break
-    #     end
-    # end
-    # top_expr_vals = dense[top_gene_ids]
     pad = pad_token_id(n_coding)
     top_expr_vals = zeros(Float32, top_k)
     @inbounds for r in 1:m
@@ -144,7 +112,7 @@ function process_cell_topk_flat(dense::Vector{Float32},
         top_gene_ids[r] = pad
     end
     if m == 0 && top_k > 0
-        top_gene_ids[1] = Int32(1)   # guard: never an all-PAD sequence (observed min is 298 detected genes)
+        top_gene_ids[1] = Int32(1)  # never all-PAD
     end
     return top_gene_ids, top_expr_vals, n_det
 end
@@ -159,10 +127,9 @@ function build_batch_rtf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     batch = Matrix{Int32}(undef, top_k, bs)
     nt = nthreads()
     if nt > 1 && bs >= 4
-        # dense_bufs = [Vector{Float32}(undef, n_coding) for _ in 1:nt]
         @threads for j in 1:bs
-            # per-iteration dense buffer (76KB each, avoids threadid() issues in Channel tasks)
-            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
+            # per-iteration dense buffer
+            local dense = Vector{Float32}(undef, n_coding)  # local avoids Core.Box race
             gene_ids, _ = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
                                                  cell_indices[j], token_to_idx, n_coding, top_k)
             batch[:, j] = gene_ids
@@ -187,7 +154,7 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     nt = nthreads()
     if nt > 1 && bs >= 4
         @threads for j in 1:bs
-            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
+            local dense = Vector{Float32}(undef, n_coding)  # local avoids Core.Box race
             gene_ids, expr_vals = process_cell_topk_flat(dense, genes_flat, offsets, expr_flat,
                                                          cell_indices[j], token_to_idx, n_coding, top_k)
             batch_ids[:, j] = gene_ids
@@ -205,8 +172,7 @@ function build_batch_etf(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     return batch_ids, batch_expr
 end
 
-# ETF-HVG batch building: extract expression at fixed HVG gene positions (gene-position paradigm)
-# Returns (batch_expr, batch_ranks) where position i = hvg gene i across all cells
+# ETF-HVG batch: expression at HVG positions
 function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
                               expr_flat::Vector{Float32}, cell_indices::AbstractVector{Int},
                               token_to_idx::Dict{Int,Int}, n_coding::Int,
@@ -218,15 +184,13 @@ function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     nt = nthreads()
     if nt > 1 && bs >= 4
         @threads for j in 1:bs
-            # dense = Vector{Float32}(undef, n_coding)
-            local dense = Vector{Float32}(undef, n_coding)  # local: otherwise shared Core.Box across threads (race)
+            local dense = Vector{Float32}(undef, n_coding)  # local avoids Core.Box race
             cell_to_dense_flat!(dense, genes_flat, offsets, expr_flat,
                                 cell_indices[j], token_to_idx)
             hvg_expr = dense[hvg_idx]
             batch_expr[:, j] = hvg_expr
-            # compute ranks within HVG set (1 = highest expression)
-            # perm = sortperm(hvg_expr, rev=true)
-            hvg_meds = sc_gene_medians(n_coding)   # same median normalization as the RTF ranking
+            # ranks within HVG set
+            hvg_meds = sc_gene_medians(n_coding)
             perm = sortperm(isnothing(hvg_meds) ? hvg_expr : hvg_expr ./ view(hvg_meds, hvg_idx), rev=true)
             for (rank, idx) in enumerate(perm)
                 batch_ranks[idx, j] = Int32(rank)
@@ -239,9 +203,8 @@ function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
                                 ci, token_to_idx)
             hvg_expr = dense[hvg_idx]
             batch_expr[:, j] = hvg_expr
-            # compute ranks within HVG set (1 = highest expression)
-            # perm = sortperm(hvg_expr, rev=true)
-            hvg_meds = sc_gene_medians(n_coding)   # same median normalization as the RTF ranking
+            # ranks within HVG set
+            hvg_meds = sc_gene_medians(n_coding)
             perm = sortperm(isnothing(hvg_meds) ? hvg_expr : hvg_expr ./ view(hvg_meds, hvg_idx), rev=true)
             for (rank, idx) in enumerate(perm)
                 batch_ranks[idx, j] = Int32(rank)
@@ -251,7 +214,7 @@ function build_batch_etf_hvg(genes_flat::Vector{Int64}, offsets::Vector{Int64},
     return batch_expr, batch_ranks
 end
 
-# yields one batch at a time via Channel so first step starts immediately
+# one batch at a time via Channel
 function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::Int,
                             top_k::Int, batch_size::Int;
                             modeltype::String = "rtf",
@@ -260,7 +223,7 @@ function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::
                             hvg_idx::Union{Vector{Int}, Nothing} = nothing)
     println("  loading shard: $(basename(path))")
     shard = load_shard_fn(path)
-    GC.gc()  # free PyCall temporaries on this thread; otherwise finalizers can run in @threads workers without the GIL
+    GC.gc()  # free PyCall temporaries (GIL)
     println("  loaded $(shard.n_cells) cells, building batches...")
     cell_order = shuffle(1:shard.n_cells)
 
@@ -269,12 +232,12 @@ function batches_from_shard(path::String, coding_tokens::Vector{Int}, n_coding::
             end_idx = min(start_idx + batch_size - 1, shard.n_cells)
             ci = cell_order[start_idx:end_idx]
             if modeltype == "etf" && !isnothing(hvg_idx)
-                # ETF-HVG: gene-position paradigm
+                # ETF-HVG
                 expr, ranks = build_batch_etf_hvg(shard.genes_flat, shard.offsets, shard.expr_flat,
                                                    ci, token_to_idx, n_coding, hvg_idx)
                 put!(ch, (expr, ranks))
             elseif modeltype == "etf"
-                # ETF legacy: rank-ordered top_k (kept for backward compat)
+                # ETF legacy
                 ids, vals = build_batch_etf(shard.genes_flat, shard.offsets, shard.expr_flat,
                                             ci, token_to_idx, n_coding, top_k)
                 put!(ch, (ids, vals))
@@ -297,9 +260,8 @@ function sc_mask_input!(X_masked::AbstractMatrix{Int32}, mask_labels::AbstractMa
     fill!(mask_labels, Int32(mask_val))
     n_rows, n_samples = size(X)
     num_masked = ceil(Int, n_rows * mask_ratio)
-    pad = mask_id + Int32(1)   # PAD tail (pad_token_id) is never masked; mask count scales with the cell's real tokens
+    pad = mask_id + Int32(1)  # PAD never masked
     for j in 1:n_samples
-        # mask_pos = sample(1:n_rows, num_masked, replace=false)
         n_valid = count(!=(pad), view(X, :, j))
         mask_pos = n_valid == n_rows ? sample(1:n_rows, num_masked, replace=false) :
             sample(1:n_valid, min(n_valid, ceil(Int, n_valid * mask_ratio)), replace=false)
@@ -329,7 +291,7 @@ function sc_mask_input_exp!(X_masked::AbstractMatrix{Float32}, mask_labels::Abst
 end
 
 
-# ETF-HVG masking: mask expression values, labels = ranks at masked positions
+# ETF-HVG masking, labels = ranks
 function sc_mask_input_exp_rank!(X_masked::AbstractMatrix{Float32}, mask_labels::AbstractMatrix{Int32},
                                  X_expr::AbstractMatrix{Float32}, X_ranks::AbstractMatrix{Int32},
                                  mask_ratio::Float64, mask_val::Int)
@@ -340,7 +302,7 @@ function sc_mask_input_exp_rank!(X_masked::AbstractMatrix{Float32}, mask_labels:
     for j in 1:n_samples
         mask_pos = sample(1:n_rows, num_masked, replace=false)
         for pos in mask_pos
-            mask_labels[pos, j] = X_ranks[pos, j]  # rank as label (not gene ID)
+            mask_labels[pos, j] = X_ranks[pos, j]
             X_masked[pos, j] = -1f0
         end
     end
@@ -354,9 +316,8 @@ function sc_mask_input_erecon!(X_masked::AbstractMatrix{Int32}, expr_labels::Abs
     fill!(expr_labels, mask_val)
     n_rows, n_samples = size(X_ids)
     num_masked = ceil(Int, n_rows * mask_ratio)
-    pad = mask_id + Int32(1)   # PAD tail is never masked
+    pad = mask_id + Int32(1)  # PAD never masked
     for j in 1:n_samples
-        # mask_pos = sample(1:n_rows, num_masked, replace=false)
         n_valid = count(!=(pad), view(X_ids, :, j))
         mask_pos = n_valid == n_rows ? sample(1:n_rows, num_masked, replace=false) :
             sample(1:n_valid, min(n_valid, ceil(Int, n_valid * mask_ratio)), replace=false)
@@ -404,7 +365,7 @@ function sc_masked_loss(model, x_gpu::CuArray{Float32}, y_gpu, n_classes)
 end
 
 
-## async shard pre-loading: build batches from already-loaded shard data
+# async shard pre-loading
 function batches_from_shard_data(shard, coding_tokens::Vector{Int}, n_coding::Int,
                                  top_k::Int, batch_size::Int;
                                  modeltype::String = "rtf",
@@ -433,8 +394,7 @@ function batches_from_shard_data(shard, coding_tokens::Vector{Int}, n_coding::In
 end
 
 
-## GPU rank errors — replaces O(n_classes) CPU loop per masked token
-## processes in chunks to limit GPU memory (19020 × chunk_size × 4 bytes per temp)
+# GPU rank errors, chunked
 function gpu_rank_errors(logits_masked::CuArray{Float32, 2}, y_targets::CuArray;
                          chunk_size::Int = 2000)
     n_classes, n_tokens = size(logits_masked)
@@ -443,30 +403,23 @@ function gpu_rank_errors(logits_masked::CuArray{Float32, 2}, y_targets::CuArray;
     for start in 1:chunk_size:n_tokens
         stop = min(start + chunk_size - 1, n_tokens)
         n_chunk = stop - start + 1
-        chunk_logits = logits_masked[:, start:stop]           # (n_classes, n_chunk) on GPU
-        chunk_targets = y_targets[start:stop]                  # (n_chunk,) on GPU
-        # gather logit at the true class for each masked token via linear indexing
+        chunk_logits = logits_masked[:, start:stop]
+        chunk_targets = y_targets[start:stop]
+        # true-class logit
         offsets_gpu = cu(collect(Int32(0):Int32(n_chunk - 1))) .* nc
         lin_idx = chunk_targets .+ offsets_gpu
-        logits_flat = reshape(chunk_logits, :)                 # flat view, no copy
-        true_vals = logits_flat[lin_idx]                       # (n_chunk,) on GPU
-        # count how many logits exceed the true-class logit per column
-        exceeds = chunk_logits .> reshape(true_vals, 1, :)     # (n_classes, n_chunk) Bool
-        chunk_errs = vec(sum(exceeds, dims=1))                 # (n_chunk,)
+        logits_flat = reshape(chunk_logits, :)
+        true_vals = logits_flat[lin_idx]
+        # count logits above true class
+        exceeds = chunk_logits .> reshape(true_vals, 1, :)
+        chunk_errs = vec(sum(exceeds, dims=1))
         errors[start:stop] = Int.(cpu(chunk_errs))
     end
     return errors
 end
 
 
-"""
-    sc_inverse_ranks_batch(X_rtf_batch, n_coding) -> Matrix{Float32}
-
-Per-batch version of sc_inverse_ranks for streaming rmlp finetuning.
-Converts RTF gene-id tokens to inverse ranks normalized by n_coding.
-X_rtf_batch: (top_k, bs) Int32 matrix where X[rank, sample] = gene_id
-Returns: (n_coding, bs) Float32 matrix where out[gene_id, sample] = rank / n_coding
-"""
+# per-batch inverse ranks / n_coding
 function sc_inverse_ranks_batch(X_rtf_batch::Matrix{Int32}, n_coding::Int)
     inv = zeros(Float32, n_coding, size(X_rtf_batch, 2))
     @inbounds for j in axes(X_rtf_batch, 2)
@@ -481,14 +434,9 @@ function sc_inverse_ranks_batch(X_rtf_batch::Matrix{Int32}, n_coding::Int)
 end
 
 
+# SC pretrain masking, `mc` = run config
 
-## SC pretrain masking. every function takes one run-config NamedTuple `mc` with fields
-##   obj (:mlm | :erecon | :lrecon), use_exp, seq_len, mask_ratio, mask_id, batch_size,
-##   coding_tokens, n_coding, top_k, token_to_idx, hvg_idx, load_shard_fn
-
-# batches of one shard: ETF -> (expr, ranks) at fixed HVG positions; RTF erecon -> (ids, expr); RTF mlm/lrecon -> gene ids.
-# a shard's last batch has n_cells mod batch_size cells; single-cell batches are skipped (lrecon standardizes teacher
-# targets with std over the batch, which is NaN for one cell -> NaN gradient). drops at most 1 cell per shard
+# batches of one shard, skips single-cell batches
 _batch_ncells(b) = b isa Tuple ? size(b[1], 2) : size(b, 2)
 function sc_shard_batches(path::String, mc)
     modeltype = (mc.use_exp || mc.obj == :erecon) ? "etf" : "rtf"
@@ -498,20 +446,17 @@ function sc_shard_batches(path::String, mc)
     return Iterators.filter(b -> _batch_ncells(b) >= 2, batches)
 end
 
-# preallocated (seq_len, batch_size) masking buffers for the run's objective/input
+# preallocated masking buffers
 function sc_mask_buffers(mc)
     n, bs = mc.seq_len, mc.batch_size
     if mc.use_exp
         mc.obj == :mlm && return (x=Matrix{Float32}(undef, n, bs), y=Matrix{Int32}(undef, n, bs))
-        return (x=Matrix{Float32}(undef, n, bs), m=falses(n, bs))   # erecon/lrecon ETF: donor-swap corruption
+        return (x=Matrix{Float32}(undef, n, bs), m=falses(n, bs))
     end
     return (x=Matrix{Int32}(undef, n, bs), y=Matrix{mc.obj == :erecon ? Float32 : Int32}(undef, n, bs))
 end
 
-# mask one batch into `bufs` (returns views; copy before keeping):
-#   mlm:    (x, y)                    y = labels, -100 = unmasked (ETF: rank within HVG set, RTF: gene id)
-#   erecon: (x, y, m, ids_or_ranks)   ETF: y = clean expr, m = corrupted positions; RTF: y = expr at masked (-100 else)
-#   lrecon: (x, clean, m, ids_or_ranks)
+# mask one batch into `bufs` (views)
 function sc_mask!(bufs, batch, mc)
     if mc.use_exp
         expr, ranks = batch
@@ -540,13 +485,13 @@ function sc_mask!(bufs, batch, mc)
     return (x=x, clean=batch, m=(y .!= -100), ids_or_ranks=batch)
 end
 
-# copy every array field once (fields aliasing the same array stay aliased, e.g. RTF lrecon clean === ids_or_ranks)
+# copy array fields
 function _copy_masked(nt)
     seen = IdDict{Any,Any}()
     return map(v -> v isa AbstractArray ? get!(() -> copy(v), seen, v) : v, nt)
 end
 
-# statically masked batches for val/test (same masks every eval)
+# static val/test masks
 function sc_masked_cache(shard_paths, mc)
     cache = NamedTuple[]
     for sp in shard_paths, batch in sc_shard_batches(sp, mc)

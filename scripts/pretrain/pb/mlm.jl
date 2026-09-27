@@ -11,7 +11,7 @@ using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
 args = load_pretrain_args()
 config = load_config(args["config"], args;
                      hp_section=["pretrain", "mlm", args["modeltype"]])
-resolve_data_path!(config)   # data_path from local.toml is the tahoe file; pick the file for data_format (was: LINCS loaded tahoe)
+resolve_data_path!(config)
 
 CUDA.device!(0)
 gpu_info = CUDA.name(device())
@@ -27,7 +27,7 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data.expr
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = reduce(hcat, data.expr)
     meta_df = data
 end
@@ -50,7 +50,7 @@ else
     println("RTF: using full gene vocab ($(size(data_expr, 1)) genes), top_k truncation")
 end
 
-# train-split medians from file (scripts/pretrain/pb/compute_medians.jl), HVG subset for etf
+# train-split medians
 gene_medians = gene_medians_for(config, data_expr; hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 X_ranks = rank_genes(data_expr, gene_medians)
 
@@ -59,7 +59,7 @@ n_classes = n_genes
 MASK_ID = n_genes + 1
 top_k = get(config, "top_k", 1024)
 
-# truncate before the split so tvsplit doesn't copy the full 19k-row rank matrix (split only depends on n samples)
+# truncate before split
 if use_exp
     inv_ranks = inverse_ranks(X_ranks)
 elseif top_k < n_genes
@@ -67,7 +67,7 @@ elseif top_k < n_genes
     println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
 end
 
-# seeded so every PB pretrain objective/modeltype shares one split; reseed after so masks stay random per run
+# seeded split, reseed after
 Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
 Random.seed!()
@@ -209,7 +209,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     push!(train_losses, mean(epoch_losses))
     push!(train_loss_maxes, maximum(epoch_losses))
 
-    # val eval (every epoch for checkpt + sweep selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
 
@@ -222,7 +222,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # save best before the last-epoch reload so a best final epoch isn't overwritten by the older checkpoint
+    # save best before reload
     if val_losses[end] < best_val_loss
         global best_val_loss = val_losses[end]
         global best_epoch = epoch
@@ -234,7 +234,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     # test eval (final epoch only)
     is_last = is_last || done
 
-    # reload best checkpoint for test eval
+    # reload best
     if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
         best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]
         model_cpu = cpu(model)
@@ -265,12 +265,12 @@ for epoch in ProgressBar(1:n_total_epochs)
                 append!(epoch_preds, Flux.onecold(logits_cpu))
                 append!(epoch_trues, y_targets_cpu)
 
-                # single pass in the same column-major order as the loss mask: err computed once per masked token
+                # single pass in loss mask order
                 y_labels_cpu = cpu(y_batch)
                 masked_idx = 0
                 for j in 1:size(y_labels_cpu, 2)
-                    for pos in 1:size(y_labels_cpu, 1)  # ETF: pos = gene position; RTF: pos = rank position (top_k rows)
-                        r = y_labels_cpu[pos, j]        # ETF: r = rank; RTF: r = gene_id
+                    for pos in 1:size(y_labels_cpu, 1)
+                        r = y_labels_cpu[pos, j]
                         (r == -100 || r <= 0 || r > n_classes) && continue
                         masked_idx += 1
                         col = @view logits_cpu[:, masked_idx]
@@ -304,7 +304,6 @@ for epoch in ProgressBar(1:n_total_epochs)
         wb.log(log_dict)
     end
 
-    # moved above the reload
 
     if is_last
         append!(all_preds, epoch_preds)
@@ -315,7 +314,7 @@ end
 # log
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, "logit-ce";
          val_losses=val_losses)
-# RTF trues/preds are gene ids (file order) -> correlations meaningless and histogram is n_genes^2
+# RTF: skip correlations/histogram
 cs, cp = use_exp ? plot_ranked_heatmap(all_trues, all_preds, save_dir) : (nothing, nothing)
 plot_per_gene_error(gene_error_sums, gene_error_counts, n_genes, save_dir,
                     "mean rank error", "per_gene_error";

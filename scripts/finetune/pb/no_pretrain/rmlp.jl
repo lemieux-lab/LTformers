@@ -41,12 +41,12 @@ data = load(config["data_path"])[data_key]
 if fmt == "lincs"
     data_expr = data isa Matrix{Float32} ? data : Float32.(data.expr)
     meta_df = data.inst
-else  # tahoe
+else
     data_expr = Float32.(reduce(hcat, data.expr))
     meta_df = data
 end
 
-# mlp_rtf: no HVG, uses inverse ranks of all genes
+# no HVG, rank features
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -56,19 +56,17 @@ d = dsplit(data_expr, config;
            ttsplit_fn=ttsplit, tvsplit_fn=tvsplit, rank_genes_fn=rank_genes,
            inverse_ranks_fn=inverse_ranks)
 
-# # rank_top_k: give rlog/rmlp the same info as rtf (only each sample's top-k genes by rank)
 rank_k = rank_feature_k(config, d.n_genes)
-# model_tag = rank_k < d.n_genes || d.n_genes <= get(config, "top_k", 1024) ? config["modeltype"] : "$(config["modeltype"])_full"
-model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")   # _topk<k> for non-default k (no folder collisions)
-rank_enc = get(config, "rank_encoding", "rev")   # non-default encodings get their own folder (e.g. rlog_logrank/)
+model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")
+rank_enc = get(config, "rank_encoding", "rev")
 rank_enc == "rev" || (model_tag *= "_$(rank_enc)")
 println("rank features: k=$rank_k of $(d.n_genes) genes → saving as $model_tag")
 
-# identity baseline for lvl3
-id_baseline = is_regression ? d.id_baseline : nothing  # computed in dsplit on raw expression
+# lvl3 identity baseline
+id_baseline = is_regression ? d.id_baseline : nothing
 
 # model
-# nonlinear MLP: tapered layers with relu + dropout
+# tapered relu MLP
 sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
          for i in 0:config["n_layers"]+1]
 layers = []
@@ -89,7 +87,6 @@ mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, "PB-FT-Aug", "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wandb = init_wandb(config, wandb_project(config, "npt-FT"), "$(model_tag)_nopt_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -113,7 +110,7 @@ else
     config["n_epochs"]
 end
 
-# test-set eval for model `m` (used for the final model at the last epoch and for the reloaded best model)
+# test eval for model m
 function run_test(m)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -173,7 +170,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val eval (every epoch for checkpt selection)
+    # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     n_val = size(d.X_val, 2)
@@ -190,7 +187,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     end
     push!(val_losses, mean(val_eval_losses))
 
-    # test eval (final epoch only)
+    # test eval (final epoch)
     is_last = is_last || done
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
@@ -233,9 +230,8 @@ for epoch in ProgressBar(1:n_total_epochs)
 end
 
 
-# best-model test eval: reload the best-val checkpoint (best/) and re-run the test set
-# all_preds / all_trues above come from the final model
-opt = nothing; GC.gc(true); CUDA.reclaim()   # free optimizer state before loading a second model copy
+# best-model test eval
+opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_cpu = load_best_cpu(model, save_dir)
 best_preds, best_trues = if isnothing(best_cpu)
     println("no best/ checkpoint found, best metrics = final model")

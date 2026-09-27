@@ -1,6 +1,4 @@
-# SC expression-reconstruction pretraining (Tahoe single-cell shards, streamed)
-#   RTF: top-k gene ids by rank, masked ids -> regress the masked genes' expression
-#   ETF: expression at the 1024 HVGs in fixed gene order, donor-swap corruption -> regress the clean values
+# SC erecon pretraining
 
 using Pkg
 arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
@@ -60,13 +58,13 @@ println("save dir: $save_dir")
 wandb = init_wandb(config, wandb_project(config, "PT"; sc=true), "erecon_$(config["modeltype"])_$(timestamp)")
 wb = config["wandb_mode"] != "disabled" ? wandb : nothing
 
-# schedule: batches/epoch estimated from one shard, per-step warmup + cosine lr
+# lr schedule
 n_cells_per_shard = load_shard_pyarrow(train_shards[1]).n_cells
 sched = step_schedule(n_cells_per_shard, length(train_shards), config["batch_size"], config["max_steps"], config["n_epochs"])
 println("  $(n_cells_per_shard) cells/shard -> $(sched.bpe) batches/epoch, $(sched.n_epochs) epochs, " *
         "$(sched.total_steps) steps (warmup $(sched.warmup_steps))")
 use_max_steps = config["max_steps"] > 0
-max_pred_batches = 5 * cld(n_cells_per_shard, config["batch_size"])   # cap predstrues at ~5 shards
+max_pred_batches = 5 * cld(n_cells_per_shard, config["batch_size"])
 
 n_val_shards = get(config, "n_val_shards", 0) > 0 ? config["n_val_shards"] : config["n_eval_shards"]
 val_cache = sc_masked_cache(val_shards[1:min(n_val_shards, length(val_shards))], mc)
@@ -104,7 +102,7 @@ for epoch in ProgressBar(1:n_periods)
         Optimisers.adjust!(opt, lr)
         b = sc_mask!(mask_bufs, batch, mc)
         x_gpu, y_gpu = CuArray(b.x), CuArray(b.y)
-        m_gpu = use_exp ? CuArray(Float32.(b.m)) : nothing   # ETF: corrupted positions; RTF: -100 sentinel in y
+        m_gpu = use_exp ? CuArray(Float32.(b.m)) : nothing
         l_val, grads = Flux.withgradient(model) do m
             (use_exp ? masked_erecon_loss(m, x_gpu, y_gpu, m_gpu) : masked_erecon_loss(m, x_gpu, y_gpu))[1]
         end
@@ -120,7 +118,7 @@ for epoch in ProgressBar(1:n_periods)
     end
     push!(train_losses, mean(epoch_losses))
 
-    # val (every epoch, checkpoint selection)
+    # val
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for c in val_cache
@@ -136,7 +134,7 @@ for epoch in ProgressBar(1:n_periods)
         save_best(model, save_dir, config)
     end
 
-    # test (final epoch, on the best checkpoint)
+    # test
     is_last = (epoch == n_periods) || done
     if is_last
         best_cpu = load_best_cpu(model, save_dir)
@@ -198,7 +196,7 @@ end
 
 log_model(model, save_dir, config)
 use_exp && jldsave(joinpath(save_dir, "hvg_indices.jld2"); hvg_idx=hvg_idx)
-jldsave(joinpath(save_dir, "shard_split.jld2");   # reused by SC finetuning
+jldsave(joinpath(save_dir, "shard_split.jld2");
         train_shards=train_shards, val_shards=val_shards, test_shards=test_shards)
 log_info(; save_dir=save_dir, train_indices=Int[], val_indices=Int[], test_indices=Int[],
            n_epochs=length(train_losses), train_losses=train_losses,

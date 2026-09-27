@@ -39,14 +39,8 @@ function RankClassifier(; n_genes::Int, embed_dim::Int, n_layers::Int,
 end
 
 function (m::RankClassifier)(x)
-    # embedded = m.embedding(x)
-    # pos_ids = cu(Int32.(1:size(embedded, 2)))
-    # encoded = embedded .+ m.pos_emb(pos_ids)
-    # dropped = m.emb_dropout(encoded)
-    # transformed = m.transformer(dropped)
-    # pooled = dropdims(mean(transformed, dims=2), dims=2)
-    transformed, keep = encode_rank(m, x)          # PAD-aware attention (SC cells with < top_k detected genes)
-    pooled = masked_mean_pool(transformed, keep)   # mean over real tokens only
+    transformed, keep = encode_rank(m, x)
+    pooled = masked_mean_pool(transformed, keep)
     return m.head(pooled)
 end
 
@@ -139,9 +133,7 @@ function RankFTModel(pt_model::RankEReconModel;
 end
 
 function (m::RankFTModel)(x)
-    # transformed = encode(m.pretrained, x)
-    # pooled = dropdims(mean(transformed, dims=2), dims=2)
-    transformed, keep = encode_rank(m.pretrained, x)   # PAD-aware
+    transformed, keep = encode_rank(m.pretrained, x)
     pooled = masked_mean_pool(transformed, keep)
     return m.head(pooled)
 end
@@ -215,11 +207,10 @@ function _clean_state(state, model)
     return NamedTuple(k => v for (k, v) in pairs(state) if k in model_keys)
 end
 
-# load architecture config saved alongside pretrained weights
-# tries model_config.jld2 first, falls back to parsing params.txt from parent dir
+# load pretrained arch config
 function _load_arch_config(model_dir::String, config::Dict)
     arch_keys = ["embed_dim", "hidden_dim", "n_heads", "n_layers", "drop_prob"]
-    # try saved JLD2 arch config
+    # saved jld2 config
     cfg_path = joinpath(model_dir, "model_config.jld2")
     if isfile(cfg_path)
         saved = load(cfg_path)["arch_config"]
@@ -231,7 +222,7 @@ function _load_arch_config(model_dir::String, config::Dict)
         end
         return merged
     end
-    # fallback: parse params.txt from parent dir (existing pretrained checkpoints)
+    # fallback: parent params.txt
     params_path = joinpath(dirname(model_dir), "params.txt")
     if isfile(params_path)
         merged = copy(config)
@@ -269,7 +260,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         return ft_model, Float32.(X_train), Float32.(X_test)
     end
 
-    # load arch config from pretrained checkpoint (handles n_layers/dim mismatches)
+    # load pretrained arch config
     ac = _load_arch_config(config["model_dir"], config)
     state = load("$(config["model_dir"])/model_state.jld2")["model_state"]
 
@@ -340,7 +331,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         test_input = get_embeds(pt_model, X_test, config["batch_size"])
     end
 
-    # extract val embeddings if X_val provided
+    # val embeddings
     if X_val !== nothing
         if config["modeltype"] == "etf"
             val_input = get_embeds_exp(pt_model, X_val, config["batch_size"])
@@ -365,7 +356,7 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
 end
 
 function build_e2em(config::Dict, n_classifications; n_genes::Int, seq_len::Int=n_genes)
-    # load arch config from pretrained checkpoint (handles n_layers/dim mismatches)
+    # load pretrained arch config
     ac = _load_arch_config(config["model_dir"], config)
     state = load("$(config["model_dir"])/model_state.jld2")["model_state"]
 
