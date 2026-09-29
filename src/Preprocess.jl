@@ -106,51 +106,25 @@ function rank_feature_k(config::Dict, n_genes::Integer)
     return (k == 0 || k > n_genes) ? n_genes : k
 end
 
-# rank baseline features, absent = 0
-# :rev (default) (k+1-r)/k
-# :rk r/k, absent (k+1)/k
-function rank_features!(out::AbstractVector{Float32}, ids::AbstractVector{<:Integer}, n_det::Integer, top_k::Integer;
-                        encoding::Symbol = :rev)
+# rank baseline features: (k+1-r)/k for the top-k detected genes (top gene = 1), absent/undetected = 0
+# (k = all genes -> (d+1-r)/k, d = n detected)
+function rank_features!(out::AbstractVector{Float32}, ids::AbstractVector{<:Integer}, n_det::Integer, top_k::Integer)
     n = length(out)
     k = min(top_k, n)
     m = min(k, n_det, length(ids))
     denom = Float32(k)
     top_r = k == n ? n_det + 1 : k + 1
-    if encoding == :rev
-        fill!(out, 0f0)
-        @inbounds for r in 1:m
-            out[ids[r]] = Float32(top_r - r) / denom
-        end
-    elseif encoding == :logrank  # 1 - log(r)/log(top_r)
-        fill!(out, 0f0)
-        lt = log(Float32(top_r))
-        @inbounds for r in 1:m
-            out[ids[r]] = 1f0 - log(Float32(r)) / lt
-        end
-    elseif encoding == :binary  # 1 for present genes
-        fill!(out, 0f0)
-        @inbounds for r in 1:m
-            out[ids[r]] = 1f0
-        end
-    elseif encoding == :recip  # 1/r
-        fill!(out, 0f0)
-        @inbounds for r in 1:m
-            out[ids[r]] = 1f0 / Float32(r)
-        end
-    else
-        fill!(out, Float32(top_r) / denom)
-        @inbounds for r in 1:m
-            out[ids[r]] = Float32(r) / denom
-        end
+    fill!(out, 0f0)
+    @inbounds for r in 1:m
+        out[ids[r]] = Float32(top_r - r) / denom
     end
     return out
 end
 
-function rank_features(X_ranked::AbstractMatrix{<:Integer}, n_det::AbstractVector{<:Integer}, n_genes::Integer, top_k::Integer;
-                       encoding::Symbol = :rev)
+function rank_features(X_ranked::AbstractMatrix{<:Integer}, n_det::AbstractVector{<:Integer}, n_genes::Integer, top_k::Integer)
     F = Matrix{Float32}(undef, n_genes, size(X_ranked, 2))
     for j in axes(X_ranked, 2)
-        rank_features!(view(F, :, j), view(X_ranked, :, j), n_det[j], top_k; encoding=encoding)
+        rank_features!(view(F, :, j), view(X_ranked, :, j), n_det[j], top_k)
     end
     return F
 end

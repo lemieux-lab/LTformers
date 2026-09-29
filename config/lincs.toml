@@ -1,4 +1,4 @@
-# LINCS swept hyperparameters per config
+# LINCS swept hyperparameters per config (except mask_ratio is constant per task)
 
 # ──────────────────────────────────────────────
 # pretrain
@@ -7,33 +7,39 @@
 [pretrain.mlm.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 
 [pretrain.mlm.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 
 [pretrain.erecon.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.3 
 
 [pretrain.erecon.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 ema_decay = 0.0
 
 [pretrain.lrecon.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 ema_decay = 0.0
 
 # ──────────────────────────────────────────────
@@ -161,14 +167,23 @@ drop_prob = 0.0
 # n_layers = 0
 
 [finetune.no_pretrain.rmlp.lvl1]
-lr = 0.000001
-drop_prob = 0.015
+# 978 genes, tapered (mlp_hidden_dim 0), 10k steps: sweep bddu4rvg best (rmlp_nopt_lincs_lvl1_2026-09-27_14-35_j8103590), acc 0.9931
+# lr = 0.000001
+# drop_prob = 0.015
+# n_layers = 2
+lr = 0.00028059
+drop_prob = 0.2548
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
-lr = 0.000001
-drop_prob = 0.03
-n_layers = 6
+# 978 genes, constant width, 10k steps, picked by best_val_acc: sweep lpm1bnse best of 21/25 runs (rmlp_nopt_lincs_lvl2_2026-09-28_15-09_j8104526), val 0.659 test 0.659 (h=8192 = top of sweep range)
+# lr = 0.000001
+# drop_prob = 0.03
+# n_layers = 6
+lr = 0.000052374
+drop_prob = 0.0500
+n_layers = 5
+mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.rmlp.lvl3]
 lr = 0.0
@@ -176,14 +191,23 @@ drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
-lr = 0.00005
-drop_prob = 0.014
+# 978 genes, tapered (mlp_hidden_dim 0), 10k steps: sweep zhkn9kmk best (emlp_nopt_lincs_lvl1_2026-09-27_14-24_j8103589), acc 0.9888
+# lr = 0.00005
+# drop_prob = 0.014
+# n_layers = 2
+lr = 0.000047367
+drop_prob = 0.08279
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
-lr = 0.00011
-drop_prob = 0.014
-n_layers = 6
+# 978 genes, constant width, 10k steps, picked by best_val_acc: sweep ghzr2bsn best (emlp_zc_nopt_lincs_lvl2_2026-09-28_14-28_j8104525), val 0.663 test 0.667 (h=8192 = top of sweep range)
+# lr = 0.00011
+# drop_prob = 0.014
+# n_layers = 6
+lr = 0.00013427
+drop_prob = 0.2308
+n_layers = 2
+mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.emlp.lvl3]
 lr = 0.0

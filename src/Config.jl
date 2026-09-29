@@ -60,6 +60,8 @@ function _merge_hp!(config::Dict, hp_section::Vector{String},
         if !isnothing(args) && !isnothing(get(args, k, nothing))
             continue
         end
+        # skip gene-set subtables (e.g. [...lvl1.full]); merged separately by the scripts
+        v isa AbstractDict && continue
         # skip placeholder zeros
         if v isa Number && v == 0
             continue

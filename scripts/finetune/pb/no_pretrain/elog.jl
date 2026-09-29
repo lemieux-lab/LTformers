@@ -61,6 +61,7 @@ if n_hvg > 0 && n_hvg < n_genes_all
 end
 n_used = (n_hvg > 0 && n_hvg < n_genes_all) ? n_hvg : n_genes_all
 model_tag = gene_set_tag(config["modeltype"], n_used, n_genes_all; kind="hvg")
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= "_gdd")  # (drug, dose) group split
 println("gene set: $n_used of $n_genes_all genes → saving as $model_tag")
 
 d = dsplit(data_expr, config;
@@ -73,6 +74,29 @@ d = dsplit(data_expr, config;
 
 # lvl3 identity baseline
 id_baseline = is_regression ? d.id_baseline : nothing
+
+# per-gene z-score with train-split mean/sd, then clamp to [-clip, clip] (Scanpy/Seurat: 10). default on;
+# --standardize 0 = raw inputs, --clip 0 = no clipping. raw log-expression is badly conditioned (uncentered offsets,
+# per-gene sd spread up to ~3500x): elog/emlp +10-15 pts on LINCS and TPB HVG with it
+if something(get(config, "standardize", nothing), 1) == 1
+    μ = mean(d.X_train, dims=2)
+    σ = std(d.X_train, dims=2)
+    σ[σ .< 1f-6] .= 1f0                      # constant genes -> centered only
+    clip_c = Float32(something(get(config, "clip", nothing), 10))
+    z(X) = (X .- μ) ./ σ
+    Z_train = z(d.X_train)
+    if clip_c > 0
+        println("clip ±$clip_c: $(round(100 * mean(abs.(Z_train) .> clip_c), digits=4))% of train values clipped")
+        zc(X) = clamp.(z(X), -clip_c, clip_c)
+        d = merge(d, (; X_train=clamp.(Z_train, -clip_c, clip_c), X_val=zc(d.X_val), X_test=zc(d.X_test)))
+        model_tag *= "_zc"
+    else
+        d = merge(d, (; X_train=Z_train, X_val=z(d.X_val), X_test=z(d.X_test)))
+        model_tag *= "_z"
+    end
+    Z_train = nothing
+    println("standardized inputs with train mean/sd → saving as $model_tag")
+end
 
 # model
 # linear layer: logreg (lvl1/2) / linreg (lvl3)
@@ -103,6 +127,8 @@ ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
 best_val_loss = Inf32
+best_val_acc = -Inf  # classification: best/ = highest val accuracy (val loss bottoms out early under held-out wells)
+val_accs = Float64[]
 best_epoch = 0
 n_total_epochs = if use_max_steps
     bpe = div(size(d.X_train, 2), config["batch_size"])
@@ -174,6 +200,7 @@ for epoch in ProgressBar(1:n_total_epochs)
     # val eval
     Flux.testmode!(model)
     val_eval_losses = Float32[]
+    val_correct = 0; val_n = 0
     n_val = size(d.X_val, 2)
     for s in 1:config["batch_size"]:n_val
         e = min(s + config["batch_size"] - 1, n_val)
@@ -184,6 +211,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             push!(val_eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
         else
             push!(val_eval_losses, Float32(cpu(Flux.logitcrossentropy(logits, y_gpu))))
+            val_correct += sum(Flux.onecold(cpu(logits)) .== Flux.onecold(cpu(y_gpu))); val_n += size(y_gpu, 2)
         end
     end
     push!(val_losses, mean(val_eval_losses))
@@ -200,8 +228,13 @@ for epoch in ProgressBar(1:n_total_epochs)
         append!(all_trues, epoch_trues)
     end
 
-    if val_losses[end] < best_val_loss
+    push!(val_accs, is_regression ? NaN : val_correct / max(val_n, 1))
+    # regression: lowest val loss; classification: highest val accuracy, ties -> lower val loss
+    improved = is_regression ? val_losses[end] < best_val_loss :
+               (val_accs[end] > best_val_acc || (val_accs[end] == best_val_acc && val_losses[end] < best_val_loss))
+    if improved
         global best_val_loss = val_losses[end]
+        global best_val_acc = val_accs[end]
         global best_epoch = epoch
         best_dir = joinpath(save_dir, "best")
         mkpath(best_dir)
@@ -212,17 +245,17 @@ for epoch in ProgressBar(1:n_total_epochs)
         if is_regression
             log_params(config, gpu_info, 0, 0, best_dir;
                 skip=mlp_skip,
-                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
+                total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
         else
             log_params(config, gpu_info, 0, 0, best_dir;
                 skip=mlp_skip, total_steps=global_step,
-                best_epoch=best_epoch, best_val_loss=best_val_loss)
+                best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
         end
     end
 
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                         "val_loss" => val_losses[end], "global_step" => global_step)
+                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
         end
@@ -286,10 +319,10 @@ if is_regression
                id_r2=isnothing(id_baseline) ? NaN : id_baseline.r2,
                id_pearson=isnothing(id_baseline) ? NaN : id_baseline.pearson,
                id_rmse=isnothing(id_baseline) ? NaN : id_baseline.rmse,
-               total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss)
+               total_steps=global_step, best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=mlp_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
-               best_epoch=best_epoch, best_val_loss=best_val_loss)
+               best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end

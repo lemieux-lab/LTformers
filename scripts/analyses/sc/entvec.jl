@@ -169,7 +169,12 @@ end
 
 sc_ent_dir = "results/tahoe/sc/data/entropies"
 mkpath(sc_ent_dir)
-jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies)
+# normalized entropy: H / log2(min(cells with a detected gene at rank r, genes)); removes the drop at deep ranks that
+# comes only from fewer cells detecting that many genes. undefined (NaN) for < 2 cells
+sc_n_at_rank = [sum(values(rank_counts[r]); init=0) for r in 1:max_populated_rank]
+sc_norm_entropies = [sc_n_at_rank[r] < 2 ? NaN : sc_entropies[r] / log2(min(sc_n_at_rank[r], n_coding)) for r in 1:max_populated_rank]
+# jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies)
+jldsave("$sc_ent_dir/ranked_sc_entropies.jld2"; entropies=sc_entropies, norm_entropies=sc_norm_entropies, n_at_rank=sc_n_at_rank)
 println("Saved SC entropies to $sc_ent_dir/ranked_sc_entropies.jld2 ($(length(sc_entropies)) ranks)")
 
 # sparsity per rank
@@ -193,6 +198,19 @@ begin
     display(fig_sc_ent)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy.png", fig_sc_ent)
+
+# normalized entropy per rank (separate plot)
+begin
+    fig_sc_norm = Figure(size=(600, 500))
+    ax_sc_norm = Axis(fig_sc_norm[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Normalized Shannon entropy (H / log2(n cells))",
+        xtickformat=values -> [string(Int(round(v))) for v in values])
+    scatter!(ax_sc_norm, 1:max_populated_rank, sc_norm_entropies, alpha=0.5, color=:black)
+    ylims!(ax_sc_norm, 0, 1.05)
+    display(fig_sc_norm)
+end
+save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_normalized.png", fig_sc_norm)
 
 # entropy + sparsity overlay
 

@@ -163,6 +163,12 @@ function load_finetune_args()
         "--n_layers"
             help = "number of transformer layers"
             arg_type = Int
+        "--mlp_hidden_dim"
+            help = "emlp/rmlp: constant hidden width (n_layers hidden layers); 0 = tapered n_genes -> n_classes"
+            arg_type = Int
+        "--mlp_shape"
+            help = "emlp/rmlp with mlp_hidden_dim > 0: const (all hidden = mlp_hidden_dim) or funnel (halve each layer)"
+            arg_type = String
         "--max_ft_steps"
             help = "max finetune steps (0 = use n_epochs)"
             arg_type = Int
@@ -201,6 +207,18 @@ function load_finetune_args()
             arg_type = Int
         "--rank_top_k"
             help = "rlog/rmlp only: keep each sample's top-k ranks, tie the rest at the bottom (0 = off; matches rtf input info)"
+            arg_type = Int
+        "--save_model"
+            help = "PB emlp/rmlp: 1 = write model_state.jld2 (best + final), 0 = skip (sweeps)"
+            arg_type = Int
+        "--standardize"
+            help = "PB elog/emlp: per-gene z-score inputs with train-split mean/sd (default 1; 0 = raw)"
+            arg_type = Int
+        "--clip"
+            help = "PB elog/emlp: clamp z-scores to [-c, c] (default 10; 0 = off). tag _zc (clipped) / _z"
+            arg_type = Float64
+        "--group_split"
+            help = "tahoe PB: 1 = split by (drug, dose) groups instead of random pseudobulks (replicate wells kept together; saves as <model_tag>_gs)"
             arg_type = Int
     end
     return parse_args(s)
@@ -261,6 +279,12 @@ function load_sc_finetune_args()
         "--n_layers"
             help = "number of transformer layers"
             arg_type = Int
+        "--mlp_hidden_dim"
+            help = "emlp/rmlp: constant hidden width (n_layers hidden layers); 0 = tapered n_genes -> n_classes"
+            arg_type = Int
+        "--mlp_shape"
+            help = "emlp/rmlp with mlp_hidden_dim > 0: const (all hidden = mlp_hidden_dim) or funnel (halve each layer)"
+            arg_type = String
         "--max_ft_steps"
             help = "max finetune steps (0 = use n_epochs)"
             arg_type = Int
@@ -271,8 +295,26 @@ function load_sc_finetune_args()
             help = "random seed for reproducibility"
             arg_type = Int
         "--ft_eval_shards"
-            help = "SC finetune: number of val/test shards to evaluate (0 = all); separate from pretrain n_eval_shards (default.toml = 10)"
+            help = "SC finetune: val shards per step eval (fixed seeded subset; default 100, 0 = all); separate from pretrain n_eval_shards"
             arg_type = Int
+        "--ft_test_shards"
+            help = "SC finetune: test shards (default 0 = all)"
+            arg_type = Int
+        "--ft_eval_every"
+            help = "SC finetune: val eval every N steps (default 4000; 0 = only at the end / epoch ends)"
+            arg_type = Int
+        "--group_shards"
+            help = "SC finetune: shards pooled + shuffled together per train-batch group (default 64)"
+            arg_type = Int
+        "--standardize"
+            help = "SC elog/emlp: z-score features with train mean/sd from 100 train shards (default 1; 0 = raw)"
+            arg_type = Int
+        "--clip"
+            help = "SC elog/emlp: clamp z-scores to [-c, c] (default 10; 0 = off). tag _zc (clipped) / _z"
+            arg_type = Float64
+        "--sc_split"
+            help = "SC finetune split unit: drug_dose (default; all wells of a drug-dose together), well (_well), or well_cl ((well, cell line) units = random PB split; _wcl)"
+            arg_type = String
         # sc args
         "--data_dir"
             help = "path to Tahoe-100M parquet shard directory"

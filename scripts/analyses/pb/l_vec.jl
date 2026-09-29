@@ -75,6 +75,13 @@ for k in 1:n_pairs
                                                 Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
 end
 
+# spearman distance (1 - rho) / 2 on x / median (tied ranks averaged)
+rank_spearman = Vector{Float32}(undef, n_pairs)
+for k in 1:n_pairs
+    rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                  Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
+
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
 
@@ -92,6 +99,7 @@ begin
     Colorbar(fig[1, 2], hb, label="count (log10)")
     display(fig)
 end
+save("$fig_vec_euclid_dir/euclid_kendall_$(n_pairs_str)_noself.png", fig)
 
 begin
     fig = Figure(size=(600, 400))
@@ -106,6 +114,7 @@ begin
     Colorbar(fig[1, 2], hb, label="count (log10)")
     display(fig)
 end
+save("$fig_vec_cosine_dir/cosine_kendall_$(n_pairs_str)_noself.png", fig)
 
 
 # LINCS upper blob diagnosis
@@ -167,9 +176,25 @@ println("pairs before: $n_pairs, after: $(sum(clean_mask))")
 clean_cosine = expr_cosine[clean_mask]
 clean_kendall = rank_kendall[clean_mask]
 clean_euclid = expr_euclid[clean_mask]
+clean_spearman = rank_spearman[clean_mask]
 
-jldsave("$data_vec_euclid_dir/euc_ken_cleaned_$(n_pairs_str)_noself.jld2"; euclid=clean_euclid, kendall=clean_kendall)
-jldsave("$data_vec_cosine_dir/cos_ken_cleaned_$(n_pairs_str)_noself.jld2"; cosine=clean_cosine, kendall=clean_kendall)
+# jldsave("$data_vec_euclid_dir/euc_ken_cleaned_$(n_pairs_str)_noself.jld2"; euclid=clean_euclid, kendall=clean_kendall)
+# jldsave("$data_vec_cosine_dir/cos_ken_cleaned_$(n_pairs_str)_noself.jld2"; cosine=clean_cosine, kendall=clean_kendall)
+jldsave("$data_vec_euclid_dir/euc_ken_cleaned_$(n_pairs_str)_noself.jld2"; euclid=clean_euclid, kendall=clean_kendall, spearman=clean_spearman)
+jldsave("$data_vec_cosine_dir/cos_ken_cleaned_$(n_pairs_str)_noself.jld2"; cosine=clean_cosine, kendall=clean_kendall, spearman=clean_spearman)
+
+# spearman versions of the kendall hexbins (raw and cleaned)
+for (sfx, cosv, eucv, spev) in (("", expr_cosine, expr_euclid, rank_spearman), ("_cleaned", clean_cosine, clean_euclid, clean_spearman))
+    for (ename, ev, d) in (("cosine", cosv, fig_vec_cosine_dir), ("euclid", eucv, fig_vec_euclid_dir))
+        local fig = Figure(size=(600, 450))
+        local ax = Axis(fig[1, 1], xlabel="Spearman distance", ylabel=(ename == "cosine" ? "Cosine distance" : "Euclidean distance"))
+        local rx = (maximum(spev) - minimum(spev) + 1f-6) / 100; local ry = (maximum(ev) - minimum(ev) + 1f-6) / 100
+        local hb = hexbin!(ax, Float64.(spev), Float64.(ev), cellsize=(rx, ry), colorscale=log10)
+        Colorbar(fig[1, 2], hb, label="Count (log10)")
+        save("$d/$(ename)_spearman$(sfx)_$(n_pairs_str)_noself.png", fig)
+    end
+end
+println("spearman(cosine, kendall) = $(round(corspearman(Float64.(clean_cosine), Float64.(clean_kendall)), digits=3)), spearman(cosine, spearman) = $(round(corspearman(Float64.(clean_cosine), Float64.(clean_spearman)), digits=3)) (cleaned)")
 
 begin
     fig = Figure(size=(600, 500))
@@ -194,6 +219,7 @@ begin
     Colorbar(fig[1, 2], hb, label="Count (log10)")
     display(fig)
 end
+save("$fig_vec_cosine_dir/cosine_kendall_cleaned_$(n_pairs_str)_noself.png", fig)
 
 
 # confounder histograms (cleaned data)

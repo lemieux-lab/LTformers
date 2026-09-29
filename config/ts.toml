@@ -1,4 +1,4 @@
-# Tahoe Single-Cell swept hyperparameters per config
+# Tahoe Single-Cell swept hyperparameters per config (except mask_ratio is constant per task)
 
 # ──────────────────────────────────────────────
 # pretrain
@@ -7,33 +7,39 @@
 [pretrain.mlm.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 
 [pretrain.mlm.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 
 [pretrain.erecon.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.3 
 
 [pretrain.erecon.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 ema_decay = 0.0
 
 [pretrain.lrecon.etf]
 lr = 0.0
 drop_prob = 0.0
-mask_ratio = 0.0
+# mask_ratio = 0.0
+mask_ratio = 0.15 
 ema_decay = 0.0
 
 # ──────────────────────────────────────────────
@@ -163,7 +169,8 @@ drop_prob = 0.0
 [finetune.no_pretrain.rmlp.lvl1]
 lr = 0.0
 drop_prob = 0.0
-n_layers = 0
+# n_layers = 0
+n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
 lr = 0.0
@@ -178,7 +185,8 @@ n_layers = 0
 [finetune.no_pretrain.emlp.lvl1]
 lr = 0.0
 drop_prob = 0.0
-n_layers = 0
+# n_layers = 0
+n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
 lr = 0.0

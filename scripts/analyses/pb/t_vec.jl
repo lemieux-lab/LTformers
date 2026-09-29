@@ -73,11 +73,98 @@ for k in 1:n_pairs
                                                 Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
 end
 
+# spearman distance (1 - rho) / 2 on x / median; corspearman averages tied ranks, so undetected genes tie
+rank_spearman = Vector{Float32}(undef, n_pairs)
+for k in 1:n_pairs
+    rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                  Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
+
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
 # cosine/kendall pairs for sep24figs.jl + comparison.jl
+# jldsave("$data_vec_dir/cos_ken_$(n_pairs_str)_noself.jld2"; cosine=expr_cosine, kendall=rank_kendall,
+#         euclidean=expr_euclid, idx_a=idx_a, idx_b=idx_b)
 jldsave("$data_vec_dir/cos_ken_$(n_pairs_str)_noself.jld2"; cosine=expr_cosine, kendall=rank_kendall,
-        euclidean=expr_euclid, idx_a=idx_a, idx_b=idx_b)
+        spearman=rank_spearman, euclidean=expr_euclid, idx_a=idx_a, idx_b=idx_b)
+
+
+# distances on 1024-gene sets (what the models see), same pairs
+#   top1024: each sample's own top-1024 genes (RTF / rlog input). cosine/euclidean on expression with genes outside
+#            the sample's top-k set to 0; kendall/spearman on the two top-k lists (Fagin 2003: genes outside a list
+#            tie just below it, i.e. score = k+1-position, absent 0; undetected genes are never listed)
+#   hvg1024: the 1024 most variable genes (ETF / elog input); all metrics on those genes (rank metrics on x / median)
+#   matched: cosine/euclidean on hvg1024 vs kendall/spearman on top1024 (each model family's own input)
+
+hexbin_plot(x, y, xl, yl, title, path) = begin
+    fig = Figure(size=(600, 450))
+    ax = Axis(fig[1, 1], xlabel=xl, ylabel=yl, title=title)
+    rx = (maximum(x) - minimum(x) + 1f-6) / 100; ry = (maximum(y) - minimum(y) + 1f-6) / 100
+    hb = hexbin!(ax, Float64.(x), Float64.(y), cellsize=(rx, ry), colorscale=log10)
+    Colorbar(fig[1, 2], hb, label="Count (log10)")
+    save(path, fig)
+    fig
+end
+
+top_k = 1024
+n_det = vec(sum(expr .> 0f0, dims=1))
+function topk_scores(ids_a, ids_b, la, lb, k)
+    genes = union(view(ids_a, 1:la), view(ids_b, 1:lb))
+    pa = Dict(g => i for (i, g) in enumerate(view(ids_a, 1:la)))
+    pb = Dict(g => i for (i, g) in enumerate(view(ids_b, 1:lb)))
+    sa = Float64[k + 1 - get(pa, g, k + 1) for g in genes]
+    sb = Float64[k + 1 - get(pb, g, k + 1) for g in genes]
+    return sa, sb
+end
+
+tk_cosine = Vector{Float32}(undef, n_pairs); tk_euclid = Vector{Float32}(undef, n_pairs)
+tk_kendall = Vector{Float32}(undef, n_pairs); tk_spearman = Vector{Float32}(undef, n_pairs)
+va = zeros(Float32, n_genes); vb = zeros(Float32, n_genes)
+for k in 1:n_pairs
+    ia, ib = idx_a[k], idx_b[k]
+    la, lb = min(top_k, n_det[ia]), min(top_k, n_det[ib])
+    fill!(va, 0f0); fill!(vb, 0f0)
+    ga = view(ranked, 1:la, ia); gb = view(ranked, 1:lb, ib)
+    va[ga] .= view(expr, ga, ia); vb[gb] .= view(expr, gb, ib)
+    tk_euclid[k] = Float32(norm(va .- vb))
+    tk_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
+    sa, sb = topk_scores(view(ranked, :, ia), view(ranked, :, ib), la, lb, top_k)
+    tk_kendall[k] = (1f0 - Float32(corkendall(sa, sb))) / 2f0
+    tk_spearman[k] = (1f0 - Float32(corspearman(sa, sb))) / 2f0
+end
+jldsave("$data_vec_dir/pb_distances_top$(top_k)_$(n_pairs_str)_noself.jld2"; cosine=tk_cosine, euclidean=tk_euclid,
+        kendall=tk_kendall, spearman=tk_spearman, idx_a=idx_a, idx_b=idx_b, top_k=top_k)
+
+n_hvg = 1024
+hvg_idx = sort(sortperm(vec(var(expr, dims=2)), rev=true)[1:n_hvg])
+hv_cosine = Vector{Float32}(undef, n_pairs); hv_euclid = Vector{Float32}(undef, n_pairs)
+hv_kendall = Vector{Float32}(undef, n_pairs); hv_spearman = Vector{Float32}(undef, n_pairs)
+hvg_meds = gene_medians[hvg_idx]
+for k in 1:n_pairs
+    a = view(expr, hvg_idx, idx_a[k]); b = view(expr, hvg_idx, idx_b[k])
+    hv_euclid[k] = Float32(norm(a .- b))
+    hv_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+    ra = Float64.(a ./ hvg_meds); rb = Float64.(b ./ hvg_meds)
+    hv_kendall[k] = (1f0 - Float32(corkendall(ra, rb))) / 2f0
+    hv_spearman[k] = (1f0 - Float32(corspearman(ra, rb))) / 2f0
+end
+jldsave("$data_vec_dir/pb_distances_hvg$(n_hvg)_$(n_pairs_str)_noself.jld2"; cosine=hv_cosine, euclidean=hv_euclid,
+        kendall=hv_kendall, spearman=hv_spearman, idx_a=idx_a, idx_b=idx_b, hvg_idx=hvg_idx)
+
+# plots: every expression metric vs every rank metric, per gene set (+ model-matched)
+gene_sets = [("all", "all $(n_genes) genes", expr_cosine, expr_euclid, rank_kendall, rank_spearman),
+             ("top$(top_k)", "top-$(top_k) per sample", tk_cosine, tk_euclid, tk_kendall, tk_spearman),
+             ("hvg$(n_hvg)", "HVG-$(n_hvg)", hv_cosine, hv_euclid, hv_kendall, hv_spearman),
+             ("matched", "HVG-$(n_hvg) expression vs top-$(top_k) ranks", hv_cosine, hv_euclid, tk_kendall, tk_spearman)]
+for (tag, title, cosv, eucv, kenv, spev) in gene_sets
+    for (ename, ev) in (("cosine", cosv), ("euclid", eucv)), (rname, rv) in (("kendall", kenv), ("spearman", spev))
+        tag == "all" && rname == "kendall" && continue   # existing plots below (pb_{cosine,euclid}_kendall_100K_noself.png)
+        hexbin_plot(rv, ev, "$(uppercasefirst(rname)) distance", "$(ename == "cosine" ? "Cosine" : "Euclidean") distance",
+                    title, "$fig_vec_dir/$(save_prefix)_$(ename)_$(rname)_$(tag)_$(n_pairs_str)_noself.png")
+    end
+    println("$tag: spearman(cosine, kendall) = $(round(corspearman(Float64.(cosv), Float64.(kenv)), digits=3)), " *
+            "spearman(cosine, spearman) = $(round(corspearman(Float64.(cosv), Float64.(spev)), digits=3))")
+end
 
 
 # gene overlap vs single-cell
@@ -238,6 +325,7 @@ begin
     Colorbar(fig[1, 2], hb, label="count (log10)")
     display(fig)
 end
+save("$fig_vec_dir/$(save_prefix)_euclid_kendall_$(n_pairs_str)_noself.png", fig)
 
 begin
     fig = Figure(size=(600, 400))
@@ -252,6 +340,7 @@ begin
     Colorbar(fig[1, 2], hb, label="count (log10)")
     display(fig)
 end
+save("$fig_vec_dir/$(save_prefix)_cosine_kendall_$(n_pairs_str)_noself.png", fig)
 
 
 # Tahoe two-blob diagnosis

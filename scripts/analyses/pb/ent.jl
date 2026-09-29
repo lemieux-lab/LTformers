@@ -3,7 +3,9 @@ arch_dir = Sys.ARCH == :aarch64 ? "aarch64" : "x86_64"
 Pkg.activate(get(ENV, "JULIA_PROJECT", joinpath(@__DIR__, "../../..", arch_dir)))
 using JLD2, StatsBase, Statistics, CairoMakie, DataFrames
 
-dataset = "tahoe"
+# dataset = "tahoe"
+dataset = isempty(ARGS) ? "tahoe" : ARGS[1]   # julia ent.jl [tahoe|lincs]
+dataset in ("tahoe", "lincs") || error("dataset must be tahoe or lincs, got $dataset")
 
 if dataset == "lincs"
     expr = load("data/lincs/data_expr.jld2")["data_expr"]
@@ -64,10 +66,18 @@ end
 
 # detected genes only
 n_det = vec(sum(expr .> 0, dims=1))
-entropies = Float64[]
-for r in 1:n_genes
-    push!(entropies, calculate_entropy(ranked[r, n_det .>= r]))
-end
+# entropies = Float64[]
+# for r in 1:n_genes
+#     push!(entropies, calculate_entropy(ranked[r, n_det .>= r]))
+# end
+# ranks no sample reaches (no detected gene there) are undefined -> NaN, not 0 (calculate_entropy returns 0 for empty)
+n_at_rank = [count(>=(r), n_det) for r in 1:n_genes]   # samples with a detected gene at rank r
+entropies = [n_at_rank[r] == 0 ? NaN : calculate_entropy(ranked[r, n_det .>= r]) for r in 1:n_genes]
+# normalized entropy: H / max possible H at that rank, log2(min(samples counted, genes)); removes the drop that comes
+# only from fewer samples reaching deep ranks. undefined for < 2 samples
+norm_entropies = [n_at_rank[r] < 2 ? NaN : entropies[r] / log2(min(n_at_rank[r], n_genes)) for r in 1:n_genes]
+last_defined = findlast(>(0), n_at_rank)
+println("entropy defined up to rank $last_defined (max detected genes per sample); ranks beyond are NaN")
 
 begin
     fig = Figure(size=(600, 500))
@@ -80,7 +90,21 @@ begin
 end
 
 save("$fig_dir/$(save_prefix)_rank_entropy.png", fig)
-jldsave("$data_dir/$(save_prefix)_ranked_entropies.jld2"; entropies=entropies)
+# jldsave("$data_dir/$(save_prefix)_ranked_entropies.jld2"; entropies=entropies)
+jldsave("$data_dir/$(save_prefix)_ranked_entropies.jld2"; entropies=entropies, norm_entropies=norm_entropies, n_at_rank=n_at_rank)
+
+# normalized entropy per rank (separate plot)
+begin
+    fig_norm = Figure(size=(600, 500))
+    ax_norm = Axis(fig_norm[1, 1],
+        xlabel="Rank (1 = highest expression)",
+        ylabel="Normalized Shannon entropy (H / log2(n samples))",
+        xtickformat=values -> [string(Int(round(v))) for v in values])
+    scatter!(ax_norm, 1:n_genes, norm_entropies, alpha=0.5, color=:black)
+    ylims!(ax_norm, 0, 1.05)
+    display(fig_norm)
+end
+save("$fig_dir/$(save_prefix)_rank_entropy_normalized.png", fig_norm)
 
 # sparsity per rank
 

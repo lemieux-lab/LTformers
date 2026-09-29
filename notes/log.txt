@@ -2281,3 +2281,245 @@ from valence blog posts:
 -- or wahtever the txpert did
 
 -- also running tsc pt
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 27 2026 ###
+
+-- OVERALL:
+    -- distance vectors
+        -- RUNNING sc_entvec.jl (1)
+            -- finished t_vec, pb ent, l_vec
+        -- is pb entropy done incorrectly for tahoe? its 0 entropy at the last ranks, suggesting that they dont change
+        -- but shouldn't it tehcnically be the noise added version of the ranking, not the 0.0 since those were only for ranking mlp and log?
+        -- no - these are 0 because they are undetected genes, fixed to say undefined ranks are NaN so theyre just left off the plot
+        -- the plots look very very different...
+        -- there is in fact a relationship between cosine distance and kendall tau distance...
+        -- checking again for euclidean, spearman-rho, and top-1024 or 1024-hvg
+    -- lvl3 cl selection
+        -- reviewed tahoe cl choices run
+            -- no bueno! still pretty high, all linear regression get about 0.9 R^2
+            -- however, if we look at delta hvg:
+                -- target is cl response minus its own DMSO on its top 1k HVGs
+                -- linear R^2 is between 0.36-0.87 across all pairs
+                -- input is reference cl compound-mean expression, output is target cl compound-mean expression MINUS target DMSO on top 1k HVGs
+        -- reviewed TxPert task
+            -- consider: given a perturbation and cellular context, predict whether a target gene is differentially expressed and, if so, whether its expression increases or decreases.
+            -- i think this is similar to the interns' task prev?
+            -- https://valencelabs.substack.com/p/grounding-perturbation-prediction
+            -- per-gene differential expression results but input as drug and cell line names...
+        -- however if we restrict to top-k HVGs, this would help ETF way more than RTF
+        -- we can instead predict all genes in target CL (~14k) or pick genes by how often they're differentially expressed across target training drugs
+        -- or can just do lea's task?
+        -- options:
+            -- input: compound-mean expression per compound
+            -- output:
+                1. predict treated profile minus DMSO mean from that plate in target CL (basically lea's)
+                2. predict log2FC b/n treated vs. control on expressed genes in target CL
+                prev. predict PC1 of all genes for each compound in target CL
+            -- so the only diff between lvl3 and lea's is:
+                -- output is one fixed target CL vs all n target CLs
+                -- input is compound-mean expression vs reference CL response
+        -- ok so:
+            -- input: avg expression profiles for each compound for reference CL, size: n_genes x n_compounds
+            -- output: plate-matched delta expression profile for each compound in target CL, size: n_genes x n_compounds
+            -- then for single-cell, input would be all profiles for each compound instead of averaged
+        -- why not predict the pc1 of delta response? does that make a difference instead of the pc1 in general? 
+            -- considering input is remaining the same, only diff is output being PC1 across all genes vs actual response for all genes
+            -- basically the same thing since PCA centers which pretty much removes the DMSO already
+            -- unless we do plate-matched DMSO subtraction, if PC1 is mostly capturing plate effects, then this would work?
+            -- tested, did help (we see that PC1 is mostly dominated by plate/batch)
+            -- but still the full response target has much more headroom (0.87 on PC1 plate matched vs 0.58 on full plate matched response)
+        -- cl choices:
+            -- 1125 → 0218 (CHP-212 → COLO 205) has identity=0.27, ceiling=0.51
+                -- chosen because low performance in ridge R^2 and low baseline performance and plate replicate agreement >0.5
+            -- alternatively: 1125 → 0069 (CHP-212 → SK-MEL-2) has identity=0.32, ceiling=0.53
+    -- baselines
+        -- consider: random choice baseline
+            -- majority class (zero-R): accuracy = the share of the most common class in the test set
+        -- consider: upper bound/ceiling is split-half experimental reproducibility
+            -- dividing test cells into two halves, calculating the mean expr profiles for each half, measuring the agreement b/n these means
+            -- similar proxy to the performance achieved by paying for and executing half the experiments
+        -- https://valencelabs.substack.com/p/grounding-perturbation-prediction (TxPert)
+        -- for elog and rlog:
+            -- traditional setup for logreg is z-scored features + L2 penalty
+            -- could implenent, not hard but note that current setup is still valid bc:
+                -- standardization mostly matters for SGD or L2 models and adam already does scaling, while rlog is already in [0,1]
+                -- best val-checkpoint is basically early stopping which is basically L2 in a linear model
+    -- changed sweeps to only look at lr and drop_prob and ema_decay; including mask_ratio makes it hard to compare val loss
+        -- using mlm=0.15 (geneformer, bert), erecon=0.3 (scfoundation, xtrimogene), lrecon=0.15 (data2vec [genejepa/biom-jepa uses larger masks for larger targets])
+    -- since we are also doing shorter sweeps:
+        -- could round lr down tho to acommodate for shorter runs favouring higher lr??? (ex. 0.0047 vs 0.0045?)
+        -- could round ema_decay up to accomodate similarly (ex. 0.99 vs. 0.995)
+            -- can also consider  a ramp like data2vec wherein you start at ema_decay and rise towards 0.999
+    -- remember to recompile once before submitting a big batch so no precompilation waiting over multiple runs
+    -- results moved to notes/baselines.csv
+    -- also looked at different shapes for the mlp in lvl2, best is constant width
+        -- leaving lvl2 as the original 2L shrinking design since its so high already
+
+-- LINCS:
+    -- baselines
+        -- reviewed elog, rlog for lvl1, lvl2 (1-6mins per-)
+            -- lvl1:
+                -- elog: 0.976
+                -- rlog: 0.998
+            -- lvl2:
+                -- elog: 41.4
+                -- rlog: 56.5
+            -- why does rlog beat elog?
+                -- elog and emlp inputs are not z-score standardized (normalization)
+                -- when re-running with normalization:
+                    -- elog outperforms rlog
+                -- !RUN AGAIN
+        -- !RUN emlp, rmlp sweeps for lvl2
+            -- done emlp, rmlp sweeps for lvl1
+                -- emlp: 0.989
+                -- rmlp: 0.994
+            -- need to run again w z score normalization
+                -- do i need z score norammlization for etf inputs as well? (no, idtso b/c layernorm takes care of that)
+    -- pre-train
+        -- 
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- reviewed elog, rlog for 1024, full for lvl1, lvl2
+                -- lvl1:
+                    -- elog: 1024=1.0, full=1.0
+                    -- rlog: 1024=1.0, full=1.0
+                -- lvl2:
+                    -- elog: 1024=85.6, full=84.2
+                    -- rlog: 1024=51.4, full=68.4
+                -- do i also need z score normalization here?
+                    -- yes, checking if neeed for sc as well
+            -- !RUN emlp, rmlp sweeps for 1024, full for lvl2
+                -- done emlp, rmlp sweeps for 1024, full for lvl1
+                    -- emlp: 1024=1.0, full=1.0
+                    -- rmlp: 1024=1.0, full=1.0
+                -- need to run again w z score normalization
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6)
+                -- note: run_cap=25, max_steps=10k, eval_every=500
+                -- fixed w/ mask_ratios per task
+                    -- prev. w/o fixed mask_ratios per task: 
+                        -- reviewed mlm rtf sweep finished in ~9hrs, 25 runs
+                        -- best: mlm_tahoe_rtf_2026-09-26_17-45 (.toml updated)
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- reviewed elog, rlog for 1024, full for lvl1, lvl2
+                -- there is a big fat issue here:
+                    -- only predicting a select # of drugs and thus bad performance
+                    -- due to SC ft streaming one shard at a time, and class balancing happens only within that one shard
+                    -- each parquet has all 50 cell lines so lvl1 works but only 30-70 of the drugs
+                    -- thus adjusting to choosing training cells up-front (class-balanced for lvl2), group by shard, and load shards in groups of k
+                    -- then build features, shuffle pool, and create batches
+                    -- also adjusted to val eval every n steps
+                -- still doing quite bad because it splits by well? whole-well held out drug ID is barely learnable from single-cell datat. 
+            -- !RUN emlp, rmlp sweeps for 1024, full for lvl1, lvl2
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, erecon etf, erecon rtf sweep (4,1:15, CQ)
+                -- note: run_cap=15, max_steps=5k, eval_every=500, n_val=2, n_test=2
+                -- mlm rtf does not fit in bs=400; decr to 300 w/ top mask_ratio=0.29 since this would be the worst 
+                -- RUNNING test of mlm rtf (1:1, CQ)
+            -- PENDING erecon etf sweep on GH200 (1)
+            -- PENDING erecon rtf sweep on GH200 (1)
+            -- should lowkey re-run everything w/ batch_size 300 instead of 400 for consistency???
+                -- done
+        -- fine-tune
+
+-- NEXT:
+    1. TPB good runs (gh18)
+    2. TSC pt sweeps (gh200)
+    3. emlp/rmlp sweeps (mega)
+    4. emlp/rmlp good runs (tty or mega)
+    5. L pt sweeps
+    6. etf/rtf sweeps (gh18 or mega)
+    7. etf/rtf good runs (gh18 or mega)
+    8. all lvl3 baselines
+    9. all ft sweeps
+    10. all ft good runs
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 28 2026 ###
+
+
+-- OVERALL:
+    -- distance vectors
+        -- RUNNING sc_entvec.jl (1)
+            -- finished t_vec, pb ent, l_vec
+        -- checking again for euclidean, spearman-rho, and top-1024 or 1024-hvg to see if there is still the same (new) relationship!
+    -- lvl3 cl selection
+        -- cl choices:
+            -- 1125 → 0218 (CHP-212 → COLO 205) has identity=0.27, ceiling=0.51
+            -- alternatively: 1125 → 0069 (CHP-212 → SK-MEL-2) has identity=0.32, ceiling=0.53
+    -- baselines
+        -- checking if need z-score normalization on elog and emlp (hvg-only) or etf as well? and sc as well?
+            -- doing in all for elog and emlp for consistency! largely benefits lincs, rest is whatever
+            -- also do i need L2 penalty or is this dealt with by AdamW?
+            -- essentially z scoring helps because of optimization, not necssarily capacity
+            -- depth normalization and log1 in tahoe or log2 and quantile normalization in lincs work per sample/column, z scoring is per gene/row
+        -- consider: 
+            -- majority class (zero-R) baseline
+            -- upper bound of split-half experimental reproducibility
+    -- i think i will not focus on lvl3 for now; for thesis i need to have sufficient results from everything else first.
+    -- how can i go about demonstrating 1. ranked performance is no bueno because of no natural gene order and 2. loss of continuous/magnitude is no bueno 
+
+-- LINCS:
+    -- baselines
+        -- done elog for lvl1, lvl2
+        -- done emlp, rmlp sweeps for lvl2
+    -- pre-train
+        -- 
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done elog, rlog for 1024, full for lvl2
+            -- done emlp, rmlp sweeps for 1024, full for lvl2 
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6)
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- !TO-RUN elog, rlog for 1024, full for lvl2
+                -- there are 2 diff ways to split the train/test set:
+                    -- by well
+                        -- hold out whole wells; such that a drug d at dose x is unseen (but seen at other doses in other wells)
+                        -- optionally, can make it stricter by grouping by (drug, dose) so the 153 replicates present don't get an advantage
+                            -- but theres legit only 2 replicates so not sure if that rly matters
+                            -- did it anyways for consistency
+                    -- random
+                        -- regular (well, cell line) samples still allows the test unit's well, drug, and dose to be seen in the training
+                        -- thus it becomes easier for the model to base prediction off of well (drug @ dose) rather than drug itself
+                    -- this is not an issue for LINCS because each profile is its own well
+                        -- although, do i need to be holding out replicates as well??
+                        -- plate confounding in LINCS?
+                -- updated memory usag of LoadSC.jl via dictioniary lookup of drug, sample and cell line strings for each cell
+                -- also preallocation for training pools
+            -- !TO-RUN emlp, rmlp sweeps for 1024, full for lvl1, lvl2
+                -- lowkey it will take a very long time to sweep these; full only fits on mega_ and 1024 fits on gh18_
+                -- could run on gh200 but that kinda introduces confounders as batchsize will increase
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, erecon etf, erecon rtf sweep (4,1:15, CQ)
+            -- !REVIEW erecon etf, erecon rtf sweep on GH200
+                -- not bad, etf looks ok but rtf is super janky
+                -- could be the issue that training streams through shards in order, and each shard holds only a subset of plates and drugs
+                -- validation always uses the same 2 shards
+                -- currently sc finetuning draws cells from all trianing shards and shuffles them in pools of 64 shards
+        -- fine-tune
+
+-- NEXT:
+    1. TPB good runs (gh18)
+    2. TSC pt sweeps (gh200)
+    3. emlp/rmlp sweeps (mega)
+    4. emlp/rmlp good runs (tty or mega)
+    5. L pt sweeps
+    6. etf/rtf sweeps (gh18 or mega)
+    7. etf/rtf good runs (gh18 or mega)
+    8. all ft sweeps
+    9. all ft good runs
+    10. all lvl3 baselines, fts

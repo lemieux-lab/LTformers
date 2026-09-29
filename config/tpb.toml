@@ -1,39 +1,45 @@
-# tahoe pseudobulk swept hyperparameters per config
+# tahoe pseudobulk swept hyperparameters per config (except mask_ratio is constant per task)
 
 # ──────────────────────────────────────────────
 # pretrain
 # ──────────────────────────────────────────────
 
 [pretrain.mlm.rtf]
-lr = 0.0038
-drop_prob = 0.083
-mask_ratio = 0.12
+lr = 0.0047
+drop_prob = 0.06
+# mask_ratio = 0.28
+mask_ratio = 0.15 
 
 [pretrain.mlm.etf]
 lr = 0.003
 drop_prob = 0.125
-mask_ratio = 0.17
+# mask_ratio = 0.17
+mask_ratio = 0.15 
 
 [pretrain.erecon.rtf]
 lr = 0.0015
 drop_prob = 0.1
-mask_ratio = 0.5
+# mask_ratio = 0.5
+mask_ratio = 0.3 
 
 [pretrain.erecon.etf]
 lr = 0.001
 drop_prob = 0.11
-mask_ratio = 0.38
+# mask_ratio = 0.38
+mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
 lr = 0.0024
 drop_prob = 0.1
-mask_ratio = 0.25
+# mask_ratio = 0.25
+mask_ratio = 0.15 
 ema_decay = 0.82
 
 [pretrain.lrecon.etf]
 lr = 0.0019
 drop_prob = 0.11
-mask_ratio = 0.13
+# mask_ratio = 0.13
+mask_ratio = 0.15 
 ema_decay = 0.93
 
 # ──────────────────────────────────────────────
@@ -161,14 +167,36 @@ drop_prob = 0.0
 # n_layers = 0
 
 [finetune.no_pretrain.rmlp.lvl1]
-lr = 0.0000003
-drop_prob = 0.1
+# top-1024, tapered (mlp_hidden_dim 0), 10k steps: sweep qtj087py best (rmlp_nopt_tahoe_lvl1_2026-09-27_16-05_j8103592), acc 0.9995
+# lr = 0.0000003
+# drop_prob = 0.1
+# n_layers = 2
+lr = 0.00052892
+drop_prob = 0.01292
+n_layers = 2
+
+[finetune.no_pretrain.rmlp.lvl1.full]
+# all genes (--rank_top_k 0): sweep hb22mu2m best (rmlp_full_nopt_tahoe_lvl1_2026-09-27_15-38_j8103594), acc 0.9997
+lr = 0.000040757
+drop_prob = 0.1071
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
-lr = 0.000001
-drop_prob = 0.05
+# top-1024, constant width, 10k steps, picked by best_val_acc, tuned with --group_split 1 (pass it on the CLI; not set here): sweep m7m0ysus best (rmlp_gdd_nopt_tahoe_lvl2_2026-09-28_15-10_j8104529), val 0.198 test 0.175
+# lr = 0.000001
+# drop_prob = 0.05
+# n_layers = 2
+lr = 0.00030796
+drop_prob = 0.1986
+n_layers = 7
+mlp_hidden_dim = 512
+
+[finetune.no_pretrain.rmlp.lvl2.full]
+# all genes (--rank_top_k 0), tuned with --group_split 1 (pass it on the CLI; not set here): sweep cf54e0om best (rmlp_full_gdd_nopt_tahoe_lvl2_2026-09-28_15-48_j8104537), val 0.713 test 0.524 (sweep max test 0.637)
+lr = 0.000025917
+drop_prob = 0.1284
 n_layers = 2
+mlp_hidden_dim = 2048
 
 [finetune.no_pretrain.rmlp.lvl3]
 lr = 0.0
@@ -176,14 +204,36 @@ drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
-lr = 0.0005
-drop_prob = 0.25
+# HVG-1024, tapered (mlp_hidden_dim 0), 10k steps: sweep 6s7czbb1 best (emlp_nopt_tahoe_lvl1_2026-09-27_14-22_j8103591), acc 1.0
+# lr = 0.0005
+# drop_prob = 0.25
+# n_layers = 2
+lr = 0.00013053
+drop_prob = 0.2694
+n_layers = 2
+
+[finetune.no_pretrain.emlp.lvl1.full]
+# all genes (--n_hvg 0): sweep uqtw1lbd best (emlp_full_nopt_tahoe_lvl1_2026-09-27_14-38_j8103593), acc 1.0
+lr = 0.000041656
+drop_prob = 0.1940
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
-lr = 0.0005
-drop_prob = 0.06
+# HVG-1024, constant width, 10k steps, picked by best_val_acc, tuned with --group_split 1 (pass it on the CLI; not set here): sweep 83oze95p best (emlp_gdd_zc_nopt_tahoe_lvl2_2026-09-28_15-06_j8104528), val 0.439 test 0.444
+# lr = 0.0005
+# drop_prob = 0.06
+# n_layers = 2
+lr = 0.00020589
+drop_prob = 0.1725
+n_layers = 3
+mlp_hidden_dim = 1024
+
+[finetune.no_pretrain.emlp.lvl2.full]
+# all genes (--n_hvg 0), tuned with --group_split 1 (pass it on the CLI; not set here): sweep g5cqrcfz best (emlp_full_gdd_zc_nopt_tahoe_lvl2_2026-09-28_15-28_j8104532), val 0.815 test 0.673 (sweep max test 0.824)
+lr = 0.00016827
+drop_prob = 0.2260
 n_layers = 2
+mlp_hidden_dim = 512
 
 [finetune.no_pretrain.emlp.lvl3]
 lr = 0.0

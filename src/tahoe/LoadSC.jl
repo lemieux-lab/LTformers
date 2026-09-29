@@ -14,6 +14,7 @@ export load_shard_pyarrow, load_shard_metadata, load_sc_finetune_data
 export sc_finetune_metadata_scan, materialize_finetune_split
 export prepare_shard_cell_map, finetune_batches_from_shard
 export load_sc_finetune_data_streaming
+export draw_train_cells, finetune_train_batches, _build_ft_batch, memlog
 
 const _pq = PyNULL()
 const _np = PyNULL()
@@ -772,7 +773,8 @@ end
 # SC finetune metadata scan + sample split
 function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
                                     pb_data_path::String = "",
-                                    subset_shards::Int = 0)
+                                    subset_shards::Int = 0,
+                                    split_by::String = "drug_dose")
 
     # valid labels
     valid_drugs = nothing
@@ -791,8 +793,11 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
     println("[pass 1] scanning metadata from $(length(shards_to_scan)) shards...")
     flush(stdout)
 
-    # (shard, cell_idx, label, sample_id)
-    cell_records = Tuple{String, Int, String, String}[]
+    # (shard, cell_idx, label, sample_id, cell_line). strings interned: one object per unique value instead of one
+    # per cell (93M cells -> ~10G of duplicate Strings otherwise)
+    cell_records = Tuple{String, Int, String, String, String}[]
+    str_pool = Dict{String, String}()
+    intern(x) = get!(str_pool, x, x)
     for (si, sp) in enumerate(shards_to_scan)
         meta = load_shard_metadata(sp)
         for i in 1:meta.n_cells
@@ -802,7 +807,7 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
                 label = meta.drug[i]
                 (label == "DMSO" || !(label in valid_drugs)) && continue
             end
-            push!(cell_records, (sp, i, label, meta.sample[i]))
+            push!(cell_records, (sp, i, intern(label), intern(meta.sample[i]), intern(meta.cell_line_id[i])))
         end
         if si % 500 == 0
             println("  scanned $si / $(length(shards_to_scan)) shards, $(length(cell_records)) valid cells so far")
@@ -811,29 +816,46 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
     end
     println("[pass 1] done: $(length(cell_records)) valid cells from $(length(shards_to_scan)) shards")
     flush(stdout)
+    memlog("after metadata scan")
 
-    # sample-level split
-    unique_samples = unique(r[4] for r in cell_records)
+    # split unit: "drug_dose" (default) = all wells of a (drug, dose) together, so replicate wells can't straddle
+    # train/test (DMSO kept per well); "well" = whole wells; "well_cl" = (well, cell line) units, like a random PB split
+    split_by in ("drug_dose", "well", "well_cl") || error("split_by must be drug_dose, well or well_cl (got $split_by)")
+    dd = Dict{String, String}()
+    if split_by == "drug_dose"
+        pb_data_path == "" && error("split_by=drug_dose needs pb_data_path (sample -> drug, dose map)")
+        pbm = JLD2.load(pb_data_path)["df"]
+        for (smp, drg, dse) in zip(String.(pbm.sample), String.(pbm.drug), String.(pbm.dose))
+            dd[smp] = drg == "DMSO" ? smp : drg * "|" * dse
+        end
+        n_miss = length(setdiff(Set(r[4] for r in cell_records), keys(dd)))
+        n_miss > 0 && println("  drug_dose split: $n_miss SC samples not in PB map -> grouped by well")
+    end
+    unit(r) = split_by == "well_cl" ? r[4] * "|" * r[5] : split_by == "drug_dose" ? get(dd, r[4], r[4]) : r[4]
+    unique_samples = unique(unit(r) for r in cell_records)
     shuffle!(unique_samples)
     n_test = floor(Int, length(unique_samples) * 0.1)
     n_val  = floor(Int, length(unique_samples) * 0.1)
     test_samples  = Set(unique_samples[1:n_test])
     val_samples   = Set(unique_samples[n_test+1:n_test+n_val])
     train_samples = Set(unique_samples[n_test+n_val+1:end])
-    println("sample split: $(length(train_samples)) train, $(length(val_samples)) val, $(length(test_samples)) test samples")
+    println("$(split_by) split: $(length(train_samples)) train, $(length(val_samples)) val, $(length(test_samples)) test units")
 
-    train_cells = filter(r -> r[4] in train_samples, cell_records)
-    val_cells   = filter(r -> r[4] in val_samples, cell_records)
-    test_cells  = filter(r -> r[4] in test_samples, cell_records)
+    # process labels (before the full record list is dropped)
+    unique_labels = sort(collect(Set(r[3] for r in cell_records)))
+    label_to_id = Dict(l => i for (i, l) in enumerate(unique_labels))
+    n_cls = length(unique_labels)
+
+    train_cells = filter(r -> unit(r) in train_samples, cell_records)
+    val_cells   = filter(r -> unit(r) in val_samples, cell_records)
+    test_cells  = filter(r -> unit(r) in test_samples, cell_records)
+    empty!(cell_records); sizehint!(cell_records, 0); cell_records = nothing
+    GC.gc()
     println("cell split: $(length(train_cells)) train, $(length(val_cells)) val, $(length(test_cells)) test cells")
     flush(stdout)
 
-    # process labels
-    all_labels = [r[3] for r in cell_records]
-    unique_labels = sort(unique(all_labels))
-    label_to_id = Dict(l => i for (i, l) in enumerate(unique_labels))
-    n_cls = length(unique_labels)
     println("n_classifications: $n_cls")
+    memlog("after split")
 
     return (; train_cells, val_cells, test_cells, label_to_id, n_cls, valid_drugs)
 end
@@ -923,7 +945,6 @@ function finetune_batches_from_shard(shard_path::String,
                                       top_k::Int, batch_size::Int, modeltype::String,
                                       n_cls::Int;
                                       hvg_idx::Union{Vector{Int}, Nothing} = nothing,
-                                      use_oversmpl::Bool = false,
                                       process_cell_topk_flat_fn = nothing,
                                       cell_to_dense_flat_fn = nothing)
 
@@ -932,44 +953,15 @@ function finetune_batches_from_shard(shard_path::String,
     n_valid == 0 && return Channel{Any}(0)
 
     return Channel{Any}(1) do ch
-        if use_oversmpl
-            # class-balanced sampling
-            # class -> indices
-            local_cls_map = Dict{Int, Vector{Int}}()
-            for (i, lid) in enumerate(cell_labels)
-                push!(get!(local_cls_map, lid, Int[]), i)
-            end
-            local_classes = collect(keys(local_cls_map))
-            # one pass worth of batches
-            n_batches = cld(n_valid, batch_size)
-            for _ in 1:n_batches
-                bs = batch_size
-                sampled_local = Int[rand(local_cls_map[rand(local_classes)]) for _ in 1:bs]
-                sampled_ci = cell_indices[sampled_local]
-                sampled_labels = cell_labels[sampled_local]
-
-                # features
-                X_batch = _build_ft_batch(shard, sampled_ci, token_to_idx, n_coding,
-                                           top_k, modeltype, hvg_idx,
-                                           process_cell_topk_flat_fn, cell_to_dense_flat_fn)
-                y_batch = Flux.onehotbatch(sampled_labels, 1:n_cls)
-                put!(ch, (X_batch, y_batch))
-            end
-        else
-            # shuffled batching
-            perm = shuffle(1:n_valid)
-            for start_idx in 1:batch_size:n_valid
-                end_idx = min(start_idx + batch_size - 1, n_valid)
-                local_idx = perm[start_idx:end_idx]
-                ci = cell_indices[local_idx]
-                labels = cell_labels[local_idx]
-
-                X_batch = _build_ft_batch(shard, ci, token_to_idx, n_coding,
-                                           top_k, modeltype, hvg_idx,
-                                           process_cell_topk_flat_fn, cell_to_dense_flat_fn)
-                y_batch = Flux.onehotbatch(labels, 1:n_cls)
-                put!(ch, (X_batch, y_batch))
-            end
+        for start_idx in 1:batch_size:n_valid
+            end_idx = min(start_idx + batch_size - 1, n_valid)
+            ci = cell_indices[start_idx:end_idx]
+            labels = cell_labels[start_idx:end_idx]
+            X_batch = _build_ft_batch(shard, ci, token_to_idx, n_coding,
+                                       top_k, modeltype, hvg_idx,
+                                       process_cell_topk_flat_fn, cell_to_dense_flat_fn)
+            y_batch = Flux.onehotbatch(labels, 1:n_cls)
+            put!(ch, (X_batch, y_batch))
         end
     end
 end
@@ -1027,6 +1019,112 @@ function _build_ft_batch(shard, cell_indices::AbstractVector{Int},
 end
 
 
+# memory checkpoint: julia live heap, peak RSS, arrow (python) allocations
+function memlog(tag::AbstractString)
+    arrow = try Float64(pyimport("pyarrow").total_allocated_bytes()) / 2^30 catch; NaN end
+    println("[mem] $tag: julia live=$(round(Base.gc_live_bytes() / 2^30, digits=1))G, " *
+            "maxrss=$(round(Sys.maxrss() / 2^30, digits=1))G, arrow=$(round(arrow, digits=1))G")
+    flush(stdout)
+end
+
+# training cells drawn across all shards (class-balanced for lvl2), shuffled in pools of group_shards shards.
+# shard-by-shard training gave label-skewed batches: each shard holds ~30-70 of 376 drugs (lvl2).
+function draw_train_cells(train_cells, label_to_id::Dict, n_cells::Int; balanced::Bool = false)
+    n_train = length(train_cells)
+    labels = [label_to_id[r[3]] for r in train_cells]
+    if !balanced
+        # uniform, without replacement while possible
+        n_cells <= n_train && return randperm(n_train)[1:n_cells]
+        return vcat(randperm(n_train), rand(1:n_train, n_cells - n_train))
+    end
+    # equal count per class, with replacement only for classes smaller than their quota
+    by_cls = Dict{Int, Vector{Int}}()
+    for (j, l) in enumerate(labels)
+        push!(get!(by_cls, l, Int[]), j)
+    end
+    cls = sort(collect(keys(by_cls)))
+    per_cls = fill(div(n_cells, length(cls)), length(cls))
+    per_cls[randperm(length(cls))[1:rem(n_cells, length(cls))]] .+= 1
+    picked = Int[]
+    for (c, q) in zip(cls, per_cls)
+        idx = by_cls[c]
+        append!(picked, q <= length(idx) ? shuffle(idx)[1:q] : rand(idx, q))
+    end
+    return picked
+end
+
+function finetune_train_batches(train_cells, label_to_id::Dict, n_cls::Int, n_cells::Int,
+                                token_to_idx::Dict{Int,Int}, n_coding::Int,
+                                top_k::Int, batch_size::Int, modeltype::String;
+                                balanced::Bool = false,
+                                group_shards::Int = 64,
+                                hvg_idx::Union{Vector{Int}, Nothing} = nothing,
+                                process_cell_topk_flat_fn = nothing,
+                                cell_to_dense_flat_fn = nothing)
+    picked = draw_train_cells(train_cells, label_to_id, n_cells; balanced=balanced)
+
+    # shard -> (cell idx, label) of the drawn cells
+    by_shard = Dict{String, Tuple{Vector{Int}, Vector{Int}}}()
+    for j in picked
+        sp, ci, lab, _ = train_cells[j]
+        e = get!(by_shard, sp, (Int[], Int[]))
+        push!(e[1], ci); push!(e[2], label_to_id[lab])
+    end
+    shard_order = shuffle(sort(collect(keys(by_shard))))
+    groups = collect(Iterators.partition(shard_order, max(group_shards, 1)))
+    println("[train mix] $(length(picked)) cells from $(length(shard_order)) shards, $(length(groups)) groups of ≤$group_shards shards (balanced=$balanced)")
+    flush(stdout)
+
+    feat_dim = modeltype == "rtf" ? top_k : (!isnothing(hvg_idx) ? length(hvg_idx) : n_coding)
+    T = modeltype == "rtf" ? Int32 : Float32
+    return Channel{Any}(2) do ch
+        carry_X = Matrix{T}(undef, feat_dim, 0); carry_y = Int[]
+        for (gi, grp) in enumerate(groups)
+            # pool features for the group, preallocated and filled in place
+            n_new = sum(length(by_shard[sp][1]) for sp in grp)
+            n_carry = length(carry_y)
+            X = Matrix{T}(undef, feat_dim, n_carry + n_new)
+            X[:, 1:n_carry] .= carry_X
+            ys = vcat(carry_y, Vector{Int}(undef, n_new))
+            col = n_carry
+            for sp in grp
+                cis, labs = by_shard[sp]
+                shard = load_shard_pyarrow(sp)
+                Xs = _build_ft_batch(shard, cis, token_to_idx, n_coding, top_k, modeltype, hvg_idx,
+                                     process_cell_topk_flat_fn, cell_to_dense_flat_fn)
+                shard = nothing
+                X[:, col+1:col+length(cis)] .= Xs
+                ys[col+1:col+length(cis)] .= labs
+                col += length(cis)
+            end
+            carry_X = Matrix{T}(undef, feat_dim, 0)
+            (gi == 1 || gi % 10 == 0) && (GC.gc(false); memlog("train pool $gi/$(length(groups)) ($(length(ys)) cells)"))
+            perm = randperm(length(ys))
+            n_full = div(length(ys), batch_size) * batch_size
+            # label-mixing check on the first pool
+            if gi == 1 && n_full > 0
+                nb = min(50, div(n_full, batch_size))
+                u = sum(length(unique(ys[perm[(b-1)*batch_size+1:b*batch_size]])) for b in 1:nb) / nb
+                println("[train mix] first pool: $(length(ys)) cells, mean unique labels per batch = $(round(u, digits=1)) / $batch_size")
+                flush(stdout)
+            end
+            for s in 1:batch_size:n_full
+                idx = perm[s:s+batch_size-1]
+                put!(ch, (X[:, idx], Flux.onehotbatch(ys[idx], 1:n_cls)))
+            end
+            # leftover cells roll into the next pool; last group emits a partial batch
+            rest = perm[n_full+1:end]
+            if gi == length(groups)
+                isempty(rest) || put!(ch, (X[:, rest], Flux.onehotbatch(ys[rest], 1:n_cls)))
+            else
+                carry_X = X[:, rest]; carry_y = ys[rest]
+            end
+            X = nothing
+        end
+    end
+end
+
+
 # streaming SC finetune data (shard maps)
 function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::String,
                                           token_to_idx::Dict{Int,Int}, n_coding::Int,
@@ -1046,7 +1144,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                                           pb_expr::Union{Matrix{Float32}, Nothing} = nothing,
                                           pb_df::Union{DataFrame, Nothing} = nothing,
                                           actual_modeltype::String = "",
-                                          identity_baseline_fn = nothing)
+                                          identity_baseline_fn = nothing,
+                                          split_by::String = "drug_dose")
 
     # validate args
     if modeltype == "rtf" && isnothing(process_cell_topk_flat_fn)
@@ -1095,6 +1194,7 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
                   n_test_cells=size(d.X_test, 2),
                   use_oversmpl=false,
                   cidx_dict=nothing, cs=nothing,
+                  train_cells=nothing, test_group_map=nothing,
                   train_idx=d.train_idx, val_idx=d.val_idx, test_idx=d.test_idx,
                   id_baseline=d.id_baseline)
     end
@@ -1102,7 +1202,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
     # pass 1 metadata + split
     scan = sc_finetune_metadata_scan(all_shards, level;
                                       pb_data_path=pb_data_path,
-                                      subset_shards=subset_shards)
+                                      subset_shards=subset_shards,
+                                      split_by=split_by)
     # shard maps
     train_shard_map = prepare_shard_cell_map(scan.train_cells, scan.label_to_id)
     train_shard_paths = collect(keys(train_shard_map))
@@ -1114,6 +1215,15 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
 
     test_shard_map = prepare_shard_cell_map(scan.test_cells, scan.label_to_id)
     test_shard_paths = collect(keys(test_shard_map))
+    # per-cell group keys aligned with test_shard_map (same record order): well, (well, cell line)
+    test_group_map = Dict{String, Tuple{Vector{String}, Vector{String}}}()
+    wcl_pool = Dict{String, String}()
+    for (sp, _, _, smp, cl) in scan.test_cells
+        g = get!(test_group_map, sp, (String[], String[]))
+        k = smp * "|" * cl
+        push!(g[1], smp); push!(g[2], get!(wcl_pool, k, k))
+    end
+    memlog("after shard maps")
     n_test_cells = length(scan.test_cells)
 
     println("[streaming] train: $n_train_cells cells across $(length(train_shard_paths)) shards")
@@ -1131,6 +1241,8 @@ function load_sc_finetune_data_streaming(all_shards::Vector{String}, level::Stri
               test_shard_map, test_shard_paths, n_test_cells,
               use_oversmpl=_use_oversmpl,
               cidx_dict=nothing, cs=nothing,
+              train_cells=scan.train_cells,
+              test_group_map,
               train_idx=collect(1:n_train_cells),
               val_idx=collect(1:n_val_cells),
               test_idx=collect(1:n_test_cells),

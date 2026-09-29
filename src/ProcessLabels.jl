@@ -213,6 +213,18 @@ end
 
 # splitting
 
+# val/test = whole groups (wells); fractions are of groups, not samples
+function _group_tvsplit(X::Matrix, groups::AbstractVector, val_ratio::AbstractFloat, test_ratio::AbstractFloat)
+    ug = shuffle(unique(groups))
+    n_test = floor(Int, length(ug) * test_ratio)
+    n_val = floor(Int, length(ug) * val_ratio)
+    test_g, val_g = Set(ug[1:n_test]), Set(ug[n_test+1:n_test+n_val])
+    test_idx = findall(in(test_g), groups)
+    val_idx = findall(in(val_g), groups)
+    train_idx = findall(g -> !(g in test_g) && !(g in val_g), groups)
+    return X[:, train_idx], X[:, val_idx], X[:, test_idx], train_idx, val_idx, test_idx
+end
+
 function get_pt_idx(label_idx, model_dir::String)
     if model_dir == ""
         println("no model_dir set, using new random split")
@@ -283,8 +295,7 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
             isnothing(inverse_ranks_fn) && error("dsplit lvl3: inverse_ranks_fn required for $(config["modeltype"])")
             gene_medians = gene_medians_for(config, X)
             X_ranked = rank_genes_fn(X, gene_medians)
-            X = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes);
-                         encoding=Symbol(get(config, "rank_encoding", "rev")))
+            X = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes))
         end
 
         X_train, X_val, X_test = X[:, train_idx], X[:, val_idx], X[:, test_idx]
@@ -303,6 +314,18 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     n_genes = size(X, 1)
 
     model_dir = get(config, "model_dir", "")
+
+    # --group_split 1 (tahoe PB): all pseudobulks of a (drug, dose) go to one split, as in SC. a well holds all cell
+    # lines, so a random pseudobulk split puts the same well/drug/dose in train (other cell lines) and test
+    if something(get(config, "group_split", nothing), 0) == 1
+        fmt == "tahoe" || error("--group_split is for tahoe PB only (LINCS profiles are single wells)")
+        # group = (drug, dose): replicate wells of a drug-dose stay on one side; DMSO grouped per well
+        smp = String.(label_source.sample[label_idx]); drg = String.(label_source.drug[label_idx]); dse = String.(label_source.dose[label_idx])
+        groups = [d == "DMSO" ? s : d * "|" * x for (s, d, x) in zip(smp, drg, dse)]
+        tvsplit_fn = (X, v, t) -> _group_tvsplit(X, groups, v, t)
+        model_dir = ""                              # don't reuse the pretrain (random) split
+        println("group split by (drug, dose): $(length(unique(groups))) groups, $(length(unique(smp))) wells, $(length(groups)) pseudobulks")
+    end
 
     # val from train if missing
     function _split_val_from_train(train_idx)
@@ -336,8 +359,7 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     elseif config["modeltype"] in ("rmlp", "rlog")
         gene_medians = gene_medians_for(config, X)
         X_ranked = rank_genes_fn(X, gene_medians)
-        X_inv = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes);
-                         encoding=Symbol(get(config, "rank_encoding", "rev")))
+        X_inv = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes))
         train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
         if isnothing(train_idx)
             X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_inv, 0.1f0, 0.1f0)
