@@ -217,6 +217,9 @@ function load_finetune_args()
         "--clip"
             help = "PB elog/emlp: clamp z-scores to [-c, c] (default 10; 0 = off). tag _zc (clipped) / _z"
             arg_type = Float64
+        "--weight_decay"
+            help = "PB elog/rlog: AdamW weight decay λ (per-step shrink lr·λ, i.e. L2; default 0; saves as <tag>_wd<λ>)"
+            arg_type = Float64
         "--group_split"
             help = "tahoe PB: 1 = split by (drug, dose) groups instead of random pseudobulks (replicate wells kept together; saves as <model_tag>_gs)"
             arg_type = Int
@@ -282,6 +285,9 @@ function load_sc_finetune_args()
         "--mlp_hidden_dim"
             help = "emlp/rmlp: constant hidden width (n_layers hidden layers); 0 = tapered n_genes -> n_classes"
             arg_type = Int
+        "--save_model"
+            help = "1 = write model_state.jld2 (best + final), 0 = skip (sweeps)"
+            arg_type = Int
         "--mlp_shape"
             help = "emlp/rmlp with mlp_hidden_dim > 0: const (all hidden = mlp_hidden_dim) or funnel (halve each layer)"
             arg_type = String
@@ -312,6 +318,9 @@ function load_sc_finetune_args()
         "--clip"
             help = "SC elog/emlp: clamp z-scores to [-c, c] (default 10; 0 = off). tag _zc (clipped) / _z"
             arg_type = Float64
+        "--cache_val"
+            help = "SC finetune: 1 = read val shards once and keep features in memory (use for <=1024 features; ~19G at full genes)"
+            arg_type = Int
         "--sc_split"
             help = "SC finetune split unit: drug_dose (default; all wells of a drug-dose together), well (_well), or well_cl ((well, cell line) units = random PB split; _wcl)"
             arg_type = String

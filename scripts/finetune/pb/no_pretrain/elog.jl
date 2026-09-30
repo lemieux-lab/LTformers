@@ -103,7 +103,10 @@ end
 config["lr"] = 0.001
 model = Flux.Chain(Flux.Dense(d.n_genes => d.n_classifications))
 model = cu(model)
-opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
+# --weight_decay λ: AdamW decoupled decay (per-step shrink = lr·λ), i.e. L2 for the linear model. default 0
+wd = Float64(something(get(config, "weight_decay", nothing), 0.0))
+opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), wd), model)
+wd > 0 && (model_tag *= "_wd$(wd)")
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
@@ -299,6 +302,7 @@ log_info(; save_dir=save_dir, train_indices=d.train_idx, val_indices=d.val_idx, 
            val_losses=val_losses, test_losses=test_losses,
            all_preds=all_preds, all_trues=all_trues,
            X_test=d.X_test)
+jldopen(joinpath(save_dir, "losses.jld2"), "a+") do f; f["val_accs"] = val_accs; end  # per-epoch val accuracy
 
 run_time = now() - start_time
 total_minutes = div(run_time.value, 60000)

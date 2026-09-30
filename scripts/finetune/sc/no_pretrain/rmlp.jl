@@ -177,6 +177,7 @@ println("test (final model, step $global_step): ", final_metrics)
 
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
+    wb.summary["best_val_acc"] = best_val_acc
     wb.summary["best_step"] = best_step
     for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
     for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
@@ -186,7 +187,8 @@ end
 # log
 plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "CE")
 
-log_model(model, save_dir)
+# log_model(model, save_dir)
+something(get(config, "save_model", nothing), 1) != 0 && log_model(model, save_dir)
 log_info(; save_dir=save_dir, train_indices=train_idx, val_indices=val_idx, test_indices=test_idx,
            n_epochs=length(train_losses), train_losses=train_losses,
            val_losses=val_losses, test_losses=test_losses,
