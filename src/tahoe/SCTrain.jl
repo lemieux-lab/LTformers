@@ -152,11 +152,35 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
 
     train_losses = Float32[]; val_losses = Float32[]; val_accs = Float64[]; val_steps = Int[]
     best_val_loss = Inf32; best_val_acc = -Inf; best_step = 0
+    best_state = nothing  # best-val weights on cpu in RAM; written to best/ once after training (not at every improvement)
+    save_model = something(get(config, "save_model", nothing), 1) != 0  # 0: no model_state.jld2 files (sweeps)
     step = 0; run_losses = Float32[]; done = false
+
+    # --cache_val 1 (classification, streaming): read the val shards once, keep raw features in memory, reuse them at
+    # every val eval (same cells/order/transform -> same val acc; saves ~20x100 shard reads per run). ~1G at 1024
+    # features, ~19G at full genes, so only for small feature sets
+    cache_val = streaming && !is_regression && something(get(config, "cache_val", nothing), 0) == 1
+    val_X = nothing; val_Y = nothing
+    function build_val_cache!()
+        xs = Any[]; labs_all = Int[]
+        for sp in val_paths
+            cis, labs = d.val_shard_map[sp]
+            for (x, y) in finetune_batches_from_shard(sp, cis, labs, fk.token_to_idx, fk.n_coding, fk.top_k,
+                                                       fk.batch_size, fk.feat_mt, fk.n_cls; hvg_idx=fk.hvg_idx,
+                                                       process_cell_topk_flat_fn=fk.process_cell_topk_flat_fn,
+                                                       cell_to_dense_flat_fn=fk.cell_to_dense_flat_fn)
+                push!(xs, x); append!(labs_all, Flux.onecold(y))
+            end
+        end
+        val_X = reduce(hcat, xs); val_Y = Flux.onehotbatch(labs_all, 1:fk.n_cls)
+        memlog("val cache built ($(length(labs_all)) cells from $(length(val_paths)) shards)")
+    end
 
     function do_val!()
         Flux.testmode!(model)
-        vl, va, _, _ = streaming ? _eval(model, fk, is_regression; paths=val_paths, shard_map=d.val_shard_map) :
+        cache_val && isnothing(val_X) && build_val_cache!()
+        vl, va, _, _ = cache_val ? _eval(model, fk, is_regression; X=val_X, Y=val_Y) :
+                       streaming ? _eval(model, fk, is_regression; paths=val_paths, shard_map=d.val_shard_map) :
                                    _eval(model, fk, is_regression; X=d.X_val, Y=d.y_val)
         Flux.trainmode!(model)
         push!(train_losses, isempty(run_losses) ? NaN32 : mean(run_losses)); empty!(run_losses)
@@ -169,7 +193,8 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
         if improved
             best_val_loss = vl; best_val_acc = va; best_step = step
             best_dir = joinpath(save_dir, "best"); mkpath(best_dir)
-            log_model(model, best_dir)
+            # log_model(model, best_dir)
+            best_state = Flux.state(cpu(model))
             plot_loss(length(train_losses), train_losses, val_losses, best_dir, loss_name)
             jldsave(joinpath(best_dir, "losses.jld2"); val_steps, train_losses, val_losses, val_accs)
             log_params(config, gpu_info, 0, 0, best_dir; skip=skip, total_steps=step,
@@ -179,6 +204,7 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
             ld = Dict("global_step" => step, "train_loss" => train_losses[end], "val_loss" => vl,
                       "best_val_loss" => best_val_loss)  # per-eval so hyperband early_terminate can see it
             is_regression || (ld["val_acc"] = va)
+            is_regression || (ld["best_val_acc"] = best_val_acc)  # sweep metric (classification): matches best/ selection
             wb.log(ld)
         end
     end
@@ -205,6 +231,11 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
     end
     (isempty(val_steps) || val_steps[end] != step) && do_val!()
 
+    if save_model && !isnothing(best_state)
+        mkpath(joinpath(save_dir, "best"))
+        jldsave(joinpath(save_dir, "best", "model_state.jld2"); model_state=best_state)
+    end
+
     # test: final model, then best only if it differs from final
     Flux.testmode!(model)
     GC.gc(true); CUDA.reclaim()
@@ -218,7 +249,8 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
     best_preds, best_trues, best_agg = all_preds, all_trues, final_agg
     memlog("after final test")
     if best_step != step
-        best_cpu = load_best_cpu(model, save_dir)
+        # best_cpu = load_best_cpu(model, save_dir)
+        best_cpu = isnothing(best_state) ? nothing : Flux.loadmodel!(cpu(model), best_state)
         if !isnothing(best_cpu)
             best_model = fix_gpu_dropout(cu(best_cpu))
             Flux.testmode!(best_model)

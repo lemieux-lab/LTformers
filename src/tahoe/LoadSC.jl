@@ -22,6 +22,12 @@ const _np = PyNULL()
 function __init__()
     copy!(_pq, pyimport("pyarrow.parquet"))
     copy!(_np, pyimport("numpy"))
+    # cap pyarrow's decode/IO thread pools to the SLURM allocation (default = every core on the node, 256 on oni,
+    # which burst far past the job's cpus on each shard read). output is identical, only decode parallelism changes
+    nt = something(tryparse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "")), 8)
+    pa = pyimport("pyarrow")
+    pa.set_cpu_count(nt)
+    pa.set_io_thread_count(nt)
 end
 
 
