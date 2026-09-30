@@ -5,7 +5,7 @@ using Flux, CUDA, Functors, Statistics
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
 using Preprocess: pad_token_id
 
-export Transf, encode, fix_gpu_dropout
+export Transf, encode, fix_gpu_dropout, check_ad_masks
 export encode_rank, rank_keep_mask, masked_mean_pool
 export RankModel, ExpModel
 export RankLReconModel, ExpLReconModel
@@ -317,8 +317,23 @@ function encode(model::Union{ExpModel, ExpLReconModel, ExpEReconModel}, x)
 end
 
 
-# fix dropout rng for gpu
+# AD mask check (once per process): Zygote ≤ 0.7.11 with ForwardDiff ≥ 1 runs Bool broadcasts on GPU through
+# Duals inside gradients, so value ties are broken by the partials (`y .!= -100` -> always true, `x .== -1f0` ->
+# always false) and every masked loss silently trains on the wrong positions. Fixed in Zygote 0.7.12 (#1597).
+const _AD_MASKS_OK = Ref(false)
+function check_ad_masks()
+    _AD_MASKS_OK[] && return true
+    y = CuArray(Float32[-100, 1.5, -100, 2.5])
+    n_ad = Flux.withgradient(v -> sum(v) * 0f0 + Float32(sum(y .!= -100f0)), CuArray([1f0]))[1]
+    n_ad == 2f0 || error("AD mask check failed: `y .!= -100` counted $(Int(n_ad)) of 4 inside Flux.withgradient " *
+                         "(expected 2). This env's Zygote (< 0.7.12) evaluates GPU masks wrongly during training; " *
+                         "upgrade Zygote to >= 0.7.12 (see notes/memory past-bugs).")
+    _AD_MASKS_OK[] = true
+end
+
+# fix dropout rng for gpu (also runs the AD mask check, since every script calls this once its model is on GPU)
 function fix_gpu_dropout(model)
+    check_ad_masks()
     return fmap(model; exclude = x -> x isa Flux.Dropout) do x
         if x isa Flux.Dropout
             return Flux.Dropout(x.p, x.dims, x.active, CUDA.default_rng())
