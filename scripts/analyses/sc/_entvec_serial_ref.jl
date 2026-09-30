@@ -120,52 +120,12 @@ total_cells_processed = 0
 
 println("Entropy: $n_parquets_to_use / $n_parquets parquets")
 t0 = time()
-# for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
-#     parquet_path = joinpath(tahoe_data_dir, parquet_file)
-#     parquet = read_parquet(parquet_path)
+for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
+    parquet_path = joinpath(tahoe_data_dir, parquet_file)
+    parquet = read_parquet(parquet_path)
 
-#     for ci in 1:parquet.n_cells
-#         raw = cell_to_raw(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
-#         dense = copy(raw)
-#         total = sum(dense)
-#         if total > 0
-#             for i in 1:n_coding
-#                 if dense[i] > 0
-#                     dense[i] = log1p(10000f0 * dense[i] / total)
-#                 end
-#             end
-#         end
-#         ranked = Vector{Int32}(undef, n_coding)
-#         sortperm!(ranked, dense ./ sc_meds, rev=true)
-
-#         for (rank_pos, gene_idx) in enumerate(ranked)
-#             if raw[gene_idx] == 0.0f0
-#                 rank_zero_counts[rank_pos] += 1
-#             else
-#                 d = rank_counts[rank_pos]
-#                 d[gene_idx] = get(d, gene_idx, 0) + 1
-#             end
-#         end
-
-#         # unique count diversity from tail
-#         seen = Set{Float32}()
-#         for r in n_coding:-1:1
-#             push!(seen, raw[ranked[r]])
-#             rank_unique_sums[r] += length(seen)
-#         end
-#     end
-#     global total_cells_processed += parquet.n_cells
-# end
-# threaded (the loop above ran at global scope on 1 core): each shard is read on the main thread, then its cells are
-# split into chunks, each chunk with its own counters; counts are merged into the globals after every shard, so the
-# result is the same as the serial loop (integer counts, order-independent)
-function entropy_chunk!(counts::Vector{Dict{Int32,Int}}, zero_counts::Vector{Int}, unique_sums::Vector{Float64},
-                        pqd, cells, token_to_idx::Dict{Int,Int}, n_coding::Int, meds::Vector{Float32})
-    ranked = Vector{Int32}(undef, n_coding)
-    normed = Vector{Float32}(undef, n_coding)
-    seen = Set{Float32}()
-    for ci in cells
-        raw = cell_to_raw(pqd.genes_flat, pqd.offsets, pqd.expr_flat, ci, token_to_idx, n_coding)
+    for ci in 1:parquet.n_cells
+        raw = cell_to_raw(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
         dense = copy(raw)
         total = sum(dense)
         if total > 0
@@ -175,60 +135,27 @@ function entropy_chunk!(counts::Vector{Dict{Int32,Int}}, zero_counts::Vector{Int
                 end
             end
         end
-        normed .= dense ./ meds
-        sortperm!(ranked, normed, rev=true)
+        ranked = Vector{Int32}(undef, n_coding)
+        sortperm!(ranked, dense ./ sc_meds, rev=true)
 
         for (rank_pos, gene_idx) in enumerate(ranked)
             if raw[gene_idx] == 0.0f0
-                zero_counts[rank_pos] += 1
+                rank_zero_counts[rank_pos] += 1
             else
-                d = counts[rank_pos]
+                d = rank_counts[rank_pos]
                 d[gene_idx] = get(d, gene_idx, 0) + 1
             end
         end
 
         # unique count diversity from tail
-        empty!(seen)
+        seen = Set{Float32}()
         for r in n_coding:-1:1
             push!(seen, raw[ranked[r]])
-            unique_sums[r] += length(seen)
+            rank_unique_sums[r] += length(seen)
         end
     end
-end
-
-function merge_rank_counts!(rank_counts::Vector{Dict{Int32,Int}}, chunk_counts::Vector{Vector{Dict{Int32,Int}}})
-    Threads.@threads for r in eachindex(rank_counts)
-        d = rank_counts[r]
-        for cc in chunk_counts
-            for (g, v) in cc[r]
-                d[g] = get(d, g, 0) + v
-            end
-            empty!(cc[r])
-        end
-    end
-end
-
-n_chunks = Threads.nthreads()
-chunk_counts = [[Dict{Int32,Int}() for _ in 1:n_coding] for _ in 1:n_chunks]
-chunk_zero = [zeros(Int, n_coding) for _ in 1:n_chunks]
-chunk_unique = [zeros(Float64, n_coding) for _ in 1:n_chunks]
-println("  $(n_chunks) threads"); flush(stdout)
-for (si, parquet_file) in enumerate(sampled_parquet_files)
-    parquet_path = joinpath(tahoe_data_dir, parquet_file)
-    parquet = read_parquet(parquet_path)
-    GC.gc()   # free PyCall objects on the main thread before threading (PyCall finalizers off the main thread segfault)
-
-    parts = collect(Iterators.partition(1:parquet.n_cells, cld(parquet.n_cells, n_chunks)))
-    Threads.@threads for c in eachindex(parts)
-        entropy_chunk!(chunk_counts[c], chunk_zero[c], chunk_unique[c], parquet, parts[c], token_to_idx, n_coding, sc_meds)
-    end
-    merge_rank_counts!(rank_counts, chunk_counts)
     global total_cells_processed += parquet.n_cells
-    (si % 10 == 0 || si == length(sampled_parquet_files)) &&
-        (println("  entropy: shard $si / $(length(sampled_parquet_files)), $total_cells_processed cells, $(round(Int, time() - t0)) s"); flush(stdout))
 end
-rank_zero_counts .+= sum(chunk_zero)
-rank_unique_sums .+= sum(chunk_unique)
 elapsed = time() - t0
 println("Total cells processed: $total_cells_processed in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
 
@@ -371,48 +298,17 @@ sc_gene_m2 = zeros(Float64, n_coding)
 
 println("Mean/StdDev: $n_parquets_to_use / $n_parquets parquets")
 t0 = time()
-# for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
-#     parquet_path = joinpath(tahoe_data_dir, parquet_file)
-#     t = pq.read_table(parquet_path)
-#     genes_combined = t.column("genes").combine_chunks()
-#     expr_combined = t.column("expressions").combine_chunks()
-#     gf = convert(Vector{Int64}, np.array(genes_combined.values, copy=true))
-#     of = convert(Vector{Int64}, np.array(genes_combined.offsets, copy=true))
-#     ef = convert(Vector{Float32}, np.array(expr_combined.values, copy=true))
-#     n_cells = length(of) - 1
+for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
+    parquet_path = joinpath(tahoe_data_dir, parquet_file)
+    t = pq.read_table(parquet_path)
+    genes_combined = t.column("genes").combine_chunks()
+    expr_combined = t.column("expressions").combine_chunks()
+    gf = convert(Vector{Int64}, np.array(genes_combined.values, copy=true))
+    of = convert(Vector{Int64}, np.array(genes_combined.offsets, copy=true))
+    ef = convert(Vector{Float32}, np.array(expr_combined.values, copy=true))
+    n_cells = length(of) - 1
 
-#     for cell_i in 1:n_cells
-#         s = of[cell_i] + 1
-#         e = of[cell_i + 1]
-#         if ef[s] < 0
-#             s += 1
-#         end
-
-#         # log-normalize
-#         total = 0f0
-#         for i in s:e
-#             total += ef[i]
-#         end
-
-#         for i in s:e
-#             tid = gf[i]
-#             gi = get(token_to_idx, tid, 0)
-#             gi == 0 && continue
-#             val = total > 0 ? log1p(10000f0 * ef[i] / total) : 0f0
-
-#             sc_gene_count[gi] += 1
-#             delta = val - sc_gene_mean[gi]
-#             sc_gene_mean[gi] += delta / sc_gene_count[gi]
-#             delta2 = val - sc_gene_mean[gi]
-#             sc_gene_m2[gi] += delta * delta2
-#         end
-#     end
-# end
-# threaded: same per-cell Welford updates, one set of accumulators per chunk, merged (Chan et al.) into the totals
-# after each shard. Counts are exact; mean/std can differ from the serial loop in the last floating-point digits
-function welford_chunk!(cnt::Vector{Int}, mu::Vector{Float64}, m2::Vector{Float64},
-                        gf::Vector{Int64}, of::Vector{Int64}, ef::Vector{Float32}, cells, token_to_idx::Dict{Int,Int})
-    for cell_i in cells
+    for cell_i in 1:n_cells
         s = of[cell_i] + 1
         e = of[cell_i + 1]
         if ef[s] < 0
@@ -431,43 +327,13 @@ function welford_chunk!(cnt::Vector{Int}, mu::Vector{Float64}, m2::Vector{Float6
             gi == 0 && continue
             val = total > 0 ? log1p(10000f0 * ef[i] / total) : 0f0
 
-            cnt[gi] += 1
-            delta = val - mu[gi]
-            mu[gi] += delta / cnt[gi]
-            delta2 = val - mu[gi]
-            m2[gi] += delta * delta2
+            sc_gene_count[gi] += 1
+            delta = val - sc_gene_mean[gi]
+            sc_gene_mean[gi] += delta / sc_gene_count[gi]
+            delta2 = val - sc_gene_mean[gi]
+            sc_gene_m2[gi] += delta * delta2
         end
     end
-end
-
-function welford_merge!(cnt, mu, m2, cb, mb, m2b)
-    for g in eachindex(cnt)
-        nb = cb[g]; nb == 0 && continue
-        na = cnt[g]; n = na + nb
-        delta = mb[g] - mu[g]
-        mu[g] += delta * nb / n
-        m2[g] += m2b[g] + delta^2 * na * nb / n
-        cnt[g] = n
-    end
-end
-
-w_cnt = [zeros(Int, n_coding) for _ in 1:n_chunks]
-w_mu = [zeros(Float64, n_coding) for _ in 1:n_chunks]
-w_m2 = [zeros(Float64, n_coding) for _ in 1:n_chunks]
-for (si, parquet_file) in enumerate(sampled_parquet_files)
-    parquet_path = joinpath(tahoe_data_dir, parquet_file)
-    pqd = read_parquet(parquet_path)   # same arrays as the inline read above
-    GC.gc()
-    parts = collect(Iterators.partition(1:pqd.n_cells, cld(pqd.n_cells, n_chunks)))
-    Threads.@threads for c in eachindex(parts)
-        fill!(w_cnt[c], 0); fill!(w_mu[c], 0.0); fill!(w_m2[c], 0.0)
-        welford_chunk!(w_cnt[c], w_mu[c], w_m2[c], pqd.genes_flat, pqd.offsets, pqd.expr_flat, parts[c], token_to_idx)
-    end
-    for c in eachindex(parts)
-        welford_merge!(sc_gene_count, sc_gene_mean, sc_gene_m2, w_cnt[c], w_mu[c], w_m2[c])
-    end
-    (si % 10 == 0 || si == length(sampled_parquet_files)) &&
-        (println("  mean/std: shard $si / $(length(sampled_parquet_files)), $(round(Int, time() - t0)) s"); flush(stdout))
 end
 elapsed = time() - t0
 println("Mean/StdDev done in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
@@ -507,79 +373,37 @@ n_parquets_to_sample = min(n_parquets_to_use, length(parquet_files))
 sampled_parquets = sort(sample(1:length(parquet_files), n_parquets_to_sample, replace=false))
 cells_per_parquet = cld(n_cells_to_sample, n_parquets_to_sample)
 
-# sc_expr = Matrix{Float32}(undef, n_coding, 0)
-# sc_ranked = Matrix{Int32}(undef, n_coding, 0)
-# sc_cell_lines = String[]
-
-# println("=== Vectors: sampling $n_cells_to_sample cells from $n_parquets_to_sample parquets ===")
-# t0 = time()
-# cells_collected = 0
-# for si in ProgressBar(sampled_parquets)
-#     cells_collected >= n_cells_to_sample && break
-#     parquet_path = joinpath(tahoe_data_dir, parquet_files[si])
-#     parquet = read_parquet(parquet_path)
-
-#     # cell line metadata
-#     parquet_t = pq.read_table(parquet_path, columns=["cell_line_id"])
-#     parquet_cl = [string(parquet_t.column("cell_line_id").__getitem__(i-1).as_py()) for i in 1:parquet.n_cells]
-
-#     n_take = min(cells_per_parquet, parquet.n_cells, n_cells_to_sample - cells_collected)
-#     cell_idxs = sample(1:parquet.n_cells, n_take, replace=false)
-
-#     batch_expr = Matrix{Float32}(undef, n_coding, n_take)
-#     batch_rank = Matrix{Int32}(undef, n_coding, n_take)
-#     for (j, ci) in enumerate(cell_idxs)
-#         batch_expr[:, j] = cell_to_dense(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
-#         sortperm!(view(batch_rank, :, j), view(batch_expr, :, j) ./ sc_meds, rev=true)
-#     end
-
-#     global sc_expr = hcat(sc_expr, batch_expr)
-#     global sc_ranked = hcat(sc_ranked, batch_rank)
-#     append!(sc_cell_lines, parquet_cl[cell_idxs])
-#     global cells_collected += n_take
-# end
-# sc_N = size(sc_expr, 2)
-# preallocated (the hcat per shard above copied the whole matrix every time) and threaded over the sampled cells;
-# the cells drawn (sample on the main thread) are unchanged
-read_cell_lines(path) = [string(x) for x in pq.read_table(path, columns=["cell_line_id"]).column("cell_line_id").to_pylist()]
-
-function fill_cells!(E::Matrix{Float32}, Rk::Matrix{Int32}, col0::Int, pqd, cell_idxs::Vector{Int},
-                     token_to_idx::Dict{Int,Int}, n_coding::Int, meds::Vector{Float32})
-    Threads.@threads for j in eachindex(cell_idxs)
-        col = col0 + j
-        E[:, col] = cell_to_dense(pqd.genes_flat, pqd.offsets, pqd.expr_flat, cell_idxs[j], token_to_idx, n_coding)
-        sortperm!(view(Rk, :, col), view(E, :, col) ./ meds, rev=true)
-    end
-end
-
-sc_expr = Matrix{Float32}(undef, n_coding, n_cells_to_sample)
-sc_ranked = Matrix{Int32}(undef, n_coding, n_cells_to_sample)
+sc_expr = Matrix{Float32}(undef, n_coding, 0)
+sc_ranked = Matrix{Int32}(undef, n_coding, 0)
 sc_cell_lines = String[]
 
 println("=== Vectors: sampling $n_cells_to_sample cells from $n_parquets_to_sample parquets ===")
 t0 = time()
 cells_collected = 0
-for (si, pi) in enumerate(sampled_parquets)
+for si in ProgressBar(sampled_parquets)
     cells_collected >= n_cells_to_sample && break
-    parquet_path = joinpath(tahoe_data_dir, parquet_files[pi])
+    parquet_path = joinpath(tahoe_data_dir, parquet_files[si])
     parquet = read_parquet(parquet_path)
 
     # cell line metadata
-    # parquet_t = pq.read_table(parquet_path, columns=["cell_line_id"])
-    # parquet_cl = [string(parquet_t.column("cell_line_id").__getitem__(i-1).as_py()) for i in 1:parquet.n_cells]
-    parquet_cl = read_cell_lines(parquet_path)
-    GC.gc()   # the Python objects are unreachable here, so they are finalized on the main thread
+    parquet_t = pq.read_table(parquet_path, columns=["cell_line_id"])
+    parquet_cl = [string(parquet_t.column("cell_line_id").__getitem__(i-1).as_py()) for i in 1:parquet.n_cells]
 
     n_take = min(cells_per_parquet, parquet.n_cells, n_cells_to_sample - cells_collected)
     cell_idxs = sample(1:parquet.n_cells, n_take, replace=false)
 
-    fill_cells!(sc_expr, sc_ranked, cells_collected, parquet, cell_idxs, token_to_idx, n_coding, sc_meds)
+    batch_expr = Matrix{Float32}(undef, n_coding, n_take)
+    batch_rank = Matrix{Int32}(undef, n_coding, n_take)
+    for (j, ci) in enumerate(cell_idxs)
+        batch_expr[:, j] = cell_to_dense(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
+        sortperm!(view(batch_rank, :, j), view(batch_expr, :, j) ./ sc_meds, rev=true)
+    end
+
+    global sc_expr = hcat(sc_expr, batch_expr)
+    global sc_ranked = hcat(sc_ranked, batch_rank)
     append!(sc_cell_lines, parquet_cl[cell_idxs])
     global cells_collected += n_take
-    (si % 25 == 0) && (println("  vectors: shard $si / $(length(sampled_parquets)), $cells_collected cells, $(round(Int, time() - t0)) s"); flush(stdout))
 end
-sc_expr = sc_expr[:, 1:cells_collected]
-sc_ranked = sc_ranked[:, 1:cells_collected]
 sc_N = size(sc_expr, 2)
 sc_ndet = vec(sum(sc_expr .> 0f0, dims=1))
 elapsed = time() - t0
@@ -624,34 +448,17 @@ println("After removing self-pairs: $sc_n_pairs pairs")
 sc_expr_euclidean = Vector{Float32}(undef, sc_n_pairs)
 sc_expr_cosine = Vector{Float32}(undef, sc_n_pairs)
 
-# for k in 1:sc_n_pairs
-    # a = view(sc_expr, :, sc_idx_a[k])
-    # b = view(sc_expr, :, sc_idx_b[k])
-    # sc_expr_euclidean[k] = sqrt(sum((a .- b).^2))
-    # sc_expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
-# end
-# threaded pair loops: same per-pair formulas, each pair written to its own slot (no random draws inside)
-function pair_euc_cos!(euc::Vector{Float32}, cosv::Vector{Float32}, X::AbstractMatrix{Float32}, rows, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        a = view(X, rows, ia[k])
-        b = view(X, rows, ib[k])
-        euc[k] = sqrt(sum((a .- b).^2))
-        cosv[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
-    end
+for k in 1:sc_n_pairs
+    a = view(sc_expr, :, sc_idx_a[k])
+    b = view(sc_expr, :, sc_idx_b[k])
+    sc_expr_euclidean[k] = sqrt(sum((a .- b).^2))
+    sc_expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
 end
-function pair_kendall!(out::Vector{Float32}, X::AbstractMatrix{Float32}, rows, meds::AbstractVector{Float32}, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        out[k] = kendall_dist(view(X, rows, ia[k]) ./ meds, view(X, rows, ib[k]) ./ meds)
-    end
-end
-pair_euc_cos!(sc_expr_euclidean, sc_expr_cosine, sc_expr, Colon(), sc_idx_a, sc_idx_b)
 
 sc_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
-# for k in 1:sc_n_pairs
-    # sc_rank_kendall[k] = kendall_dist(view(sc_expr, :, sc_idx_a[k]) ./ sc_meds, view(sc_expr, :, sc_idx_b[k]) ./ sc_meds)
-# end
-pair_kendall!(sc_rank_kendall, sc_expr, Colon(), sc_meds, sc_idx_a, sc_idx_b)
-println("pairwise distances done"); flush(stdout)
+for k in 1:sc_n_pairs
+    sc_rank_kendall[k] = kendall_dist(view(sc_expr, :, sc_idx_a[k]) ./ sc_meds, view(sc_expr, :, sc_idx_b[k]) ./ sc_meds)
+end
 
 # save distances
 # data_vec_dir = "results/tahoe/sc/data/vectors/$(n_parquets_to_use)_pqs"
@@ -707,39 +514,21 @@ sc_n_only_a = Vector{Int}(undef, sc_n_pairs)
 sc_n_only_b = Vector{Int}(undef, sc_n_pairs)
 sc_jaccard = Vector{Float32}(undef, sc_n_pairs)
 
-# for k in 1:sc_n_pairs
-    # a = view(sc_expr, :, sc_idx_a[k])
-    # b = view(sc_expr, :, sc_idx_b[k])
-    # nz_a = a .> 0f0
-    # nz_b = b .> 0f0
-    # shared = sum(nz_a .& nz_b)
-    # union = sum(nz_a .| nz_b)
-    # sc_n_detected_a[k] = sum(nz_a)
-    # sc_n_detected_b[k] = sum(nz_b)
-    # sc_n_shared[k] = shared
-    # sc_n_union[k] = union
-    # sc_n_only_a[k] = sum(nz_a .& .!nz_b)
-    # sc_n_only_b[k] = sum(.!nz_a .& nz_b)
-    # sc_jaccard[k] = union > 0 ? Float32(shared / union) : 0f0
-# end
-function pair_overlap!(det_a, det_b, n_sh, n_un, only_a, only_b, jac, X::Matrix{Float32}, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        a = view(X, :, ia[k])
-        b = view(X, :, ib[k])
-        nz_a = a .> 0f0
-        nz_b = b .> 0f0
-        shared = sum(nz_a .& nz_b)
-        n_union = sum(nz_a .| nz_b)
-        det_a[k] = sum(nz_a)
-        det_b[k] = sum(nz_b)
-        n_sh[k] = shared
-        n_un[k] = n_union
-        only_a[k] = sum(nz_a .& .!nz_b)
-        only_b[k] = sum(.!nz_a .& nz_b)
-        jac[k] = n_union > 0 ? Float32(shared / n_union) : 0f0
-    end
+for k in 1:sc_n_pairs
+    a = view(sc_expr, :, sc_idx_a[k])
+    b = view(sc_expr, :, sc_idx_b[k])
+    nz_a = a .> 0f0
+    nz_b = b .> 0f0
+    shared = sum(nz_a .& nz_b)
+    union = sum(nz_a .| nz_b)
+    sc_n_detected_a[k] = sum(nz_a)
+    sc_n_detected_b[k] = sum(nz_b)
+    sc_n_shared[k] = shared
+    sc_n_union[k] = union
+    sc_n_only_a[k] = sum(nz_a .& .!nz_b)
+    sc_n_only_b[k] = sum(.!nz_a .& nz_b)
+    sc_jaccard[k] = union > 0 ? Float32(shared / union) : 0f0
 end
-pair_overlap!(sc_n_detected_a, sc_n_detected_b, sc_n_shared, sc_n_union, sc_n_only_a, sc_n_only_b, sc_jaccard, sc_expr, sc_idx_a, sc_idx_b)
 
 println("\n=== pairwise gene overlap ===")
 println("  jaccard:  median=$(round(median(sc_jaccard), digits=3))  mean=$(round(mean(sc_jaccard), digits=3))")
@@ -751,29 +540,16 @@ println("  only-b:   median=$(median(sc_n_only_b))  mean=$(round(mean(sc_n_only_
 # euclid from non-overlapping genes
 sc_euclid_from_mismatch = Vector{Float32}(undef, sc_n_pairs)
 sc_euclid_from_shared = Vector{Float32}(undef, sc_n_pairs)
-# for k in 1:sc_n_pairs
-    # a = view(sc_expr, :, sc_idx_a[k])
-    # b = view(sc_expr, :, sc_idx_b[k])
-    # nz_a = a .> 0f0
-    # nz_b = b .> 0f0
-    # shared_mask = nz_a .& nz_b
-    # mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
-    # sc_euclid_from_mismatch[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
-    # sc_euclid_from_shared[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
-# end
-function pair_mismatch!(from_mm, from_sh, X::Matrix{Float32}, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        a = view(X, :, ia[k])
-        b = view(X, :, ib[k])
-        nz_a = a .> 0f0
-        nz_b = b .> 0f0
-        shared_mask = nz_a .& nz_b
-        mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
-        from_mm[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
-        from_sh[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
-    end
+for k in 1:sc_n_pairs
+    a = view(sc_expr, :, sc_idx_a[k])
+    b = view(sc_expr, :, sc_idx_b[k])
+    nz_a = a .> 0f0
+    nz_b = b .> 0f0
+    shared_mask = nz_a .& nz_b
+    mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
+    sc_euclid_from_mismatch[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
+    sc_euclid_from_shared[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
 end
-pair_mismatch!(sc_euclid_from_mismatch, sc_euclid_from_shared, sc_expr, sc_idx_a, sc_idx_b)
 
 frac_from_mismatch = sc_euclid_from_mismatch.^2 ./ (sc_euclid_from_mismatch.^2 .+ sc_euclid_from_shared.^2 .+ 1f-10)
 println("\n=== euclidean distance decomposition ===")
@@ -908,30 +684,6 @@ save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_shared.png", fig_nsh)
 
 # pairwise distances, top-k
 
-function pair_topk_euc_cos!(euc, cosv, X::Matrix{Float32}, Rk::Matrix{Int32}, top_k::Int, n_coding::Int, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        top_genes_a = view(Rk, 1:top_k, ia[k])
-        top_genes_b = view(Rk, 1:top_k, ib[k])
-        vals_a = view(X, :, ia[k])
-        vals_b = view(X, :, ib[k])
-
-        va = zeros(Float32, n_coding)
-        vb = zeros(Float32, n_coding)
-        for i in 1:top_k
-            va[top_genes_a[i]] = vals_a[top_genes_a[i]]
-            vb[top_genes_b[i]] = vals_b[top_genes_b[i]]
-        end
-        euc[k] = sqrt(sum((va .- vb).^2))
-        cosv[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
-    end
-end
-function pair_topk_kendall!(out, Rk::Matrix{Int32}, ndet::Vector{Int}, top_k::Int, ia::Vector{Int}, ib::Vector{Int})
-    Threads.@threads for k in eachindex(ia)
-        out[k] = topk_kendall_dist(view(Rk, :, ia[k]), view(Rk, :, ib[k]), top_k;
-                                   la=min(top_k, ndet[ia[k]]), lb=min(top_k, ndet[ib[k]]))
-    end
-end
-
 for top_k in [1024, 2048]
     println("=== Pairwise distances for top-$top_k ===")
     local t0 = time()
@@ -939,29 +691,27 @@ for top_k in [1024, 2048]
     tk_expr_euclidean = Vector{Float32}(undef, sc_n_pairs)
     tk_expr_cosine = Vector{Float32}(undef, sc_n_pairs)
 
-    # for k in 1:sc_n_pairs
-        # top_genes_a = view(sc_ranked, 1:top_k, sc_idx_a[k])
-        # top_genes_b = view(sc_ranked, 1:top_k, sc_idx_b[k])
-        # vals_a = view(sc_expr, :, sc_idx_a[k])
-        # vals_b = view(sc_expr, :, sc_idx_b[k])
+    for k in 1:sc_n_pairs
+        top_genes_a = view(sc_ranked, 1:top_k, sc_idx_a[k])
+        top_genes_b = view(sc_ranked, 1:top_k, sc_idx_b[k])
+        vals_a = view(sc_expr, :, sc_idx_a[k])
+        vals_b = view(sc_expr, :, sc_idx_b[k])
 
-        # va = zeros(Float32, n_coding)
-        # vb = zeros(Float32, n_coding)
-        # for i in 1:top_k
-            # va[top_genes_a[i]] = vals_a[top_genes_a[i]]
-            # vb[top_genes_b[i]] = vals_b[top_genes_b[i]]
-        # end
-        # tk_expr_euclidean[k] = sqrt(sum((va .- vb).^2))
-        # tk_expr_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
-    # end
-    pair_topk_euc_cos!(tk_expr_euclidean, tk_expr_cosine, sc_expr, sc_ranked, top_k, n_coding, sc_idx_a, sc_idx_b)
+        va = zeros(Float32, n_coding)
+        vb = zeros(Float32, n_coding)
+        for i in 1:top_k
+            va[top_genes_a[i]] = vals_a[top_genes_a[i]]
+            vb[top_genes_b[i]] = vals_b[top_genes_b[i]]
+        end
+        tk_expr_euclidean[k] = sqrt(sum((va .- vb).^2))
+        tk_expr_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
+    end
 
     tk_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
-    # for k in 1:sc_n_pairs
-        # tk_rank_kendall[k] = topk_kendall_dist(view(sc_ranked, :, sc_idx_a[k]), view(sc_ranked, :, sc_idx_b[k]), top_k;
-                                               # la=min(top_k, sc_ndet[sc_idx_a[k]]), lb=min(top_k, sc_ndet[sc_idx_b[k]]))
-    # end
-    pair_topk_kendall!(tk_rank_kendall, sc_ranked, sc_ndet, top_k, sc_idx_a, sc_idx_b)
+    for k in 1:sc_n_pairs
+        tk_rank_kendall[k] = topk_kendall_dist(view(sc_ranked, :, sc_idx_a[k]), view(sc_ranked, :, sc_idx_b[k]), top_k;
+                                               la=min(top_k, sc_ndet[sc_idx_a[k]]), lb=min(top_k, sc_ndet[sc_idx_b[k]]))
+    end
 
     local elapsed = time() - t0
     println("Done in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
@@ -1016,21 +766,19 @@ begin
     hvg_expr_euclidean = Vector{Float32}(undef, sc_n_pairs)
     hvg_expr_cosine = Vector{Float32}(undef, sc_n_pairs)
 
-    # for k in 1:sc_n_pairs
-        # a = view(sc_expr, hvg_idx, sc_idx_a[k])
-        # b = view(sc_expr, hvg_idx, sc_idx_b[k])
-        # hvg_expr_euclidean[k] = sqrt(sum((a .- b).^2))
-        # hvg_expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
-    # end
-    pair_euc_cos!(hvg_expr_euclidean, hvg_expr_cosine, sc_expr, hvg_idx, sc_idx_a, sc_idx_b)
+    for k in 1:sc_n_pairs
+        a = view(sc_expr, hvg_idx, sc_idx_a[k])
+        b = view(sc_expr, hvg_idx, sc_idx_b[k])
+        hvg_expr_euclidean[k] = sqrt(sum((a .- b).^2))
+        hvg_expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+    end
 
     hvg_rank_kendall = Vector{Float32}(undef, sc_n_pairs)
-    # for k in 1:sc_n_pairs
-        # a = view(sc_expr, hvg_idx, sc_idx_a[k])
-        # b = view(sc_expr, hvg_idx, sc_idx_b[k])
-        # hvg_rank_kendall[k] = kendall_dist(a ./ view(sc_meds, hvg_idx), b ./ view(sc_meds, hvg_idx))
-    # end
-    pair_kendall!(hvg_rank_kendall, sc_expr, hvg_idx, view(sc_meds, hvg_idx), sc_idx_a, sc_idx_b)
+    for k in 1:sc_n_pairs
+        a = view(sc_expr, hvg_idx, sc_idx_a[k])
+        b = view(sc_expr, hvg_idx, sc_idx_b[k])
+        hvg_rank_kendall[k] = kendall_dist(a ./ view(sc_meds, hvg_idx), b ./ view(sc_meds, hvg_idx))
+    end
 
     local elapsed = time() - t0
     println("Done in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
@@ -1123,7 +871,6 @@ begin
             pb_ncells[key] = get(pb_ncells, key, 0) + 1
         end
     end
-    GC.gc()   # finalize this loop's Python objects on the main thread before the threaded cos_jac
     pb_keys = [k for k in keys(pb_sums) if pb_ncells[k] >= min_cells_per_pb]
     pb_raw = reduce(hcat, [pb_sums[k] for k in pb_keys])
     pb_depths = vec(sum(pb_raw, dims=1))
@@ -1147,8 +894,7 @@ begin
     function cos_jac(X, ia, ib)
         cosv = Vector{Float32}(undef, length(ia))
         jacv = Vector{Float32}(undef, length(ia))
-        # for k in eachindex(ia)
-            # a = view(X, :, ia[k]); b = view(X, :, ib[k])        Threads.@threads for k in eachindex(ia)
+        for k in eachindex(ia)
             a = view(X, :, ia[k]); b = view(X, :, ib[k])
             cosv[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
             nz_a = a .> 0f0; nz_b = b .> 0f0
