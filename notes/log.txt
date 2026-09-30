@@ -2523,3 +2523,99 @@ from valence blog posts:
     8. all ft sweeps
     9. all ft good runs
     10. all lvl3 baselines, fts
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 29 2026 ###
+
+-- OVERALL:
+    -- distance vectors
+        -- RUNNING sc_entvec.jl (1)
+            -- finished t_vec, pb ent, l_vec
+        -- checking again for euclidean, spearman-rho, and top-1024 or 1024-hvg to see if there is still the same (new) relationship!
+            -- yes, kendall ~ spearan and cosine ~ euclidean
+            -- 1024 vs full: same in lincs, stronger in filtered tpb than in full tpb
+        -- also doing additional analyses:
+            -- plots generated:
+                1. auroc: probability that a different pair of {factor} is further apart than a same pair
+                    -- where we would expect that ex. for cell line, this would be close to 1 because theyre easiliy separable for every metric
+                2. knn overlap: if the distances choose the same k nearest neighbours
+                    -- mean jaccard overlap of each sample's 10 nearest neighbours under 2 distances
+                    -- same overlap per k
+                    -- leave-one-out accuracy of 10-neighbour majroity vote
+                3. depth sensitivity: 
+                4. disagreement: where the two distances disagree in rank?
+                5. gene contribution: which genes drive each distance
+                6. invariance: what each distance ignores
+                    -- one sample vs. itself under x -> x^N
+                    -- added gaussian noise, which every distance should pick up!
+            -- see results/lincs/analyses/metric_compare/:
+                1. rank is just slightly better at separating CL, drug, dose, and plate apart
+                2. share 0.57 of each samples 10 nearest neighbours
+                4. weak correlation on different CL pairs
+                5. no notes
+            -- see results/tahoe/pb/analyses/metric_compare/:
+                1. cosine is more sensitive to drug and plate (slightly)
+                2. share 0.41 of each samples 10 nearest neighbours
+                3. rank is more depth-sensitive than cosine (expected)
+                4. relationship between distances is much higher for top-1024, not at all for hvg-1024
+                5. top 5k genes carry 72% of cosine distance, bottom 74% of genes carry 85% of spearman distance
+                    -- double check if this is issue bc of zeros tied
+            -- see results/tahoe/sc/analyses/metric_compare/:
+                1. CL weak for all, drug/dose/plate is chance
+                2. share 0.45 of 10 nearest neighbours
+                3. all negative, top-1024 rank is strongest?
+                    -- double check this tho
+                4. strong correlation on different CL pairs unless using hvg1024
+                5. cosine and spearman same profile per band
+            -- takeaways: 
+                -- pb metrics agree on top-1024, sc metrics agree on all genes
+                -- knn overlap is same regardless of r
+                -- rank advantage grows with sparsity
+                -- drug signal only exists after pb aggregation
+            -- todo:
+                -- idk O_O
+    -- lvl3 cl selection
+        -- cl choices:
+            -- 1125 → 0218 (CHP-212 → COLO 205) has identity=0.27, ceiling=0.51
+            -- alternatively: 1125 → 0069 (CHP-212 → SK-MEL-2) has identity=0.32, ceiling=0.53
+    -- baselines
+        -- consider: 
+            -- majority class (zero-R) baseline
+            -- upper bound of split-half experimental reproducibility
+    -- how can i go about demonstrating 1. ranked performance is no bueno because of no natural gene order and 2. loss of continuous/magnitude is no bueno 
+    -- can consider whether sentinel masking or corruption masking is best later i guess (specifically for etf since theyre diff?)
+    -- FYI tried L2 regularization on logreg baselines, makes legit no difference
+        -- λ ∈ {0.01, 0.1, 1} did not improve held-out accuracy; baselines use λ = 0."
+
+-- LINCS:
+    -- baselines
+        -- !TO-RUN etf, rtf for lvl1, lvl2
+    -- pre-train
+        -- 
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- !TO-RUN etf, rtf for 1024, full for lvl1, lvl2
+        -- pre-train
+            -- reviewed mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6)
+                -- there might be a gh200 or gh18 issue; checking now
+                    -- zygote was not updated, need to redo lrecon and erecons
+            -- RUNNING mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6) ... again.......
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- RUNNING elog, rlog for 1024, full for lvl2 (a lot)
+            -- !TO-RUN emlp, rmlp sweeps for 1024, full for lvl1, lvl2
+                -- testing quickly on MiG rmlp just to verify it works (1) 
+        -- pre-train
+            -- reviewed mlm etf, mlm rtf, erecon etf, erecon rtf sweep
+                -- look ok? should still re-run tho considering a lot of changes were made i think?
+            -- RUNNING erecon etf, erecon rtf prelim sweep (2,1:15, CQ) &
+            -- RUNNING lrecon etf, lrecon rtf prelim sweep (2, GH200)
+                -- done mlm etf, mlm rtf prelim sweep
+                -- once finished, can re-run sweeps on rorqual w/ updated ranges
+                    -- updated ranges: longer # steps to 10k; to run later
+        -- fine-tune
