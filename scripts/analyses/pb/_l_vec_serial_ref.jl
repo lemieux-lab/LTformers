@@ -57,24 +57,6 @@ end
 ranked = rank_genes(expr, gene_medians)
 
 
-# threaded pair loops: same per-pair formulas as the serial loops (kept commented below), each pair written to its own
-# slot, no random draws inside, so the results do not depend on the number of threads
-function pairs_euc_cos!(euc, cosv, X::AbstractMatrix, ia, ib)
-    Threads.@threads for k in eachindex(ia)
-        a = view(X, :, ia[k])
-        b = view(X, :, ib[k])
-        euc[k] = Float32(norm(a .- b))
-        cosv[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
-    end
-end
-# f = corkendall (tau-b) or corspearman, on x / median so undetected genes tie
-function pairs_rank!(f, out, X::AbstractMatrix, meds, ia, ib)
-    Threads.@threads for k in eachindex(ia)
-        out[k] = (1f0 - Float32(f(Float64.(view(X, :, ia[k]) ./ meds), Float64.(view(X, :, ib[k]) ./ meds)))) / 2f0
-    end
-end
-
-
 # n_pairs = 100_000
 
 idx_a = rand(1:N, n_pairs)
@@ -88,33 +70,28 @@ end
 expr_euclid = Vector{Float32}(undef, n_pairs)
 expr_cosine = Vector{Float32}(undef, n_pairs)
 
-# for k in 1:n_pairs
-    # a = view(expr, :, idx_a[k])
-    # b = view(expr, :, idx_b[k])
-    # expr_euclid[k] = Float32(norm(a .- b))
-    # expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
-# end
-pairs_euc_cos!(expr_euclid, expr_cosine, expr, idx_a, idx_b)
+for k in 1:n_pairs
+    a = view(expr, :, idx_a[k])
+    b = view(expr, :, idx_b[k])
+    expr_euclid[k] = Float32(norm(a .- b))
+    expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
+end
 
 rank_kendall = Vector{Float32}(undef, n_pairs)
-# for k in 1:n_pairs
-    # σ = view(ranked, :, idx_a[k])
-    # τ = view(ranked, :, idx_b[k])
+for k in 1:n_pairs
+    σ = view(ranked, :, idx_a[k])
+    τ = view(ranked, :, idx_b[k])
     # tau-b on x / median, undetected tie
-    # rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
-                                                # Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
-# end
-# tau-b on x / median, undetected tie
-pairs_rank!(corkendall, rank_kendall, expr, gene_medians, idx_a, idx_b)
+    rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
 
 # spearman distance (1 - rho) / 2 on x / median (tied ranks averaged)
 rank_spearman = Vector{Float32}(undef, n_pairs)
-# for k in 1:n_pairs
-    # rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
-                                                  # Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
-# end
-pairs_rank!(corspearman, rank_spearman, expr, gene_medians, idx_a, idx_b)
-println("all-gene distances done ($(Threads.nthreads()) threads)"); flush(stdout)
+for k in 1:n_pairs
+    rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                  Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
 
 # n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 

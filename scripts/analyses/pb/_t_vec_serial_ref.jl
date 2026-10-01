@@ -52,24 +52,6 @@ end
 ranked = rank_genes(expr, gene_medians)
 
 
-# threaded pair loops: same per-pair formulas as the serial loops (kept commented below), each pair written to its own
-# slot, no random draws inside, so the results do not depend on the number of threads
-function pairs_euc_cos!(euc, cosv, X::AbstractMatrix, ia, ib)
-    Threads.@threads for k in eachindex(ia)
-        a = view(X, :, ia[k])
-        b = view(X, :, ib[k])
-        euc[k] = Float32(norm(a .- b))
-        cosv[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
-    end
-end
-# f = corkendall (tau-b) or corspearman, on x / median so undetected genes tie
-function pairs_rank!(f, out, X::AbstractMatrix, meds, ia, ib)
-    Threads.@threads for k in eachindex(ia)
-        out[k] = (1f0 - Float32(f(Float64.(view(X, :, ia[k]) ./ meds), Float64.(view(X, :, ib[k]) ./ meds)))) / 2f0
-    end
-end
-
-
 # n_pairs = 100_000
 
 idx_a = rand(1:N, n_pairs)
@@ -83,34 +65,29 @@ end
 expr_euclid = Vector{Float32}(undef, n_pairs)
 expr_cosine = Vector{Float32}(undef, n_pairs)
 
-# for k in 1:n_pairs
-    # a = view(expr, :, idx_a[k])
-    # b = view(expr, :, idx_b[k])
+for k in 1:n_pairs
+    a = view(expr, :, idx_a[k])
+    b = view(expr, :, idx_b[k])
 
-    # expr_euclid[k] = Float32(norm(a .- b))
-    # expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
-# end
-pairs_euc_cos!(expr_euclid, expr_cosine, expr, idx_a, idx_b)
+    expr_euclid[k] = Float32(norm(a .- b))
+    expr_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b)))
+end
 
 rank_kendall = Vector{Float32}(undef, n_pairs)
-# for k in 1:n_pairs
-    # σ = view(ranked, :, idx_a[k])
-    # τ = view(ranked, :, idx_b[k])
+for k in 1:n_pairs
+    σ = view(ranked, :, idx_a[k])
+    τ = view(ranked, :, idx_b[k])
     # tau-b on x / median, undetected tie
-    # rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
-                                                # Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
-# end
-# tau-b on x / median, undetected tie
-pairs_rank!(corkendall, rank_kendall, expr, gene_medians, idx_a, idx_b)
+    rank_kendall[k] = (1f0 - Float32(corkendall(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
 
 # spearman distance (1 - rho) / 2 on x / median; corspearman averages tied ranks, so undetected genes tie
 rank_spearman = Vector{Float32}(undef, n_pairs)
-# for k in 1:n_pairs
-    # rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
-                                                  # Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
-# end
-pairs_rank!(corspearman, rank_spearman, expr, gene_medians, idx_a, idx_b)
-println("all-gene distances done ($(Threads.nthreads()) threads)"); flush(stdout)
+for k in 1:n_pairs
+    rank_spearman[k] = (1f0 - Float32(corspearman(Float64.(view(expr, :, idx_a[k]) ./ gene_medians),
+                                                  Float64.(view(expr, :, idx_b[k]) ./ gene_medians)))) / 2f0
+end
 
 # n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 
@@ -151,36 +128,19 @@ end
 
 tk_cosine = Vector{Float32}(undef, n_pairs); tk_euclid = Vector{Float32}(undef, n_pairs)
 tk_kendall = Vector{Float32}(undef, n_pairs); tk_spearman = Vector{Float32}(undef, n_pairs)
-# va = zeros(Float32, n_genes); vb = zeros(Float32, n_genes)
-# for k in 1:n_pairs
-    # ia, ib = idx_a[k], idx_b[k]
-    # la, lb = min(top_k, n_det[ia]), min(top_k, n_det[ib])
-    # fill!(va, 0f0); fill!(vb, 0f0)
-    # ga = view(ranked, 1:la, ia); gb = view(ranked, 1:lb, ib)
-    # va[ga] .= view(expr, ga, ia); vb[gb] .= view(expr, gb, ib)
-    # tk_euclid[k] = Float32(norm(va .- vb))
-    # tk_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
-    # sa, sb = topk_scores(view(ranked, :, ia), view(ranked, :, ib), la, lb, top_k)
-    # tk_kendall[k] = (1f0 - Float32(corkendall(sa, sb))) / 2f0
-    # tk_spearman[k] = (1f0 - Float32(corspearman(sa, sb))) / 2f0
-# end
-function pairs_topk!(tk_euclid, tk_cosine, tk_kendall, tk_spearman, X::AbstractMatrix, ranked, n_det, top_k, idx_a, idx_b)
-    n_genes = size(X, 1)
-    Threads.@threads for k in eachindex(idx_a)
-        ia, ib = idx_a[k], idx_b[k]
-        la, lb = min(top_k, n_det[ia]), min(top_k, n_det[ib])
-        va = zeros(Float32, n_genes); vb = zeros(Float32, n_genes)   # per pair (the serial loop reused one buffer)
-        ga = view(ranked, 1:la, ia); gb = view(ranked, 1:lb, ib)
-        va[ga] .= view(X, ga, ia); vb[gb] .= view(X, gb, ib)
-        tk_euclid[k] = Float32(norm(va .- vb))
-        tk_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
-        sa, sb = topk_scores(view(ranked, :, ia), view(ranked, :, ib), la, lb, top_k)
-        tk_kendall[k] = (1f0 - Float32(corkendall(sa, sb))) / 2f0
-        tk_spearman[k] = (1f0 - Float32(corspearman(sa, sb))) / 2f0
-    end
+va = zeros(Float32, n_genes); vb = zeros(Float32, n_genes)
+for k in 1:n_pairs
+    ia, ib = idx_a[k], idx_b[k]
+    la, lb = min(top_k, n_det[ia]), min(top_k, n_det[ib])
+    fill!(va, 0f0); fill!(vb, 0f0)
+    ga = view(ranked, 1:la, ia); gb = view(ranked, 1:lb, ib)
+    va[ga] .= view(expr, ga, ia); vb[gb] .= view(expr, gb, ib)
+    tk_euclid[k] = Float32(norm(va .- vb))
+    tk_cosine[k] = 1f0 - Float32(dot(va, vb) / (norm(va) * norm(vb) + 1f-10))
+    sa, sb = topk_scores(view(ranked, :, ia), view(ranked, :, ib), la, lb, top_k)
+    tk_kendall[k] = (1f0 - Float32(corkendall(sa, sb))) / 2f0
+    tk_spearman[k] = (1f0 - Float32(corspearman(sa, sb))) / 2f0
 end
-pairs_topk!(tk_euclid, tk_cosine, tk_kendall, tk_spearman, expr, ranked, n_det, top_k, idx_a, idx_b)
-println("top-$top_k distances done"); flush(stdout)
 jldsave("$data_vec_dir/pb_distances_top$(top_k)_$(n_pairs_str)_noself.jld2"; cosine=tk_cosine, euclidean=tk_euclid,
         kendall=tk_kendall, spearman=tk_spearman, idx_a=idx_a, idx_b=idx_b, top_k=top_k)
 
@@ -189,26 +149,14 @@ hvg_idx = sort(sortperm(vec(var(expr, dims=2)), rev=true)[1:n_hvg])
 hv_cosine = Vector{Float32}(undef, n_pairs); hv_euclid = Vector{Float32}(undef, n_pairs)
 hv_kendall = Vector{Float32}(undef, n_pairs); hv_spearman = Vector{Float32}(undef, n_pairs)
 hvg_meds = gene_medians[hvg_idx]
-# for k in 1:n_pairs
-    # a = view(expr, hvg_idx, idx_a[k]); b = view(expr, hvg_idx, idx_b[k])
-    # hv_euclid[k] = Float32(norm(a .- b))
-    # hv_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
-    # ra = Float64.(a ./ hvg_meds); rb = Float64.(b ./ hvg_meds)
-    # hv_kendall[k] = (1f0 - Float32(corkendall(ra, rb))) / 2f0
-    # hv_spearman[k] = (1f0 - Float32(corspearman(ra, rb))) / 2f0
-# end
-function pairs_hvg!(hv_euclid, hv_cosine, hv_kendall, hv_spearman, X::AbstractMatrix, hvg_idx, hvg_meds, idx_a, idx_b)
-    Threads.@threads for k in eachindex(idx_a)
-        a = view(X, hvg_idx, idx_a[k]); b = view(X, hvg_idx, idx_b[k])
-        hv_euclid[k] = Float32(norm(a .- b))
-        hv_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
-        ra = Float64.(a ./ hvg_meds); rb = Float64.(b ./ hvg_meds)
-        hv_kendall[k] = (1f0 - Float32(corkendall(ra, rb))) / 2f0
-        hv_spearman[k] = (1f0 - Float32(corspearman(ra, rb))) / 2f0
-    end
+for k in 1:n_pairs
+    a = view(expr, hvg_idx, idx_a[k]); b = view(expr, hvg_idx, idx_b[k])
+    hv_euclid[k] = Float32(norm(a .- b))
+    hv_cosine[k] = 1f0 - Float32(dot(a, b) / (norm(a) * norm(b) + 1f-10))
+    ra = Float64.(a ./ hvg_meds); rb = Float64.(b ./ hvg_meds)
+    hv_kendall[k] = (1f0 - Float32(corkendall(ra, rb))) / 2f0
+    hv_spearman[k] = (1f0 - Float32(corspearman(ra, rb))) / 2f0
 end
-pairs_hvg!(hv_euclid, hv_cosine, hv_kendall, hv_spearman, expr, hvg_idx, hvg_meds, idx_a, idx_b)
-println("HVG-$n_hvg distances done"); flush(stdout)
 jldsave("$data_vec_dir/pb_distances_hvg$(n_hvg)_$(n_pairs_str)_noself.jld2"; cosine=hv_cosine, euclidean=hv_euclid,
         kendall=hv_kendall, spearman=hv_spearman, idx_a=idx_a, idx_b=idx_b, hvg_idx=hvg_idx)
 
@@ -243,31 +191,17 @@ pb_n_shared = Vector{Int}(undef, n_pairs)
 pb_n_union = Vector{Int}(undef, n_pairs)
 pb_jaccard = Vector{Float32}(undef, n_pairs)
 
-# for k in 1:n_pairs
-    # a = view(expr, :, idx_a[k])
-    # b = view(expr, :, idx_b[k])
-    # nz_a = a .> 0f0
-    # nz_b = b .> 0f0
-    # shared = sum(nz_a .& nz_b)
-    # union = sum(nz_a .| nz_b)
-    # pb_n_shared[k] = shared
-    # pb_n_union[k] = union
-    # pb_jaccard[k] = union > 0 ? Float32(shared / union) : 0f0
-# end
-function pairs_overlap!(n_shared, n_union, jaccard, X::AbstractMatrix, idx_a, idx_b)
-    Threads.@threads for k in eachindex(idx_a)
-        a = view(X, :, idx_a[k])
-        b = view(X, :, idx_b[k])
-        nz_a = a .> 0f0
-        nz_b = b .> 0f0
-        shared = sum(nz_a .& nz_b)
-        n_un = sum(nz_a .| nz_b)
-        n_shared[k] = shared
-        n_union[k] = n_un
-        jaccard[k] = n_un > 0 ? Float32(shared / n_un) : 0f0
-    end
+for k in 1:n_pairs
+    a = view(expr, :, idx_a[k])
+    b = view(expr, :, idx_b[k])
+    nz_a = a .> 0f0
+    nz_b = b .> 0f0
+    shared = sum(nz_a .& nz_b)
+    union = sum(nz_a .| nz_b)
+    pb_n_shared[k] = shared
+    pb_n_union[k] = union
+    pb_jaccard[k] = union > 0 ? Float32(shared / union) : 0f0
 end
-pairs_overlap!(pb_n_shared, pb_n_union, pb_jaccard, expr, idx_a, idx_b)
 
 println("\n=== PB pairwise gene overlap ===")
 println("  jaccard:  median=$(round(median(pb_jaccard), digits=3))  mean=$(round(mean(pb_jaccard), digits=3))")
@@ -276,29 +210,16 @@ println("  shared:   median=$(median(pb_n_shared))  mean=$(round(mean(pb_n_share
 # euclidean decomposition
 pb_euclid_from_mismatch = Vector{Float32}(undef, n_pairs)
 pb_euclid_from_shared = Vector{Float32}(undef, n_pairs)
-# for k in 1:n_pairs
-    # a = view(expr, :, idx_a[k])
-    # b = view(expr, :, idx_b[k])
-    # nz_a = a .> 0f0
-    # nz_b = b .> 0f0
-    # shared_mask = nz_a .& nz_b
-    # mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
-    # pb_euclid_from_mismatch[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
-    # pb_euclid_from_shared[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
-# end
-function pairs_mismatch!(from_mismatch, from_shared, X::AbstractMatrix, idx_a, idx_b)
-    Threads.@threads for k in eachindex(idx_a)
-        a = view(X, :, idx_a[k])
-        b = view(X, :, idx_b[k])
-        nz_a = a .> 0f0
-        nz_b = b .> 0f0
-        shared_mask = nz_a .& nz_b
-        mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
-        from_mismatch[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
-        from_shared[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
-    end
+for k in 1:n_pairs
+    a = view(expr, :, idx_a[k])
+    b = view(expr, :, idx_b[k])
+    nz_a = a .> 0f0
+    nz_b = b .> 0f0
+    shared_mask = nz_a .& nz_b
+    mismatch_mask = (nz_a .& .!nz_b) .| (.!nz_a .& nz_b)
+    pb_euclid_from_mismatch[k] = sqrt(sum((a[mismatch_mask] .- b[mismatch_mask]).^2))
+    pb_euclid_from_shared[k] = sqrt(sum((a[shared_mask] .- b[shared_mask]).^2))
 end
-pairs_mismatch!(pb_euclid_from_mismatch, pb_euclid_from_shared, expr, idx_a, idx_b)
 
 pb_frac_from_mismatch = pb_euclid_from_mismatch.^2 ./ (pb_euclid_from_mismatch.^2 .+ pb_euclid_from_shared.^2 .+ 1f-10)
 println("\n=== PB euclidean distance decomposition ===")
