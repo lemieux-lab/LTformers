@@ -211,7 +211,8 @@ function load_sc_finetune_data(all_shards::Vector{String}, level::String,
 
     # sample-level split
     unique_samples = unique(r[4] for r in cell_records)
-    shuffle!(unique_samples)
+    # shuffle!(unique_samples)  # global RNG: split depended on --seed
+    shuffle!(MersenneTwister(42), unique_samples)  # fixed split (split_seed 42), as in sc_finetune_metadata_scan
     n_test = floor(Int, length(unique_samples) * 0.1)
     n_val  = floor(Int, length(unique_samples) * 0.1)
     test_samples  = Set(unique_samples[1:n_test])
@@ -780,7 +781,8 @@ end
 function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
                                     pb_data_path::String = "",
                                     subset_shards::Int = 0,
-                                    split_by::String = "drug_dose")
+                                    split_by::String = "drug_dose",
+                                    split_seed::Integer = 42)  # fixed split for every run/model; --seed only affects training (as PB split_seed)
 
     # valid labels
     valid_drugs = nothing
@@ -839,7 +841,8 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
     end
     unit(r) = split_by == "well_cl" ? r[4] * "|" * r[5] : split_by == "drug_dose" ? get(dd, r[4], r[4]) : r[4]
     unique_samples = unique(unit(r) for r in cell_records)
-    shuffle!(unique_samples)
+    # shuffle!(unique_samples)  # global RNG: split depended on --seed and on RNG calls made before this point
+    shuffle!(MersenneTwister(split_seed), unique_samples)
     n_test = floor(Int, length(unique_samples) * 0.1)
     n_val  = floor(Int, length(unique_samples) * 0.1)
     test_samples  = Set(unique_samples[1:n_test])

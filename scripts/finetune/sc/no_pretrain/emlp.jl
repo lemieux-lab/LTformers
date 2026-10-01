@@ -14,6 +14,10 @@ args = load_sc_finetune_args()
 config = load_config(args["config"], args,
                      hp_section=["finetune", "no_pretrain", args["modeltype"], args["level"]],
                      dataset="tahoe_sc")
+# all-gene runs (--n_hvg 0): [finetune.no_pretrain.<model>.<lvl>.full] in ts.toml overrides the 1024 hps
+if something(get(config, "n_hvg", nothing), 1024) == 0
+    Config._merge_hp!(config, ["finetune", "no_pretrain", config["modeltype"], config["level"], "full"], args; dataset="tahoe_sc")
+end
 config["data_format"] = "tahoe_sc"
 resolve_lvl3_cells!(config)
 config["modeltype"] == "emlp" || error("emlp.jl is MLP only; use elog.jl for -t elog (got $(config["modeltype"]))")
