@@ -167,9 +167,19 @@ drop_prob = 0.0
 # n_layers = 0
 
 [finetune.no_pretrain.rmlp.lvl1]
-lr = 0.0
-drop_prob = 0.0
+# top-1024, tapered, 10k steps, subset_shards 100: sweep 51pgrt8t best by val acc (rmlp_nopt_sc_lvl1_2026-09-30_14-34_j8107479), val 0.983 / test 0.981
+# lr = 0.0
+# drop_prob = 0.0
 # n_layers = 0
+# n_layers = 2
+lr = 0.000137
+drop_prob = 0.132
+n_layers = 2
+
+[finetune.no_pretrain.rmlp.lvl1.full]
+# all genes (--rank_top_k 0): sweep wxof7aja best (rmlp_full_nopt_sc_lvl1_2026-09-30_12-41_j8107477), val 0.984 / test 0.982
+lr = 0.000058
+drop_prob = 0.092
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
@@ -183,9 +193,19 @@ drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
-lr = 0.0
-drop_prob = 0.0
+# HVG-1024, tapered, 10k steps, subset_shards 100: sweep drfgbsw0 best by val acc (emlp_zc_nopt_sc_lvl1_2026-09-30_11-56_j8107474), val 0.981 / test 0.977
+# lr = 0.0
+# drop_prob = 0.0
 # n_layers = 0
+# n_layers = 2
+lr = 0.000137
+drop_prob = 0.142
+n_layers = 2
+
+[finetune.no_pretrain.emlp.lvl1.full]
+# all genes (--n_hvg 0): sweep dt63vrzx best (emlp_full_zc_nopt_sc_lvl1_2026-09-30_14-19_j8107481), val 0.981 / test 0.980
+lr = 0.0000674
+drop_prob = 0.091
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]

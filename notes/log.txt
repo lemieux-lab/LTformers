@@ -2619,3 +2619,88 @@ from valence blog posts:
                 -- once finished, can re-run sweeps on rorqual w/ updated ranges
                     -- updated ranges: longer # steps to 10k; to run later
         -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### sep 30 2026 ###
+
+-- OVERALL:
+    -- distance vectors
+        -- done sc_entvec.jl, t_vec, pb ent, l_vec
+        -- reviewed results:
+            -- for entropy, does it make more sense to say 0 entropy for undetected genes or max entropy?
+                -- because technically, when we rank, those values get random order (dictated by epsilon) so it should be max entropy
+                -- versus when we use elog or emlp, since "ranks" are continuous values bounded between [0,1] those values get 0.0
+                -- but if entropy/sparsity plot is looking at ranks, shouldn't it be random order then?
+            -- no: currently for ranking sc, undetected genes are left out of the entropy
+                -- the order is no longer random for those undetected genes; updated to tie at the bottom and replaced w/ PAD token
+                -- PAD token is masked out by attention, so the model never sees a gene ID there
+                -- for ranking pb, this is fully saturated (no undetected genes)
+            -- similarly for binning, if a gene was undetected then it would be kept as bin 0 or dropped from input
+            -- so realistically, only 2 options would be to extend the graph into entropy=0 and sparsity=1 from gene 6k-19k 
+            -- note: entropy falls towards the bottom because there are just fewer cells that have genes detected there
+                -- see normalized plot
+            -- update to sc_entvec.jl:
+                -- loops moved into functions, threaded to 32 w ctrs to prevent race, no repeated copying, and display(fig) removed
+                -- also, fixed seed + CL labels read at once instead of when encountering each shard
+        -- i kind of want to see if 1M sampled makes a difference
+            -- running now! (3)
+        -- also check later:
+            -- test: input vector, use it to detect rank or VV? (isnt this what the models do lol or is this a baseline)
+            -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- re-eval metric_compare/ results!
+    -- t-lvl3 cl selection:
+        -- 1125 → 0218 (CHP-212 → COLO 205) has identity=0.27, ceiling=0.51
+        -- alternatively: 1125 → 0069 (CHP-212 → SK-MEL-2) has identity=0.32, ceiling=0.53
+    -- baselines
+        -- consider: 
+            -- majority class (zero-R) baseline
+            -- upper bound of split-half experimental reproducibility
+    -- plot:
+        -- demonstrate that ranked performance is no bueno because of no natural gene order
+        -- demonstrate that loss of continuous/magnitude is no bueno 
+        -- why does entropy matter? how is this analogous to representation quality?
+        -- logreg baselines!
+
+-- LINCS:
+    -- baselines
+        -- RUNNING good runs of emlp, rmlp for lvl1, lvl2 (3 seeds each)
+        -- !TO-RUN etf, rtf for lvl1, lvl2
+    -- pre-train
+        -- 
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- RUNNING good runs of emlp, rmlp for lvl1, lvl2 (3 seeds each)
+            -- !TO-RUN etf, rtf for 1024, full for lvl1, lvl2
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6)
+                -- mlm rtf takes quite a long time bc outputs probability over 19k genes!
+                -- lrecon rtf also restarted because needs longer run before hyperband cut
+                -- all tbd fri, mlm rtf and lr rtf tbd like monday ish
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- done elog, rlog for 1024, full for lvl2
+                -- at some point, need to re-run with same seed splitting for consistency w/ the rest of the runs
+            -- done emlp, rmlp sweeps for 1024, full for lvl1
+                -- need good runs w/ 3 seeds
+            -- RUNNING emlp, rmlp sweeps for 1024, full for lvl2
+                -- note: for lvl2 sweeps, cannot use a subset of shards because the first 100 shards only have 1 sample per drug
+                    -- thus, holding out whole samples from drug-dose split results in every val and test drug missing from training, so cannot predict
+                    -- vs. on all shards its 113 val and 113 test units over 376 drugs so it can still have seen the drug just not the dose
+                    -- thus, need to update to incr. test shards to 100 at least and not subset the whole dataset
+                    -- not quite sure yet how long that would take
+        -- pre-train
+            -- RUNNING erecon etf, erecon rtf prelim sweep (2,1:15, CQ)
+                -- not sure why its still not continuing...
+            -- RUNNING lrecon etf, lrecon rtf prelim sweep (2, GH200)
+                -- done mlm etf, mlm rtf prelim sweep
+                -- once finished, can re-run sweeps on rorqual w/ updated ranges (longer # steps to 10k; to run later)
+                -- note: it seems the lr for lrecon rtf is only decreasing later on in # steps
+                    -- thus the hyperband terminates the run before its able to get down later on
+                    -- is this really an issue?
+                    -- no, can just note for the longer sweep: less early stopping, higher lr range, and no ema 0.999?
+        -- fine-tune
