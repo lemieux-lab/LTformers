@@ -2704,3 +2704,167 @@ from valence blog posts:
                     -- is this really an issue?
                     -- no, can just note for the longer sweep: less early stopping, higher lr range, and no ema 0.999?
         -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 1 2026 ###
+
+-- OVERALL:
+    -- distance vectors
+        -- also check later:
+            -- test: input vector, use it to detect rank or VV? (isnt this what the models do lol or is this a baseline)
+            -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- re-eval metric_compare/ results!
+        -- plot: 
+            -- demonstrate that ranked performance is no bueno because of no natural gene order
+            -- demonstrate that loss of continuous/magnitude is no bueno 
+            -- why does entropy matter? how is this analogous to representation quality?
+        -- ok so main statement: loss of information discretizing expression as ranks, as demonstrated by:
+            1. ranked input is no bueno
+                -- how much of the variation in "which gene sits at rank r" is explained by cell line, drug, plate and depth?
+            2. losing continuous magnitude is no bueno
+                -- how much resolution does the drug signal need, and does it need magnitude or only order?
+            [3. entropy relates to representation quality]
+                -- (this should be after model training; showing that low entropy ranks are easy to predict)
+                -- (can probably also demonstrate w/ that high entropy ranks show better quality for downstream? somehow?)
+    -- t-lvl3 cl selection:
+        -- 1125 → 0218 (CHP-212 → COLO 205) has identity=0.27, ceiling=0.51
+        -- alternatively: 1125 → 0069 (CHP-212 → SK-MEL-2) has identity=0.32, ceiling=0.53
+    -- baselines
+        -- consider: 
+            -- majority class (zero-R) baseline
+            -- upper bound of split-half experimental reproducibility
+    -- plot:
+        -- logreg baselines!
+    -- also:
+        -- so technically for elog and emlp, we have versions that use raw expression and versions that use z-score standardization
+        -- for lincs, we've seen that this makes a difference on elog and emlp
+        -- for tahoe, not so much
+        -- however, if we are to say that elog and emlp receive the standardized input, then techically etf should as well...
+        -- for reference, scFoundation uses a nonlinear, learnable value embedding that can rescale values itself
+        -- but honestly that might be too much work. for now, i haven't run any etfs on lincs so maybe we can do z scoring on those inputs?
+        -- for tahoe, do i even need to re-pretrain on z-scored values? doesnt attention account for llayernorm or somehting?
+        -- RUNNING now on TPB for z-scored and regular etf on lvl2 for test (1)
+            -- this technically might also b needed for sc as well? i dont think ill have to re-sweep, but might need for hte good runs
+        -- RUNNING centered versions of entvec on tahoe pb and sc rn too (20)
+        -- so moral of the story is that z scoring the expression inputs does make a difference on lincs...
+            -- so i should always z score them?
+            -- or should i be z scoring by plate???
+            -- usually in the literature, they will do gloabl per gene z scoring then handle plates with evaluation
+                -- aka reporting performance on plate held out or batch held out split alongside the random split
+
+-- plan:
+    -- lvl1:
+        -- input: raw expression profile vs. ranks gene median normalized
+        -- output: cell line
+    -- lvl2:
+        -- input: plate-matched delta per sample (treated profile - mean DMSO of same CL/plate) vs. ranked deltas
+        -- output: drug/compound
+    -- lvl3:
+        -- input: source delta per (compound, dose, time) OR keep dose, time constant vs. ranked deltas
+        -- output: PC1 of target's delta means
+    -- filter/preprocess:
+        -- lincs:
+            -- no ctl_untrt, other vehicles, missing dose/time, and treated w/o plate-matched DMSO
+                -- only need to filter for no DMSO for lvl2, lvl3
+        -- tahoe:
+            -- no pseudobulks whose cell line has no DMSO pseudobulk on the same plate
+                -- only need to filter for this when doing the lvl2, lvl3
+    -- pre-training:
+        -- input: raw expression profile vs. ranks gene median normalized
+-- to re-run:
+    -- lvl1: all good (although could re-run with a different split? is this needed? ex. plate held out?)
+        -- or need to re-run with no ctl_untrt, other vehicles, missing dose/time, removed from lincs
+    -- lvl2: redo all (plate held out split or drug held out split?)
+        -- filter for no ctl_untrt, other vehicles, missing dose/time, and treated w/o plate-matched DMSO on lincs
+        -- filter for no pseudobulks whose cell line has no DMSO pseudobulk on the same plate on tahoe
+    -- pre-training: all good (unless want to preprocess i guess)
+        -- filter for no ctl_untrt, other vehicles, missing dose/time, removed from lincs
+
+-- note: We excluded plate REP.A010_JURKAT_24H_X3_B32 (294 profiles): its Level 3 values are near zero in the LINCS 2020 beta release despite qc_pass = 1, and its replicate plates X1 and X2 are marked as failing QC.
+-- i lowkey have no clue how to deal with lvl2 ranking, tbd. on hold for now! currently re-running everythign else tho
+-- also tsc is on hold for now, need to precompute dmso mean per cell line and plate which owul dtake many cpu hours
+-- consider: pretrain on raw exp and regular ranks, finetune on deltas
+    -- expression: delta or z score against matched DMSO (cecll line-plate pair, cacnnot ignore cell line)
+    -- rank: per batch medians; so instead of subtracting globnal i subtract dmso median from same plate and CCLs
+    -- issues: 
+        -- wiill there be negative values in rank? need to check if only upregulated genes in top 1024 or what (also need to check full too for baselines)
+        -- would need to scacle expression simnce expression pretraining saw diff scale of values
+        -- thus could: give the model the matched control as a second input nex to traw perturbation OR correct by additing the matched control input?
+    -- ensure: accuracy within plat, cross tabulate drug by plate,e plate only baseline
+    -- ensure: for lvl3 bnoth sies are deltas against matchd dmso an ad plate mean baseline next to identity basline
+
+-- LINCS:
+    -- baselines
+        -- RUNNING good runs of emlp, rmlp for lvl1, lvl2 (3 seeds each)
+        -- !TO-RUN etf, rtf for lvl1, lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- RUNNING good runs of emlp, rmlp for lvl1, lvl2 (3 seeds each)
+            -- !TO-RUN etf, rtf for 1024, full for lvl1, lvl2
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf, erecon rtf (6)
+                -- mlm rtf takes quite a long time bc outputs probability over 19k genes!
+                -- lrecon rtf also restarted because needs longer run before hyperband cut
+                -- all tbd fri, mlm rtf and lr rtf tbd like monday ish
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- done elog, rlog for 1024, full for lvl2
+                -- at some point, need to re-run with same seed splitting for consistency w/ the rest of the runs
+            -- done emlp, rmlp sweeps for 1024, full for lvl1
+                -- need good runs w/ 3 seeds
+            -- done emlp, rmlp sweeps for 1024, full for lvl2
+                -- note: for lvl2 sweeps, cannot use a subset of shards because the first 100 shards only have 1 sample per drug
+                    -- thus, holding out whole samples from drug-dose split results in every val and test drug missing from training, so cannot predict
+                    -- vs. on all shards its 113 val and 113 test units over 376 drugs so it can still have seen the drug just not the dose
+                    -- thus, need to update to incr. test shards to 100 at least and not subset the whole dataset
+                    -- not quite sure yet how long that would take
+                -- very terrible accuracy but much better than chance so idk...
+                -- lets see if i need to redo this w deltas instead tho, but only 10k steps an got 0.087 accuracy O_O
+        -- pre-train
+            -- RUNNING erecon etf, erecon rtf prelim sweep (2,1:15, CQ)
+                -- not sure why its still not continuing...
+            -- RUNNING lrecon etf, lrecon rtf prelim sweep (2, GH200)
+                -- done mlm etf, mlm rtf prelim sweep
+                -- once finished, can re-run sweeps on rorqual w/ updated ranges (longer # steps to 10k; to run later)
+                -- note: it seems the lr for lrecon rtf is only decreasing later on in # steps
+                    -- thus the hyperband terminates the run before its able to get down later on
+                    -- is this really an issue?
+                    -- no, can just note for the longer sweep: less early stopping, higher lr range, and no ema 0.999?
+        -- fine-tune
+
+diff in kendall rankings:
+Here's a toy example with 5 genes (A–E, stored as indices 1–5) and two samples that are almost identical: only the top two genes swap.
+
+gene:            A(1)  B(2)  C(3)  D(4)  E(5)
+sample 1 value:  9.0   2.0   7.0   5.0   1.0
+sample 2 value:  7.0   2.0   9.0   5.0   1.0     ← A and C swapped, everything else identical
+
+Previous: Kendall on sortperm output (gene IDs listed in rank order)
+
+                  rank 1  rank 2  rank 3  rank 4  rank 5
+sample 1 sortperm:  1(A)    3(C)    4(D)    2(B)    5(E)
+sample 2 sortperm:  3(C)    1(A)    4(D)    2(B)    5(E)
+
+corkendall([1,3,4,2,5], [3,1,4,2,5])
+
+Here the "values" being correlated are gene ID numbers. The test asks whether the gene sitting at rank 1 has a larger ID than the gene at rank 2 in both samples, and so on. Gene IDs are arbitrary labels, so the answer only reflects how the genes happen to be numbered. If you renumbered the genes, for example alphabetically or by Ensembl ID, the same two samples would get a different distance. On real data with 978 genes, those comparisons are essentially coin flips, so every pair lands near 0.5.
+
+Current: Kendall on per-gene values (each gene compared with itself across the two samples)
+
+gene:             A    B    C    D    E
+sample 1 rank:    1    4    2    3    5
+sample 2 rank:    2    4    1    3    5
+
+corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
+
+-- done rerunning all lvl2 elog, emlp and all lincs lvl1
+-- running tsc dmso means,lvl2 elog, emlp
+    -- holding off on good runs for now
+-- would still nee rlog and rmlp for all lvl2 depending on what seb says!!!
