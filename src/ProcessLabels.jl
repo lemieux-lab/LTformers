@@ -3,33 +3,38 @@ module ProcessLabels
 using Flux, JLD2, Random, StatsBase, Statistics, DataFrames, MultivariateStats
 
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
-using Preprocess: nonzero_medians, gene_medians_for, rank_feature_k, rank_features
+using Preprocess: nonzero_medians, gene_medians_for, rank_feature_k, rank_features, plate_delta
 
 export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline
 
 
-function get_labels(data::Matrix{Float32}, level::String, label_path::String)
+# keep (optional): columns allowed before labels are chosen (bad plates, delta filters)
+function get_labels(data::Matrix{Float32}, level::String, label_path::String; keep = nothing)
     if level == "lvl1"
         mfc = load(label_path)["mfc"]
-        return data, mfc, 1:size(data, 2)
+        isnothing(keep) && return data, mfc, 1:size(data, 2)
+        idx = findall(keep)
+        return data[:, idx], mfc[idx], idx
     elseif level == "lvl2"
         pert_id = load(label_path)["pert_id"]
         y = pert_id
-        counts = countmap(y)
+        counts = isnothing(keep) ? countmap(y) : countmap(y[keep])
         valid_labels = Set(k for (k, v) in counts if 1000 < v < 20000)
-        idx = findall(l -> l in valid_labels, y)
+        idx = isnothing(keep) ? findall(l -> l in valid_labels, y) : findall(i -> keep[i] && y[i] in valid_labels, eachindex(y))
         return data[:, idx], y[idx], idx
     end
 end
 
 # tahoe pseudobulk (cell_line, drug)
-function get_labels(data_expr::Matrix{Float32}, df::DataFrame, level::String)
+function get_labels(data_expr::Matrix{Float32}, df::DataFrame, level::String; keep = nothing)
     if level == "lvl1"
         labels = String.(df.cell_line)
-        return data_expr, labels, 1:size(data_expr, 2)
+        isnothing(keep) && return data_expr, labels, 1:size(data_expr, 2)
+        idx = findall(keep)
+        return data_expr[:, idx], labels[idx], idx
     elseif level == "lvl2"
         y = String.(df.drug)
-        non_dmso = findall(l -> l != "DMSO", y)
+        non_dmso = isnothing(keep) ? findall(l -> l != "DMSO", y) : findall(i -> keep[i] && y[i] != "DMSO", eachindex(y))
         y_filt = y[non_dmso]
         data_filt = data_expr[:, non_dmso]
         counts = countmap(y_filt)
@@ -256,6 +261,46 @@ function get_pt_idx(label_idx, model_dir::String)
     return train_idx, test_idx, val_idx, pt_idx
 end
 
+# LINCS plates whose stored level 3 values are broken (flat, sd ~5e-4)
+# excluded from every LINCS task by default
+const LINCS_BAD_PLATES = ["REP.A010_JURKAT_24H_X3_B32"]
+
+input_mode(config) = string(something(get(config, "input", nothing), "abs"))
+
+# per-sample keep mask (bad plates; for --input delta also the delta filters) + DMSO / cell line / plate keys
+function _sample_filters(data, config, fmt, inst_df, label_source)
+    n = size(data, 2); delta = input_mode(config) == "delta"
+    input_mode(config) in ("abs", "delta") || error("--input must be abs or delta, got $(input_mode(config))")
+    if fmt == "lincs"
+        isnothing(inst_df) && return nothing, nothing, nothing, nothing
+        plate = string.(inst_df.det_plate); cl = string.(inst_df.cell_iname)
+        bad = Set(string.(something(get(config, "exclude_plates", nothing), LINCS_BAD_PLATES)))
+        keep = BitVector([!(p in bad) for p in plate])
+        println("excluded plates $(collect(bad)): $(count(.!keep)) samples")
+        is_dmso = BitVector((string.(inst_df.pert_type) .== "ctl_vehicle") .& (string.(inst_df.pert_id) .== "DMSO")) .& keep
+        if delta
+            # treated compounds with dose and time (controls all have an empty dose, so this only touches trt_cp)
+            trt = (string.(inst_df.pert_type) .== "trt_cp") .& (string.(inst_df.pert_dose) .!= "") .&
+                  (string.(inst_df.pert_time) .!= "-666")
+            has_dmso = Set(zip(cl[is_dmso], plate[is_dmso]))
+            matched = BitVector([(c, p) in has_dmso for (c, p) in zip(cl, plate)])
+            n0 = count(keep)
+            keep = keep .& trt .& matched
+            println("delta filters: kept $(count(keep)) of $n0 (trt_cp with dose/time and a same cell line + plate DMSO)")
+        end
+        return keep, is_dmso, cl, plate
+    else  # tahoe PB
+        isnothing(label_source) && return nothing, nothing, nothing, nothing
+        plate = string.(label_source.plate); cl = string.(label_source.cell_line)
+        is_dmso = BitVector(string.(label_source.drug) .== "DMSO")
+        delta || return nothing, is_dmso, cl, plate
+        has_dmso = Set(zip(cl[is_dmso], plate[is_dmso]))
+        keep = BitVector([(c, p) in has_dmso for (c, p) in zip(cl, plate)])
+        println("delta filters: dropped $(count(.!keep)) pseudobulks without a same cell line + plate DMSO")
+        return keep, is_dmso, cl, plate
+    end
+end
+
 function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
                 label_source = nothing,
                 inst_df = nothing, gene_df = nothing,
@@ -305,10 +350,19 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
                   n_genes, n_classifications=1, cidx_dict=nothing, cs=nothing, pca_model, id_baseline)
     end
 
+    keep, is_dmso, cl_key, plate_key = _sample_filters(data, config, fmt, inst_df, label_source)
     if fmt == "lincs"
-        X, y, label_idx = get_labels(data, config["level"], label_path)
+        X, y, label_idx = get_labels(data, config["level"], label_path; keep=keep)
     else  # tahoe
-        X, y, label_idx = get_labels(data, label_source, config["level"])
+        X, y, label_idx = get_labels(data, label_source, config["level"]; keep=keep)
+    end
+    # --input delta: plate-matched DMSO delta of each kept sample (expression models only; rank delta not decided)
+    if input_mode(config) == "delta"
+        config["modeltype"] in ("elog", "emlp", "etf") ||
+            error("--input delta is only implemented for expression models (elog, emlp, etf), got $(config["modeltype"])")
+        X, matched = plate_delta(data, cl_key, plate_key, is_dmso, label_idx)
+        all(matched) || error("delta: $(count(.!matched)) samples without plate-matched DMSO survived the filters")
+        println("input = delta: plate-matched DMSO delta for $(length(label_idx)) samples")
     end
     y_oh, n_cls = process_labels(y)
     n_genes = size(X, 1)
@@ -317,8 +371,15 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
 
     # --group_split 1 (tahoe PB): all pseudobulks of a (drug, dose) go to one split, as in SC. a well holds all cell
     # lines, so a random pseudobulk split puts the same well/drug/dose in train (other cell lines) and test
-    if something(get(config, "group_split", nothing), 0) == 1
-        fmt == "tahoe" || error("--group_split is for tahoe PB only (LINCS profiles are single wells)")
+    if something(get(config, "group_split", nothing), 0) == 1 && fmt == "lincs"
+        # LINCS: whole detection plates held out (each plate is one cell line; plate narrows the lvl2 drugs to a
+        # handful, so a random split lets a model use plate identity). folder tag _gpl
+        isnothing(inst_df) && error("--group_split for LINCS needs inst_df")
+        groups = String.(string.(inst_df.det_plate[label_idx]))
+        tvsplit_fn = (X, v, t) -> _group_tvsplit(X, groups, v, t)
+        model_dir = ""
+        println("group split by plate: $(length(unique(groups))) plates, $(length(groups)) samples")
+    elseif something(get(config, "group_split", nothing), 0) == 1
         # group = (drug, dose): replicate wells of a drug-dose stay on one side; DMSO grouped per well
         smp = String.(label_source.sample[label_idx]); drg = String.(label_source.drug[label_idx]); dse = String.(label_source.dose[label_idx])
         groups = [d == "DMSO" ? s : d * "|" * x for (s, d, x) in zip(smp, drg, dse)]

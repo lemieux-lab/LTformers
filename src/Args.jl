@@ -221,8 +221,11 @@ function load_finetune_args()
             help = "PB elog/rlog: AdamW weight decay λ (per-step shrink lr·λ, i.e. L2; default 0; saves as <tag>_wd<λ>)"
             arg_type = Float64
         "--group_split"
-            help = "tahoe PB: 1 = split by (drug, dose) groups instead of random pseudobulks (replicate wells kept together; saves as <model_tag>_gs)"
+            help = "1 = group split: tahoe PB by (drug, dose) (_gdd); LINCS by detection plate, whole plates held out (_gpl)"
             arg_type = Int
+        "--input"
+            help = "abs (default) = stored log expression; delta = minus the mean DMSO of the same cell line + plate (elog/emlp/etf; _delta)"
+            arg_type = String
     end
     return parse_args(s)
 end
@@ -323,6 +326,9 @@ function load_sc_finetune_args()
             arg_type = Int
         "--sc_split"
             help = "SC finetune split unit: drug_dose (default; all wells of a drug-dose together), well (_well), or well_cl ((well, cell line) units = random PB split; _wcl)"
+            arg_type = String
+        "--input"
+            help = "abs (default) = stored log expression; delta = minus the mean DMSO_TF of the same cell line + plate (lvl2; data/tahoe/sc_dmso_means.jld2; _delta)"
             arg_type = String
         # sc args
         "--data_dir"

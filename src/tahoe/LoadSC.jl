@@ -110,6 +110,17 @@ function load_shard_val_split(model_dir::String, all_shards::Vector{String}, val
     return shard_train_val_test_split(all_shards, val_ratio, test_ratio)
 end
 
+# plate-matched DMSO delta for SC finetuning (--input delta): when set, every dense feature built from a shard is
+# minus the mean DMSO_TF profile of the cell's (cell line, plate) (scripts/pretrain/sc/compute_dmso_means.jl).
+# nothing = off (default; pretraining and all existing runs unchanged)
+const SC_DELTA = Ref{Any}(nothing)
+function set_sc_delta!(path::AbstractString)
+    d = load(path)
+    SC_DELTA[] = (; means=Float32.(d["means"]), key_to_col=Dict(k => i for (i, k) in enumerate(d["keys"])))
+    println("SC delta: DMSO_TF means for $(length(d["keys"])) (cell line, plate) groups from $path"); flush(stdout)
+end
+export SC_DELTA, set_sc_delta!
+
 function load_shard_pyarrow(path::String)
     t = _pq.read_table(path)
     genes_combined = t.column("genes").combine_chunks()
@@ -118,7 +129,23 @@ function load_shard_pyarrow(path::String)
     offsets = convert(Vector{Int64}, _np.array(genes_combined.offsets, copy=true))
     expr_flat = convert(Vector{Float32}, _np.array(expr_combined.values, copy=true))
     n_cells = length(offsets) - 1
-    return (; genes_flat, offsets, expr_flat, n_cells)
+    # return (; genes_flat, offsets, expr_flat, n_cells)
+    isnothing(SC_DELTA[]) && return (; genes_flat, offsets, expr_flat, n_cells)
+    # delta on: column of each cell's (cell line, plate) DMSO mean (0 = no DMSO for that group)
+    cl = convert(Vector{String}, t.column("cell_line_id").to_pylist())
+    pl = convert(Vector{String}, t.column("plate").to_pylist())
+    k2c = SC_DELTA[].key_to_col
+    delta_col = [get(k2c, (c, p), 0) for (c, p) in zip(cl, pl)]
+    return (; genes_flat, offsets, expr_flat, n_cells, delta_col)
+end
+
+# subtract the cell's plate-matched DMSO mean in place (no-op unless the shard was loaded with delta on)
+function _apply_delta!(dense::AbstractVector{Float32}, shard, ci::Int)
+    hasproperty(shard, :delta_col) || return dense
+    k = shard.delta_col[ci]
+    k == 0 && error("SC delta: cell $ci has no DMSO_TF mean for its (cell line, plate)")
+    dense .-= view(SC_DELTA[].means, :, k)
+    return dense
 end
 
 
@@ -914,10 +941,12 @@ function materialize_finetune_split(cells, label_to_id::Dict, n_cls::Int,
             elseif !isnothing(hvg_idx)
                 cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
                                        shard.expr_flat, ci, token_to_idx)
+                _apply_delta!(dense, shard, ci)   # no-op unless --input delta
                 X[:, j] = dense[hvg_idx]
             else
                 cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
                                        shard.expr_flat, ci, token_to_idx)
+                _apply_delta!(dense, shard, ci)   # no-op unless --input delta
                 X[:, j] = dense
             end
         end
@@ -1011,6 +1040,7 @@ function _build_ft_batch(shard, cell_indices::AbstractVector{Int},
         for (j, ci) in enumerate(cell_indices)
             cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
                                    shard.expr_flat, ci, token_to_idx)
+            _apply_delta!(dense, shard, ci)   # no-op unless --input delta
             batch[:, j] = dense[hvg_idx]
         end
         return batch
@@ -1021,6 +1051,7 @@ function _build_ft_batch(shard, cell_indices::AbstractVector{Int},
         for (j, ci) in enumerate(cell_indices)
             cell_to_dense_flat_fn(dense, shard.genes_flat, shard.offsets,
                                    shard.expr_flat, ci, token_to_idx)
+            _apply_delta!(dense, shard, ci)   # no-op unless --input delta
             batch[:, j] = copy(dense)
         end
         return batch

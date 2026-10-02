@@ -5,6 +5,7 @@ using Statistics, Random, JLD2
 export select_hvg, nonzero_medians, rank_genes, inverse_ranks, reindex_to_rank_order, ttsplit, tvsplit
 export default_medians_path, load_gene_medians, gene_medians_for, rank_feature_k, rank_features!, rank_features
 export pad_token_id, gene_set_tag
+export dmso_means, plate_delta
 
 function select_hvg(data_expr::Matrix, n_hvg::Int)
     gene_vars = vec(var(data_expr, dims=2))
@@ -169,6 +170,35 @@ function tvsplit(X::Matrix, val_ratio::AbstractFloat, test_ratio::AbstractFloat;
         return X[:, train_idx], X[:, val_idx], X[:, test_idx], train_idx, val_idx, test_idx
     end
     return X[:, train_idx], y[:, train_idx], X[:, val_idx], y[:, val_idx], X[:, test_idx], y[:, test_idx], train_idx, val_idx, test_idx
+end
+
+
+# plate-matched DMSO deltas: delta = x - mean of the DMSO columns of the same (cell line, plate),
+# in the stored log space (no z-scoring). match controls exactly ("DMSO" LINCS / tahoe PB, "DMSO_TF" SC); a substring
+# match also catches "Trametinib (DMSO_TF solvate)"
+
+# (cell line, plate) => mean of the DMSO columns of X (Float32 vectors)
+function dmso_means(X::AbstractMatrix, cl::AbstractVector, plate::AbstractVector, is_dmso::AbstractVector{Bool})
+    sums = Dict{Tuple{String,String},Vector{Float64}}(); counts = Dict{Tuple{String,String},Int}()
+    for j in findall(is_dmso)
+        k = (string(cl[j]), string(plate[j]))
+        s = get!(() -> zeros(size(X, 1)), sums, k)
+        s .+= view(X, :, j); counts[k] = get(counts, k, 0) + 1
+    end
+    return Dict(k => Float32.(s ./ counts[k]) for (k, s) in sums), counts
+end
+
+# deltas for columns idx of X; matched[i] = false when (cl, plate) of idx[i] has no DMSO (that column stays 0)
+function plate_delta(X::AbstractMatrix, cl::AbstractVector, plate::AbstractVector, is_dmso::AbstractVector{Bool},
+                     idx::AbstractVector{<:Integer})
+    means, _ = dmso_means(X, cl, plate, is_dmso)
+    D = zeros(Float32, size(X, 1), length(idx)); matched = falses(length(idx))
+    for (i, j) in enumerate(idx)
+        m = get(means, (string(cl[j]), string(plate[j])), nothing)
+        isnothing(m) && continue
+        D[:, i] .= view(X, :, j) .- m; matched[i] = true
+    end
+    return D, matched
 end
 
 
