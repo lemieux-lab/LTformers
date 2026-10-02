@@ -58,7 +58,18 @@ if n_hvg != 0
 end
 model_tag = gene_set_tag(config["modeltype"], isnothing(hvg_idx) ? n_coding : length(hvg_idx), n_coding; kind="hvg")
 # z-score features (train mean/sd from a cell sample) + clamp to [-clip, clip]; default on (--standardize 0 / --clip 0 to disable)
-sc_standardize = something(get(config, "standardize", nothing), 1) == 1
+# sc_standardize = something(get(config, "standardize", nothing), 1) == 1
+# default flipped to raw (2026-10-01): stored log expression is the standard input; --standardize 1 for _zc
+sc_standardize = something(get(config, "standardize", nothing), 0) == 1
+# string(something(get(config, "input", nothing), "abs")) == "abs" || error("--input delta is not wired into the SC loader yet")
+# --input delta (lvl2): features minus the mean DMSO_TF profile of the same (cell line, plate)
+sc_input = string(something(get(config, "input", nothing), "abs"))
+sc_input in ("abs", "delta") || error("--input must be abs or delta, got $sc_input")
+if sc_input == "delta"
+    config["level"] == "lvl2" || error("--input delta is for lvl2 only (it removes cell identity)")
+    set_sc_delta!(string(something(get(config, "sc_dmso_path", nothing), "data/tahoe/sc_dmso_means.jld2")))
+    model_tag *= "_delta"
+end
 sc_clip = Float32(something(get(config, "clip", nothing), 10))
 sc_standardize && (model_tag *= sc_clip > 0 ? "_zc" : "_z")
 println("gene set: $(isnothing(hvg_idx) ? n_coding : length(hvg_idx)) of $n_coding genes → saving as $model_tag")

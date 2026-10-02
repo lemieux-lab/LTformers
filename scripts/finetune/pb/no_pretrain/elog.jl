@@ -61,7 +61,8 @@ if n_hvg > 0 && n_hvg < n_genes_all
 end
 n_used = (n_hvg > 0 && n_hvg < n_genes_all) ? n_hvg : n_genes_all
 model_tag = gene_set_tag(config["modeltype"], n_used, n_genes_all; kind="hvg")
-something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= "_gdd")  # (drug, dose) group split
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")  # LINCS: plates held out; tahoe: (drug, dose) groups
+string(something(get(config, "input", nothing), "abs")) == "delta" && (model_tag *= "_delta")  # plate-matched DMSO delta
 println("gene set: $n_used of $n_genes_all genes → saving as $model_tag")
 
 d = dsplit(data_expr, config;
@@ -75,10 +76,8 @@ d = dsplit(data_expr, config;
 # lvl3 identity baseline
 id_baseline = is_regression ? d.id_baseline : nothing
 
-# per-gene z-score with train-split mean/sd, then clamp to [-clip, clip] (Scanpy/Seurat: 10). default on;
-# --standardize 0 = raw inputs, --clip 0 = no clipping. raw log-expression is badly conditioned (uncentered offsets,
-# per-gene sd spread up to ~3500x): elog/emlp +10-15 pts on LINCS and TPB HVG with it
-if something(get(config, "standardize", nothing), 1) == 1
+# per-gene z-score with train-split mean/sd, then clamp to [-clip, clip] (Scanpy/Seurat: 10)
+if something(get(config, "standardize", nothing), 0) == 1
     μ = mean(d.X_train, dims=2)
     σ = std(d.X_train, dims=2)
     σ[σ .< 1f-6] .= 1f0                      # constant genes -> centered only

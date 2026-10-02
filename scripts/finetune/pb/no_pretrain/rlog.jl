@@ -58,7 +58,7 @@ d = dsplit(data_expr, config;
 
 rank_k = rank_feature_k(config, d.n_genes)
 model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")
-something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= "_gdd")  # (drug, dose) group split
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")  # (drug, dose) group split
 println("rank features: k=$rank_k of $(d.n_genes) genes → saving as $model_tag")
 
 # lvl3 identity baseline

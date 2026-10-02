@@ -50,6 +50,10 @@ if n_hvg > 0 && n_hvg < size(data_expr, 1)
     data_expr, hvg_idx = select_hvg(data_expr, n_hvg)
     println("HVG filter: $(n_orig) → $(n_hvg) genes")
 end
+# result folder tag: etf, + _gdd for the (drug, dose) group split, + _z / _zc when standardized (as elog.jl)
+model_tag = config["modeltype"]
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")  # LINCS: plates held out; tahoe: (drug, dose) groups
+string(something(get(config, "input", nothing), "abs")) == "delta" && (model_tag *= "_delta")  # plate-matched DMSO delta
 
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
@@ -60,6 +64,27 @@ d = dsplit(data_expr, config;
 
 # lvl3 identity baseline
 id_baseline = is_regression ? d.id_baseline : nothing
+
+# per-gene z-score 
+if something(get(config, "standardize", nothing), 0) == 1
+    μ = mean(d.X_train, dims=2)
+    σ = std(d.X_train, dims=2)
+    σ[σ .< 1f-6] .= 1f0                      # constant genes -> centered only
+    clip_c = Float32(something(get(config, "clip", nothing), 10))
+    z(X) = (X .- μ) ./ σ
+    Z_train = z(d.X_train)
+    if clip_c > 0
+        println("clip ±$clip_c: $(round(100 * mean(abs.(Z_train) .> clip_c), digits=4))% of train values clipped")
+        zc(X) = clamp.(z(X), -clip_c, clip_c)
+        global d = merge(d, (; X_train=clamp.(Z_train, -clip_c, clip_c), X_val=zc(d.X_val), X_test=zc(d.X_test)))
+        global model_tag *= "_zc"
+    else
+        global d = merge(d, (; X_train=Z_train, X_val=z(d.X_val), X_test=z(d.X_test)))
+        global model_tag *= "_z"
+    end
+    Z_train = nothing
+    println("standardized inputs with train mean/sd → saving as $model_tag")
+end
 
 n_genes = d.n_genes
 n_classifications = d.n_classifications
@@ -78,7 +103,8 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag,
+                    isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
 mkpath(save_dir)
 println("save dir: $save_dir")
 

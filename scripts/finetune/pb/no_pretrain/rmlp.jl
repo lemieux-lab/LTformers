@@ -36,7 +36,6 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
 # job id + pid: parallel sweep agents / jobs starting in the same minute otherwise share a save_dir (NFS stale file handle)
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid())
 
@@ -64,7 +63,7 @@ d = dsplit(data_expr, config;
 
 rank_k = rank_feature_k(config, d.n_genes)
 model_tag = gene_set_tag(config["modeltype"], rank_k, d.n_genes; kind="topk")
-something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= "_gdd")  # (drug, dose) group split
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")  # (drug, dose) group split
 println("rank features: k=$rank_k of $(d.n_genes) genes → saving as $model_tag")
 
 # lvl3 identity baseline
@@ -72,13 +71,10 @@ id_baseline = is_regression ? d.id_baseline : nothing
 
 # model
 # tapered relu MLP (mlp_hidden_dim = 0), else n_layers constant-width hidden layers
-# sizes = [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
-#          for i in 0:config["n_layers"]+1]
 mlp_h = something(get(config, "mlp_hidden_dim", nothing), 0)
 mlp_shape = something(get(config, "mlp_shape", nothing), "const")  # const | funnel (halve width each layer, floor n_classes)
 mlp_hidden = mlp_shape == "funnel" ? [max(mlp_h ÷ 2^(i-1), d.n_classifications) for i in 1:config["n_layers"]] :
                                      fill(mlp_h, config["n_layers"])
-# sizes = mlp_h > 0 ? [d.n_genes; fill(mlp_h, config["n_layers"]); d.n_classifications] :
 sizes = mlp_h > 0 ? [d.n_genes; mlp_hidden; d.n_classifications] :
         [round(Int, d.n_genes + (d.n_classifications - d.n_genes) * i / (config["n_layers"] + 1))
          for i in 0:config["n_layers"]+1]
