@@ -824,7 +824,9 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
     end
 
     # pass 1 metadata
-    shards_to_scan = subset_shards > 0 ? all_shards[1:min(subset_shards, length(all_shards))] : all_shards
+    # seeded random subset (+1: not the pretrain shard split)
+    shards_to_scan = subset_shards > 0 ?
+        sort(shuffle(MersenneTwister(split_seed + 1), sort(all_shards))[1:min(subset_shards, length(all_shards))]) : all_shards
     println("[pass 1] scanning metadata from $(length(shards_to_scan)) shards...")
     flush(stdout)
 
@@ -885,6 +887,11 @@ function sc_finetune_metadata_scan(all_shards::Vector{String}, level::String;
     train_cells = filter(r -> unit(r) in train_samples, cell_records)
     val_cells   = filter(r -> unit(r) in val_samples, cell_records)
     test_cells  = filter(r -> unit(r) in test_samples, cell_records)
+    # warn on val/test classes with no training cells
+    train_labels = Set(r[3] for r in train_cells)
+    missing_tr = setdiff(Set(r[3] for r in Iterators.flatten((val_cells, test_cells))), train_labels)
+    isempty(missing_tr) || @warn "$(length(missing_tr)) val/test classes have no training cells: $(first(collect(missing_tr), 5))"
+    println("classes: $(length(train_labels)) in train, $(length(missing_tr)) val/test-only")
     empty!(cell_records); sizehint!(cell_records, 0); cell_records = nothing
     GC.gc()
     println("cell split: $(length(train_cells)) train, $(length(val_cells)) val, $(length(test_cells)) test cells")

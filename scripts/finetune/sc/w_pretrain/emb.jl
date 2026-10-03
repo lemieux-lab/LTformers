@@ -33,6 +33,11 @@ println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+# --sc_split
+sc_split = something(get(config, "sc_split", nothing), config["level"] == "lvl1" ? "well_cl" : "drug_dose")
+config["sc_split"] = sc_split
+sc_split == "well_cl" && (timestamp *= "_wcl")
+sc_split == "well" && (timestamp *= "_well")
 
 # data
 coding_tokens, token_to_idx, n_coding = load_gene_vocab(config["meta_dir"], config["coding_gene_path"])
@@ -67,6 +72,7 @@ d = load_sc_finetune_data_streaming(all_shards, config["level"], token_to_idx, n
                            pb_data_path=get(config, "pb_data_path", ""),
                            hvg_idx=hvg_idx,
                            subset_shards=get(config, "subset_shards", 0),
+                           split_by=sc_split,
                            process_cell_topk_flat_fn=process_cell_topk_flat,
                            cell_to_dense_flat_fn=cell_to_dense_flat!,
                            oversmpl_fn=oversmpl,

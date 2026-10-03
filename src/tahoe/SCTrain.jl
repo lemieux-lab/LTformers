@@ -11,7 +11,17 @@ using Plot: plot_loss
 using Models: fix_gpu_dropout
 using LoadSC: finetune_batches_from_shard, finetune_train_batches, draw_train_cells, load_shard_pyarrow, _build_ft_batch, memlog
 
-export sc_eval_paths, sc_finetune!, sc_feature_stats
+export sc_eval_paths, sc_finetune!, sc_feature_stats, sc_pt_unseen_shards
+
+
+# shards pretraining didn't train on
+const SC_PT_SPLIT = joinpath(@__DIR__, "..", "..", "data", "tahoe", "sc_pretrain_shard_split.jld2")
+function sc_pt_unseen_shards(config)
+    p = something(get(config, "sc_split_path", nothing), SC_PT_SPLIT)
+    isfile(p) || (@warn "no SC pretrain shard split at $p: val/test not restricted to pretrain-unseen shards"; return nothing)
+    s = load(p)
+    return Set(vcat(basename.(s["val_shards"]), basename.(s["test_shards"])))
+end
 
 
 # val: fixed seeded subset of ft_eval_shards shards (default 100, 0 = all); test: ft_test_shards (default 0 = all)
@@ -19,7 +29,11 @@ function sc_eval_paths(d, config)
     d.train_shard_map === nothing && return nothing, nothing
     n_val = something(get(config, "ft_eval_shards", nothing), 100)
     n_test = something(get(config, "ft_test_shards", nothing), 0)
-    vp = shuffle(MersenneTwister(42), sort(d.val_shard_paths))
+    unseen = sc_pt_unseen_shards(config)
+    vp_all = sort(d.val_shard_paths)
+    vp_keep = isnothing(unseen) ? vp_all : filter(sp -> basename(sp) in unseen, vp_all)
+    isnothing(unseen) || println("val shards restricted to pretrain-unseen: $(length(vp_keep))/$(length(vp_all))")
+    vp = shuffle(MersenneTwister(42), vp_keep)
     tp = sort(d.test_shard_paths)
     val_paths = n_val > 0 ? vp[1:min(n_val, length(vp))] : vp
     test_paths = n_test > 0 ? shuffle(MersenneTwister(42), tp)[1:min(n_test, length(tp))] : tp
@@ -58,12 +72,17 @@ _loss(logits, y, is_regression) = is_regression ? Flux.mse(logits, y) : Flux.log
 # group_map (test only): shard -> (well keys, well|cell-line keys) per cell -> also returns accuracy of
 # mean softmax per group (pseudobulk-comparable: a PB sample = one (well, cell line))
 function _eval(m, fk, is_regression; paths = nothing, shard_map = nothing, X = nothing, Y = nothing, label = "val",
-               group_map = nothing)
+               group_map = nothing, unseen = nothing)
     preds = is_regression ? Float32[] : Int[]
     trues = is_regression ? Float32[] : Int[]
     losses = Float32[]; ns = Int[]
     agg = [Dict{String, Vector{Float32}}(), Dict{String, Vector{Float32}}()]   # well, well|cl -> summed probs
     agg_lab = [Dict{String, Int}(), Dict{String, Int}()]                        # group -> label (-1 = mixed)
+    # same, pretrain-unseen cells only
+    agg_u = [Dict{String, Vector{Float32}}(), Dict{String, Vector{Float32}}()]
+    agg_lab_u = [Dict{String, Int}(), Dict{String, Int}()]
+    pred_unseen = Bool[]; cur_unseen = false
+    pred_shard = Int32[]; pred_cell = Int32[]  # shard, cell per prediction
     function step!(x, y, gkeys = nothing)
         x_gpu = fk.to_x(x); y_gpu = CuArray(y)
         logits = m(x_gpu)
@@ -79,13 +98,20 @@ function _eval(m, fk, is_regression; paths = nothing, shard_map = nothing, X = n
                     acc_v = get!(() -> zeros(Float32, size(probs, 1)), agg[k], g)
                     acc_v .+= view(probs, :, j)
                     l = get!(agg_lab[k], g, labs[j]); l != labs[j] && (agg_lab[k][g] = -1)
+                    if cur_unseen
+                        acc_u = get!(() -> zeros(Float32, size(probs, 1)), agg_u[k], g)
+                        acc_u .+= view(probs, :, j)
+                        lu = get!(agg_lab_u[k], g, labs[j]); lu != labs[j] && (agg_lab_u[k][g] = -1)
+                    end
                 end
             end
         end
+        append!(pred_unseen, fill(cur_unseen, size(y, 2)))
         CUDA.unsafe_free!(x_gpu); CUDA.unsafe_free!(y_gpu)
     end
     if !isnothing(paths)
         for (i, sp) in enumerate(paths)
+            cur_unseen = isnothing(unseen) || basename(sp) in unseen
             cis, labs = shard_map[sp]
             gk = isnothing(group_map) ? nothing : group_map[sp]
             off = 0
@@ -95,6 +121,7 @@ function _eval(m, fk, is_regression; paths = nothing, shard_map = nothing, X = n
                                                        cell_to_dense_flat_fn=fk.cell_to_dense_flat_fn)
                 bs = size(y, 2)
                 step!(x, y, isnothing(gk) ? nothing : (gk[1][off+1:off+bs], gk[2][off+1:off+bs]))
+                append!(pred_shard, fill(Int32(i), bs)); append!(pred_cell, Int32.(cis[off+1:off+bs]))
                 off += bs
             end
             i % 200 == 0 && (println("    $label shard $i/$(length(paths))"); flush(stdout))
@@ -111,9 +138,15 @@ function _eval(m, fk, is_regression; paths = nothing, shard_map = nothing, X = n
     # group accuracy (NaN if a grouping mixes labels, e.g. per-well for lvl1 cell-line ID)
     gacc(k) = any(==(-1), values(agg_lab[k])) ? NaN :
               mean(argmax(v) == agg_lab[k][g] for (g, v) in agg[k])
-    ga = (well_acc = gacc(1), n_wells = length(agg[1]), wellcl_acc = gacc(2), n_wellcl = length(agg[2]))
+    gacc_u(k) = isempty(agg_u[k]) || any(==(-1), values(agg_lab_u[k])) ? NaN :
+                mean(argmax(v) == agg_lab_u[k][g] for (g, v) in agg_u[k])
+    ga = (well_acc = gacc(1), n_wells = length(agg[1]), wellcl_acc = gacc(2), n_wellcl = length(agg[2]),
+          well_acc_u = gacc_u(1), n_wells_u = length(agg_u[1]), wellcl_acc_u = gacc_u(2), n_wellcl_u = length(agg_u[2]),
+          unseen_mask = BitVector(pred_unseen), pred_shard = pred_shard, pred_cell = pred_cell)
     println("  $label aggregated: per-well acc=$(round(ga.well_acc, digits=4)) (n=$(ga.n_wells)), " *
             "per-(well, cell line) acc=$(round(ga.wellcl_acc, digits=4)) (n=$(ga.n_wellcl))"); flush(stdout)
+    isnothing(unseen) || println("  $label pretrain-unseen cells: $(count(pred_unseen))/$(length(pred_unseen)), " *
+            "acc=$(round(mean(preds[pred_unseen] .== trues[pred_unseen]), digits=4)), per-(well, cell line) acc=$(round(ga.wellcl_acc_u, digits=4)) (n=$(ga.n_wellcl_u))")
     return loss, acc, preds, trues, ga
 end
 
@@ -241,8 +274,9 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
     GC.gc(true); CUDA.reclaim()
     println("  test eval ($(streaming ? length(test_paths) : size(d.X_test, 2)) $(streaming ? "shards" : "samples"))"); flush(stdout)
     gm = (streaming && !is_regression) ? d.test_group_map : nothing
+    unseen = (streaming && !is_regression) ? sc_pt_unseen_shards(config) : nothing
     no_agg = (well_acc = NaN, n_wells = 0, wellcl_acc = NaN, n_wellcl = 0)
-    res = streaming ? _eval(model, fk, is_regression; paths=test_paths, shard_map=d.test_shard_map, label="test", group_map=gm) :
+    res = streaming ? _eval(model, fk, is_regression; paths=test_paths, shard_map=d.test_shard_map, label="test", group_map=gm, unseen=unseen) :
                       _eval(model, fk, is_regression; X=d.X_test, Y=d.y_test, label="test")
     tl, _, all_preds, all_trues = res[1:4]
     final_agg = length(res) == 5 ? res[5] : no_agg
@@ -255,7 +289,7 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
             best_model = fix_gpu_dropout(cu(best_cpu))
             Flux.testmode!(best_model)
             println("  best-model test eval (step $best_step)"); flush(stdout)
-            res = streaming ? _eval(best_model, fk, is_regression; paths=test_paths, shard_map=d.test_shard_map, label="test", group_map=gm) :
+            res = streaming ? _eval(best_model, fk, is_regression; paths=test_paths, shard_map=d.test_shard_map, label="test", group_map=gm, unseen=unseen) :
                               _eval(best_model, fk, is_regression; X=d.X_test, Y=d.y_test, label="test")
             best_preds, best_trues = res[3], res[4]
             best_agg = length(res) == 5 ? res[5] : no_agg
@@ -264,9 +298,23 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
         println("  best step = final step ($step): reusing final test predictions")
     end
     jldsave(joinpath(save_dir, "eval_history.jld2"); val_steps, train_losses, val_losses, val_accs, best_step)
+    # test = pretrain-unseen cells; *_full = all test cells
+    all_preds_full, all_trues_full, best_preds_full, best_trues_full = all_preds, all_trues, best_preds, best_trues
+    best_ids = hasproperty(best_agg, :pred_shard) ?
+        (shard = basename.(test_paths)[best_agg.pred_shard], cell = best_agg.pred_cell, pt_unseen = best_agg.unseen_mask) : nothing
+    final_agg_full, best_agg_full = final_agg, best_agg
+    _u(a) = hasproperty(a, :unseen_mask) ? (well_acc = a.well_acc_u, n_wells = a.n_wells_u, wellcl_acc = a.wellcl_acc_u, n_wellcl = a.n_wellcl_u) : a
+    if !isnothing(unseen) && hasproperty(final_agg, :unseen_mask)
+        mf = final_agg.unseen_mask; mb = best_agg.unseen_mask
+        all_preds, all_trues = all_preds[mf], all_trues[mf]
+        best_preds, best_trues = best_preds[mb], best_trues[mb]
+        final_agg, best_agg = _u(final_agg), _u(best_agg)
+    end
     return (; train_losses, val_losses, val_accs, val_steps, test_losses=Float32[tl],
               all_preds, all_trues, best_preds, best_trues, best_step, best_val_loss, global_step=step,
-              final_agg, best_agg, best_val_acc)
+              final_agg, best_agg, best_val_acc,
+              all_preds_full, all_trues_full, best_preds_full, best_trues_full, final_agg_full, best_agg_full,
+              split_tag=(isnothing(unseen) ? "sc_full" : "sc_ptunseen"), best_ids)
 end
 
 

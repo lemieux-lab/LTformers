@@ -33,11 +33,12 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
-# --sc_split: "drug_dose" (default; all wells of a drug-dose held out together), "well" (whole wells),
-# or "well_cl" ((well, cell line) units, like a random PB split)
-sc_split = something(get(config, "sc_split", nothing), "drug_dose")
-config["sc_split"] = sc_split  # logged to params.txt (default changed well -> drug_dose on 2026-09-28)
+# + pid and seed so same-minute runs don't share a save_dir
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid()) *
+            (isnothing(get(config, "seed", nothing)) ? "" : "_s$(config["seed"])")
+# --sc_split: drug_dose (lvl2 default), well_cl (lvl1 default), well
+sc_split = something(get(config, "sc_split", nothing), config["level"] == "lvl1" ? "well_cl" : "drug_dose")
+config["sc_split"] = sc_split  # logged to params.txt
 sc_split == "well_cl" && (timestamp *= "_wcl")
 sc_split == "well" && (timestamp *= "_well")
 
@@ -153,7 +154,12 @@ best_step, best_val_loss, best_val_acc, global_step = r.best_step, r.best_val_lo
 opt = nothing; GC.gc(true); CUDA.reclaim()  # free optimizer state
 best_metrics = test_metrics(r.best_preds, r.best_trues, is_regression)
 final_metrics = test_metrics(all_preds, all_trues, is_regression)
-isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=r.best_preds, all_trues=r.best_trues)
+# test on pretrain-unseen cells; *_full = all test cells
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=r.best_preds, all_trues=r.best_trues,
+    all_preds_full=r.best_preds_full, all_trues_full=r.best_trues_full, split_tag=r.split_tag,
+    test_shard=(isnothing(r.best_ids) ? String[] : r.best_ids.shard), test_cell=(isnothing(r.best_ids) ? Int32[] : r.best_ids.cell),
+    test_pt_unseen=(isnothing(r.best_ids) ? Bool[] : collect(r.best_ids.pt_unseen)),
+    label_names=((hasproperty(d, :label_to_id) && d.label_to_id isa AbstractDict) ? sort(collect(keys(d.label_to_id)), by=k -> d.label_to_id[k]) : String[]))
 println("test (best model, step $best_step): ", best_metrics)
 println("test (final model, step $global_step): ", final_metrics)
 
@@ -200,6 +206,8 @@ else
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=mlp_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_well_acc=r.best_agg.well_acc, best_wellcl_acc=r.best_agg.wellcl_acc,
+               split_tag=r.split_tag, best_accuracy_fullgroup=(isempty(r.best_preds_full) ? NaN : mean(r.best_preds_full .== r.best_trues_full)),
+               best_wellcl_acc_fullgroup=r.best_agg_full.wellcl_acc,
                final_well_acc=r.final_agg.well_acc, final_wellcl_acc=r.final_agg.wellcl_acc,
                best_step=best_step, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end
