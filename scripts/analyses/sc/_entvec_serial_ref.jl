@@ -12,6 +12,7 @@ json_py = pyimport("json")
 n_parquets_to_use = parse(Int, get(ENV, "ENTVEC_NPQ", "300"))
 res_root = get(ENV, "ENTVEC_ROOT", "results/tahoe/sc")
 Random.seed!(parse(Int, get(ENV, "ENTVEC_SEED", "42")))
+max_cells_pq = parse(Int, get(ENV, "ENTVEC_MAXCELLS", string(typemax(Int))))   # cells per shard in the entropy/mean passes (tests)
 
 # save_dir = "results/tahoe/sc/figures/vectors/$(n_parquets_to_use)_pqs"
 save_dir = "$res_root/figures/vectors/$(n_parquets_to_use)_pqs"
@@ -124,7 +125,7 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
     parquet_path = joinpath(tahoe_data_dir, parquet_file)
     parquet = read_parquet(parquet_path)
 
-    for ci in 1:parquet.n_cells
+    for ci in 1:min(parquet.n_cells, max_cells_pq)
         raw = cell_to_raw(parquet.genes_flat, parquet.offsets, parquet.expr_flat, ci, token_to_idx, n_coding)
         dense = copy(raw)
         total = sum(dense)
@@ -154,7 +155,7 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
             rank_unique_sums[r] += length(seen)
         end
     end
-    global total_cells_processed += parquet.n_cells
+    global total_cells_processed += min(parquet.n_cells, max_cells_pq)
 end
 elapsed = time() - t0
 println("Total cells processed: $total_cells_processed in $(Int(div(elapsed,3600)))h $(Int(div(elapsed%3600,60)))m $(Int(round(elapsed%60)))s")
@@ -201,7 +202,7 @@ begin
         ylabel="Shannon entropy",
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_sc_ent, 1:max_populated_rank, sc_entropies, alpha=0.5, color=:black)
-    display(fig_sc_ent)
+    # display(fig_sc_ent)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy.png", fig_sc_ent)
 
@@ -214,7 +215,7 @@ begin
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_sc_norm, 1:max_populated_rank, sc_norm_entropies, alpha=0.5, color=:black)
     ylims!(ax_sc_norm, 0, 1.05)
-    display(fig_sc_norm)
+    # display(fig_sc_norm)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_normalized.png", fig_sc_norm)
 
@@ -244,7 +245,7 @@ begin
         ["Entropy", "Sparsity"],
         orientation=:horizontal, tellwidth=false)
 
-    display(fig_sc_overlay)
+    # display(fig_sc_overlay)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_sparsity.png", fig_sc_overlay)
 
@@ -258,7 +259,7 @@ begin
         xtickformat=values -> [string(Int(round(v))) for v in values],
         title="Tahoe SC unique count diversity per rank ($(n_parquets_to_use) parquets)")
     lines!(ax_sc_ud, 1:max_populated_rank, sc_unique_diversity_norm, linewidth=2, color=:black)
-    display(fig_sc_ud)
+    # display(fig_sc_ud)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_unique_diversity.png", fig_sc_ud)
 
@@ -272,7 +273,7 @@ begin
         title="Entropy per rank (top 1024)",
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_1k, 1:n_show, sc_entropies[1:n_show], alpha=0.5, color=:black)
-    display(fig_1k)
+    # display(fig_1k)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_top1024.png", fig_1k)
 
@@ -285,7 +286,7 @@ begin
         title="Entropy per rank (top 2048)",
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_2k, 1:n_show, sc_entropies[1:n_show], alpha=0.5, color=:black)
-    display(fig_2k)
+    # display(fig_2k)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_rank_entropy_top2048.png", fig_2k)
 
@@ -308,7 +309,7 @@ for (si, parquet_file) in ProgressBar(enumerate(sampled_parquet_files))
     ef = convert(Vector{Float32}, np.array(expr_combined.values, copy=true))
     n_cells = length(of) - 1
 
-    for cell_i in 1:n_cells
+    for cell_i in 1:min(n_cells, max_cells_pq)
         s = of[cell_i] + 1
         e = of[cell_i + 1]
         if ef[s] < 0
@@ -349,7 +350,7 @@ begin
         ylabel="mean expression level",
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_sc_mean, 1:n_coding, sc_gene_mean[sc_sorted_by_mean], alpha=0.5, markersize=5, color=Makie.wong_colors()[2])
-    display(fig_sc_mean)
+    # display(fig_sc_mean)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_gene_exp_mean.png", fig_sc_mean)
 
@@ -360,7 +361,7 @@ begin
         ylabel="standard deviation",
         xtickformat=values -> [string(Int(round(v))) for v in values])
     scatter!(ax_sc_std, 1:n_coding, sc_gene_std[sc_sorted_by_mean], alpha=0.5, color=Makie.wong_colors()[3])
-    display(fig_sc_std)
+    # display(fig_sc_std)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_gene_exp_stddev.png", fig_sc_std, px_per_unit=2)
 
@@ -478,7 +479,7 @@ begin
     ry = (maximum(sc_expr_euclidean) - minimum(sc_expr_euclidean)) / 100
     hb = hexbin!(ax, Float64.(sc_rank_kendall), Float64.(sc_expr_euclidean), cellsize=(rx, ry), colorscale=log10)
     Colorbar(fig[1, 2], hb, label="count (log10)")
-    display(fig)
+    # display(fig)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_euclidean_kendall.png", fig)
 
@@ -491,7 +492,7 @@ begin
     ry = (maximum(sc_expr_cosine) - minimum(sc_expr_cosine)) / 100
     hb = hexbin!(ax, Float64.(sc_rank_kendall), Float64.(sc_expr_cosine), cellsize=(rx, ry), colorscale=log10)
     Colorbar(fig[1, 2], hb, label="count (log10)")
-    display(fig)
+    # display(fig)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall.png", fig)
 
@@ -575,7 +576,7 @@ begin
     hist!(ax_lc, Float64.(n_detected_per_cell), bins=100, color=(:black, 0.6))
     vlines!(ax_lc, [median(n_detected_per_cell)], color=:red, linewidth=2, linestyle=:dash, label="median=$(Int(median(n_detected_per_cell)))")
     axislegend(ax_lc, position=:rt)
-    display(fig_lc)
+    # display(fig_lc)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_library_complexity.png", fig_lc)
 
@@ -595,7 +596,7 @@ begin
         colormap=:viridis,
         markersize=3, alpha=0.6)
     Colorbar(fig_jac[1, 2], sc, label="Jaccard overlap")
-    display(fig_jac)
+    # display(fig_jac)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_jaccard.png", fig_jac)
 
@@ -612,7 +613,7 @@ begin
         colormap=:inferno,
         markersize=3, alpha=0.6)
     Colorbar(fig_frac[1, 2], sc2, label="Fraction ||Δ||² from\nnon-overlapping genes")
-    display(fig_frac)
+    # display(fig_frac)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_mismatch_frac.png", fig_frac)
 
@@ -626,7 +627,7 @@ begin
         Float64.(sc_jaccard[plot_idx]),
         Float64.(sc_expr_cosine[plot_idx]),
         markersize=2, alpha=0.4, color=:black)
-    display(fig_jc)
+    # display(fig_jc)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_jaccard_vs_cosine.png", fig_jc)
 
@@ -640,7 +641,7 @@ begin
         Float64.(sc_jaccard[plot_idx]),
         Float64.(sc_expr_euclidean[plot_idx]),
         markersize=2, alpha=0.4, color=:black)
-    display(fig_je)
+    # display(fig_je)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_jaccard_vs_euclidean.png", fig_je)
 
@@ -660,7 +661,7 @@ begin
     # identity line
     max_val = max(maximum(sc_euclid_from_shared), maximum(sc_euclid_from_mismatch))
     lines!(ax_decomp, [0, max_val], [0, max_val], color=:red, linewidth=1, linestyle=:dash)
-    display(fig_decomp)
+    # display(fig_decomp)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_euclid_decomposition.png", fig_decomp)
 
@@ -677,7 +678,7 @@ begin
         colormap=:viridis,
         markersize=3, alpha=0.6)
     Colorbar(fig_nsh[1, 2], sc4, label="Shared detected genes")
-    display(fig_nsh)
+    # display(fig_nsh)   # blocks in batch jobs (opens a browser)
 end
 save("$save_dir/sc_$(n_parquets_to_use)_cosken_by_shared.png", fig_nsh)
 
@@ -731,7 +732,7 @@ for top_k in [1024, 2048]
         local ry = (maximum(tk_expr_euclidean) - minimum(tk_expr_euclidean)) / 100
         local hb = hexbin!(ax, Float64.(tk_rank_kendall), Float64.(tk_expr_euclidean), cellsize=(rx, ry), colorscale=log10)
         Colorbar(fig[1, 2], hb, label="count (log10)")
-        display(fig)
+        # display(fig)   # blocks in batch jobs (opens a browser)
         fig
     end
     save("$save_dir/sc_$(n_parquets_to_use)_euclidean_kendall_top$(top_k).png", fig_euc)
@@ -746,7 +747,7 @@ for top_k in [1024, 2048]
         local ry = (maximum(tk_expr_cosine) - minimum(tk_expr_cosine)) / 100
         local hb = hexbin!(ax, Float64.(tk_rank_kendall), Float64.(tk_expr_cosine), cellsize=(rx, ry), colorscale=log10)
         Colorbar(fig[1, 2], hb, label="count (log10)")
-        display(fig)
+        # display(fig)   # blocks in batch jobs (opens a browser)
         fig
     end
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_top$(top_k).png", fig_cos)
@@ -798,7 +799,7 @@ begin
         local ry = (maximum(hvg_expr_euclidean) - minimum(hvg_expr_euclidean)) / 100
         local hb = hexbin!(ax, Float64.(hvg_rank_kendall), Float64.(hvg_expr_euclidean), cellsize=(rx, ry), colorscale=log10)
         Colorbar(fig[1, 2], hb, label="count (log10)")
-        display(fig)
+        # display(fig)   # blocks in batch jobs (opens a browser)
         fig
     end
     save("$save_dir/sc_$(n_parquets_to_use)_euclidean_kendall_hvg$(hvg_k).png", fig_euc)
@@ -813,7 +814,7 @@ begin
         local ry = (maximum(hvg_expr_cosine) - minimum(hvg_expr_cosine)) / 100
         local hb = hexbin!(ax, Float64.(hvg_rank_kendall), Float64.(hvg_expr_cosine), cellsize=(rx, ry), colorscale=log10)
         Colorbar(fig[1, 2], hb, label="count (log10)")
-        display(fig)
+        # display(fig)   # blocks in batch jobs (opens a browser)
         fig
     end
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_kendall_hvg$(hvg_k).png", fig_cos)
@@ -836,7 +837,7 @@ begin
     local ry = (maximum(hvg_expr_cosine) - minimum(hvg_expr_cosine)) / 100
     local hb = hexbin!(ax, Float64.(mm_rank_kendall), Float64.(hvg_expr_cosine), cellsize=(rx, ry), colorscale=log10)
     Colorbar(fig[1, 2], hb, label="Count (log10)")
-    display(fig)
+    # display(fig)   # blocks in batch jobs (opens a browser)
     save("$save_dir/sc_$(n_parquets_to_use)_cosine_hvg$(hvg_k)_kendall_top1024.png", fig)
     println("model-matched spearman(cosine, kendall) = $(round(corspearman(Float64.(hvg_expr_cosine), Float64.(mm_rank_kendall)), digits=3))")
 end
@@ -936,7 +937,7 @@ begin
         local ry = (maximum(cosv) - minimum(cosv) + 1f-6) / 60
         hexbin!(ax, Float64.(jacv), Float64.(cosv), cellsize=(1 / 60, ry), colorscale=log10)
     end
-    display(fig)
+    # display(fig)   # blocks in batch jobs (opens a browser)
     save("$save_dir/sc_$(n_parquets_to_use)_depth_downsample_pb.png", fig, px_per_unit=2)
 
     # sc: bin pairs by detected genes
@@ -1008,7 +1009,7 @@ begin
     scatter!(ax2, Float64.(sc_rank_kendall[same_cl]), Float64.(sc_expr_cosine[same_cl]), markersize=1, alpha=0.1, color=:gray80)
 
     save("$save_dir/sc_$(n_parquets_to_use)_blob_diagnosis.png", fig_cl)
-    display(fig_cl)
+    # display(fig_cl)   # blocks in batch jobs (opens a browser)
 end
 
 # euclid vs kendall by cell line
@@ -1024,5 +1025,5 @@ begin
     scatter!(ax2, Float64.(sc_rank_kendall[same_cl]), Float64.(sc_expr_euclidean[same_cl]), markersize=1, alpha=0.1, color=:gray80)
 
     save("$save_dir/sc_$(n_parquets_to_use)_euclidean_blob_diagnosis.png", fig_cl2)
-    display(fig_cl2)
+    # display(fig_cl2)   # blocks in batch jobs (opens a browser)
 end

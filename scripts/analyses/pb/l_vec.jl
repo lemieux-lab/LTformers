@@ -5,13 +5,6 @@ using JLD2, Statistics, StatsBase, CairoMakie, LinearAlgebra, Random, DataFrames
 
 data = "data_expr.jld2"
 expr = load("data/lincs/$data")["data_expr"]
-# fig_vec_cosine_dir = "results/lincs/figures/vectors/cosine"
-# fig_vec_euclid_dir = "results/lincs/figures/vectors/euclid"
-# fig_var_dir = "results/lincs/figures/variables"
-# data_vec_cosine_dir = "results/lincs/data/vectors/cosine"
-# data_vec_euclid_dir = "results/lincs/data/vectors/euclid"
-# knobs (defaults = 100K pairs); everything that depends on the sampled pairs goes into a <pairs> subfolder (100K, 1M, ...)
-# VEC_NPAIRS=1000000 julia -t 32 scripts/analyses/pb/l_vec.jl
 n_pairs = parse(Int, get(ENV, "VEC_NPAIRS", "100000"))
 n_pairs_str = n_pairs >= 1_000_000 ? "$(div(n_pairs, 1_000_000))M" : "$(div(n_pairs, 1_000))K"
 res_root = get(ENV, "VEC_ROOT", "results/lincs")
@@ -57,8 +50,7 @@ end
 ranked = rank_genes(expr, gene_medians)
 
 
-# threaded pair loops: same per-pair formulas as the serial loops (kept commented below), each pair written to its own
-# slot, no random draws inside, so the results do not depend on the number of threads
+# threaded pair loops
 function pairs_euc_cos!(euc, cosv, X::AbstractMatrix, ia, ib)
     Threads.@threads for k in eachindex(ia)
         a = view(X, :, ia[k])
