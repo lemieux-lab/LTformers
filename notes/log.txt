@@ -2868,3 +2868,110 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
 -- running tsc dmso means,lvl2 elog, emlp
     -- holding off on good runs for now
 -- would still nee rlog and rmlp for all lvl2 depending on what seb says!!!
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 2 2026 ###
+
+-- OVERALL:
+    -- lvl3 cl selection:
+        -- if using deltas, would need to re-screen pairs for diff task
+    -- baselines
+        -- consider: 
+            -- majority class (zero-R) baseline
+            -- upper bound of split-half experimental reproducibility
+    -- plot:
+        -- logreg baselines!
+    -- check:
+        -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- depth property; thus for sc the representations are dominated by detection noise
+            -- more reason to aggregate, this is why evaluating on means is standard...
+        -- what happened to 1,2,3 values for sparsity in addition to 0? (or each position of the matrix, compute number of unique count values and look at average for a given rank)
+        -- is there a difference due to gene set? (1024-hvg has same gene set while top-1024 has diff)
+    -- restructuring the evals:
+        -- pre-train: no filters, no changes
+        -- fine-tune:
+            -- lvl1: 
+                -- filter: drop JURKAT plate
+                -- split: random (well, cl for TSC)
+                    -- two test sets for TSC (one within pre-train, one outside)
+                -- baseline: logreg, mlp, zero-R
+                -- input: expression/ranks
+                -- output: cell line
+            -- lvl2:
+                -- filter: drop JURKAT plate, non DMSO w/ >500 in LINCS and >100 in Tahoe
+                -- split: random, plate (lincs), drug/dose (tahoe)
+                    -- two test sets:
+                        1. test groups that pre-training never saw
+                        2. full test groups
+                -- baseline: logreg, mlp, plate-only, zero-R, drug x plate
+                -- input: expression/ranks
+                    -- classes sampled via compound-balanced sampling (sc done a bit diff)
+                -- output: compound 
+            -- lvl3:
+                -- filter: drop JURKAT plate, fixed dose, fixed time
+                -- split: by compound
+                    -- two tests: full test groups, OOD compound (??? need to re-pretrain for this...)
+                -- baseline: mean, identity, TxPert, linreg, mlp, split-half ceiling
+                    -- TxPert: target DMSO + (source mean - source DMSO)
+                    -- split half: all compounds w/ >2 units
+                        -- lincs split across replicate plates, tahoe 2 types of split: for cross-plate and within-well
+                            -- ICC vs SB?
+                        -- raw and spearman-brown-corrected
+                -- input: source compound-mean expression/rank
+                -- output: PC1 of target compound-mean
+                    -- scoring R^2, normalized score, gap closed, DRF, per-replicate, per-cell (in separate script tho)
+    -- to deal w/ later:
+        -- re-pretrain OOD compound for lvl3 eval
+        -- ICC vs SB in split half?
+        -- delta ablation
+    -- to implement still:
+        -- w_pretraining loading bugs
+        -- lvl3 task
+
+-- LINCS:
+    -- baselines
+        -- RUNNING elog, rlog, emlp, rmlp sweeps + good runs on lvl1
+        -- RUNNING elog, rlog sweeps + good runs on lvl2
+        -- !TO-RUN emlp, rmlp sweeps on lvl2
+        -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- RUNNING elog, rlog, emlp, rmlp sweeps + good runs on lvl1, lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+        -- pre-train
+            -- RUNNING mlm etf, mlm rtf, lrecon rtf sweeps (3)
+            -- RUNNING lrecon etf, erecon etf, erecon rtf good runs! (40k) (3)
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- RUNNING elog, rlog, emlp, rmlp sweeps on lvl1, lvl2
+            -- !TO-RUN emlp, rmlp good runs on lvl1, lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+        -- pre-train
+            -- RUNNING erecon etf prelim sweep (1,1:15, CQ)
+                -- done mlm etf, mlm rtf, lrecon etf, lrecon rtf, erecon etf prelim sweep
+                -- note: lr for lrecon rtf is only decr in later # steps
+                    -- for the longer sweep: less early stopping, higher lr range, and no ema 0.999?
+            -- !TO-RUN longer sweeps on gh200 (since CQ is taking too long)
+        -- fine-tune
+
+-- FIGURES
+    -- lincs fig1
+        -- Demonstrate that: 
+                -- How much information do ranks retain from raw expression? 
+                -- Maybe: is expression or ranks able to separate factors (like CL, drug, dose, plate/batch) better? 
+                -- Alternatively: how much of the variation in gene rank is explained by those^ factors? 
+                -- Maybe: can we reconstruct expression from ranks? Via just fitting a curve, or a model??? 
+    -- lincs fig4
+        -- Demonstrate that: 
+            -- Low entropy ranks are easier to predict 
+            -- Maybe: high entropy ranks show better quality for downstream tasks??? (How entropy relates to representation quality?) 
+            -- Maybe: how ranks impose an ordering that does not exist IRL? 
+    -- tahoe fig1
+        -- 

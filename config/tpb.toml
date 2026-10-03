@@ -17,14 +17,28 @@ drop_prob = 0.125
 mask_ratio = 0.15 
 
 [pretrain.erecon.rtf]
-lr = 0.0015
-drop_prob = 0.1
+# lr = 0.0015
+# drop_prob = 0.1
+# sweep itkm7lwd (TPB-PT-Sept, 10k steps, bs 100, post Zygote fix): best z592hy7o lr 0.00417 drop 0.116, val 0.2286;
+# all full runs 0.2286-0.2317 (near task ceiling)
+# lr = 0.0035
+# drop_prob = 0.11
+# exact best-run settings (z592hy7o, 2 sig figs):
+lr = 0.0042
+drop_prob = 0.12
 # mask_ratio = 0.5
 mask_ratio = 0.3 
 
 [pretrain.erecon.etf]
-lr = 0.001
-drop_prob = 0.11
+# lr = 0.001
+# drop_prob = 0.11
+# sweep cpz9402o (TPB-PT-Sept, 10k steps, bs 100, post Zygote fix): best izdceamh lr 0.00373 drop 0.171, val 0.0356;
+# 2nd 7mou3bl3 lr 0.00265 drop 0.129, val 0.0366
+# lr = 0.003
+# drop_prob = 0.15
+# exact best-run settings (izdceamh, 2 sig figs):
+lr = 0.0037
+drop_prob = 0.17
 # mask_ratio = 0.38
 mask_ratio = 0.3 
 
@@ -36,11 +50,16 @@ mask_ratio = 0.15
 ema_decay = 0.82
 
 [pretrain.lrecon.etf]
-lr = 0.0019
-drop_prob = 0.11
+# lr = 0.0019
+# drop_prob = 0.11
+# sweep 66lxfdbb (TPB-PT-Sept, 10k steps, bs 100, post Zygote fix): best 1dufutv9 lr 0.00093 drop 0.118 ema 0.99, val 0.0477 test 0.0410;
+# exact best-run settings (2 sig figs):
+lr = 0.00093
+drop_prob = 0.12
 # mask_ratio = 0.13
 mask_ratio = 0.15 
-ema_decay = 0.93
+# ema_decay = 0.93
+ema_decay = 0.99
 
 # ──────────────────────────────────────────────
 # finetune — with pretrain
