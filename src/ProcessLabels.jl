@@ -9,7 +9,9 @@ export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_r
 
 
 # keep (optional): columns allowed before labels are chosen (bad plates, delta filters)
-function get_labels(data::Matrix{Float32}, level::String, label_path::String; keep = nothing)
+# lvl2: trt_cp compounds with > min_n profiles
+function get_labels(data::Matrix{Float32}, level::String, label_path::String; keep = nothing,
+                    pert_type = nothing, min_n::Integer = 500)
     if level == "lvl1"
         mfc = load(label_path)["mfc"]
         isnothing(keep) && return data, mfc, 1:size(data, 2)
@@ -18,9 +20,13 @@ function get_labels(data::Matrix{Float32}, level::String, label_path::String; ke
     elseif level == "lvl2"
         pert_id = load(label_path)["pert_id"]
         y = pert_id
-        counts = isnothing(keep) ? countmap(y) : countmap(y[keep])
-        valid_labels = Set(k for (k, v) in counts if 1000 < v < 20000)
-        idx = isnothing(keep) ? findall(l -> l in valid_labels, y) : findall(i -> keep[i] && y[i] in valid_labels, eachindex(y))
+        isnothing(pert_type) && error("get_labels LINCS lvl2: pert_type (inst_df.pert_type) required to keep trt_cp only")
+        ok = BitVector(string.(pert_type) .== "trt_cp")
+        isnothing(keep) || (ok .&= keep)
+        counts = countmap(y[ok])
+        valid_labels = Set(k for (k, v) in counts if v > min_n)
+        idx = findall(i -> ok[i] && y[i] in valid_labels, eachindex(y))
+        println("LINCS lvl2: trt_cp compounds with > $min_n profiles: $(length(valid_labels)) classes, $(length(idx)) profiles")
         return data[:, idx], y[idx], idx
     end
 end
@@ -218,9 +224,24 @@ end
 
 # splitting
 
+# seeded group split (indices only)
+function _group_split_idx(groups::AbstractVector, val_ratio::AbstractFloat, test_ratio::AbstractFloat;
+                          seed::Integer = 42)
+    ug = shuffle(MersenneTwister(seed), sort(unique(groups)))
+    n_test = floor(Int, length(ug) * test_ratio)
+    n_val = floor(Int, length(ug) * val_ratio)
+    test_g, val_g = Set(ug[1:n_test]), Set(ug[n_test+1:n_test+n_val])
+    test_idx = findall(in(test_g), groups)
+    val_idx = findall(in(val_g), groups)
+    train_idx = findall(g -> !(g in test_g) && !(g in val_g), groups)
+    return train_idx, val_idx, test_idx
+end
+
 # val/test = whole groups (wells); fractions are of groups, not samples
-function _group_tvsplit(X::Matrix, groups::AbstractVector, val_ratio::AbstractFloat, test_ratio::AbstractFloat)
-    ug = shuffle(unique(groups))
+# seeded
+function _group_tvsplit(X::Matrix, groups::AbstractVector, val_ratio::AbstractFloat, test_ratio::AbstractFloat;
+                        seed::Integer = 42)
+    ug = shuffle(MersenneTwister(seed), sort(unique(groups)))
     n_test = floor(Int, length(ug) * test_ratio)
     n_val = floor(Int, length(ug) * val_ratio)
     test_g, val_g = Set(ug[1:n_test]), Set(ug[n_test+1:n_test+n_val])
@@ -230,7 +251,49 @@ function _group_tvsplit(X::Matrix, groups::AbstractVector, val_ratio::AbstractFl
     return X[:, train_idx], X[:, val_idx], X[:, test_idx], train_idx, val_idx, test_idx
 end
 
-function get_pt_idx(label_idx, model_dir::String)
+# pretrain split, used by every finetune
+const CANONICAL_SPLITS = Dict("lincs" => "data/lincs/pretrain_split.jld2",
+                              "tahoe" => "data/tahoe/pb_pretrain_split.jld2")
+const REPO_ROOT = abspath(joinpath(@__DIR__, ".."))
+
+function split_path_for(config::Dict)
+    p = something(get(config, "split_path", nothing), get(CANONICAL_SPLITS, get(config, "data_format", "tahoe"), ""))
+    p == "" && return ""
+    return isabspath(p) ? p : joinpath(REPO_ROOT, p)
+end
+
+function load_pt_split(path::String)
+    isfile(path) || error("pretrain split file not found: $path")
+    s = load(path)
+    return (; train=Vector{Int}(s["train_indices"]), val=Vector{Int}(s["val_indices"]), test=Vector{Int}(s["test_indices"]))
+end
+
+# pretrain split -> positions in label_idx
+function _map_split(label_idx, s)
+    d = Dict(orig_i => new_i for (new_i, orig_i) in enumerate(label_idx))
+    f(v) = [d[i] for i in v if haskey(d, i)]
+    return f(s.train), f(s.test), f(s.val)
+end
+
+function get_pt_idx(label_idx, model_dir::String; split_path::String = "")
+    if split_path != ""
+        s = load_pt_split(split_path)
+        println("using canonical pretrain split $split_path ($(length(s.train))/$(length(s.val))/$(length(s.test)))")
+        # checkpoint split must match
+        if model_dir != ""
+            for p in ("$model_dir/indices.jld2", joinpath(dirname(rstrip(model_dir, '/')), "indices.jld2"))
+                isfile(p) || continue
+                ck = load(p)
+                haskey(ck, "train_indices") || continue
+                (sort(ck["train_indices"]) == sort(s.train) && sort(ck["test_indices"]) == sort(s.test)) ||
+                    error("checkpoint split $p differs from canonical split $split_path")
+                println("  checkpoint split $p matches")
+                break
+            end
+        end
+        train_idx, test_idx, val_idx = _map_split(label_idx, s)
+        return train_idx, test_idx, val_idx, s
+    end
     if model_dir == ""
         println("no model_dir set, using new random split")
         return nothing, nothing, nothing, nothing
@@ -352,7 +415,9 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
 
     keep, is_dmso, cl_key, plate_key = _sample_filters(data, config, fmt, inst_df, label_source)
     if fmt == "lincs"
-        X, y, label_idx = get_labels(data, config["level"], label_path; keep=keep)
+        X, y, label_idx = get_labels(data, config["level"], label_path; keep=keep,
+                                     pert_type=(isnothing(inst_df) ? nothing : inst_df.pert_type),
+                                     min_n=something(get(config, "lincs_min_n", nothing), 500))
     else  # tahoe
         X, y, label_idx = get_labels(data, label_source, config["level"]; keep=keep)
     end
@@ -365,9 +430,11 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
         println("input = delta: plate-matched DMSO delta for $(length(label_idx)) samples")
     end
     y_oh, n_cls = process_labels(y)
+    label_names = unique(y)  # same order as process_labels
     n_genes = size(X, 1)
 
     model_dir = get(config, "model_dir", "")
+    groups = nothing
 
     # --group_split 1 (tahoe PB): all pseudobulks of a (drug, dose) go to one split, as in SC. a well holds all cell
     # lines, so a random pseudobulk split puts the same well/drug/dose in train (other cell lines) and test
@@ -391,65 +458,66 @@ function dsplit(data::Matrix{Float32}, config::Dict; label_path::String = "",
     # val from train if missing
     function _split_val_from_train(train_idx)
         n_val = floor(Int, length(train_idx) * 0.125)
-        shuffled = shuffle(train_idx)
+        shuffled = shuffle(MersenneTwister(42), train_idx)
         return shuffled[n_val+1:end], shuffled[1:n_val]
     end
 
-    if config["modeltype"] in ("emlp", "elog")
-        train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
-        if isnothing(train_idx)
-            X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
-        else
-            if isnothing(val_idx)
-                train_idx, val_idx = _split_val_from_train(train_idx)
-            end
-            X_train, X_val, X_test = X[:, train_idx], X[:, val_idx], X[:, test_idx]
-        end
-
-    elseif config["modeltype"] == "etf"
-        train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
-        if isnothing(train_idx)
-            X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X, 0.1f0, 0.1f0)
-        else
-            if isnothing(val_idx)
-                train_idx, val_idx = _split_val_from_train(train_idx)
-            end
-            X_train, X_val, X_test = X[:, train_idx], X[:, val_idx], X[:, test_idx]
-        end
-
+    # features
+    Xf = if config["modeltype"] in ("emlp", "elog", "etf")
+        X
     elseif config["modeltype"] in ("rmlp", "rlog")
         gene_medians = gene_medians_for(config, X)
         X_ranked = rank_genes_fn(X, gene_medians)
-        X_inv = rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes))
-        train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
-        if isnothing(train_idx)
-            X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_inv, 0.1f0, 0.1f0)
-        else
-            if isnothing(val_idx)
-                train_idx, val_idx = _split_val_from_train(train_idx)
-            end
-            X_train, X_val, X_test = X_inv[:, train_idx], X_inv[:, val_idx], X_inv[:, test_idx]
-        end
-
+        rank_features(X_ranked, vec(sum(X .> 0, dims=1)), n_genes, rank_feature_k(config, n_genes))
     else  # rtf
         gene_medians = gene_medians_for(config, X)
-        X_ranked = rank_genes_fn(X, gene_medians)
-        train_idx, test_idx, val_idx, pt_idx = get_pt_idx(label_idx, model_dir)
-        if isnothing(train_idx)
-            X_train, X_val, X_test, train_idx, val_idx, test_idx = tvsplit_fn(X_ranked, 0.1f0, 0.1f0)
-        else
-            if isnothing(val_idx)
-                train_idx, val_idx = _split_val_from_train(train_idx)
-            end
-            X_train, X_val, X_test = X_ranked[:, train_idx], X_ranked[:, val_idx], X_ranked[:, test_idx]
-        end
+        rank_genes_fn(X, gene_medians)
     end
 
+    # pretrain split, or group split (test_full = all test groups)
+    split_path = split_path_for(config)
+    if !isnothing(groups)
+        train_idx, val_full_idx, test_full_idx = _group_split_idx(groups, 0.1f0, 0.1f0)
+        if split_path == ""
+            @warn "no pretrain split file for $fmt: grouped test set not restricted to pretrain-unseen samples"
+            val_idx, test_idx = val_full_idx, test_full_idx
+            split_tag = "group"
+        else
+            s = load_pt_split(split_path)
+            unseen = Set(vcat(s.val, s.test))
+            val_idx = [k for k in val_full_idx if label_idx[k] in unseen]
+            test_idx = [k for k in test_full_idx if label_idx[k] in unseen]
+            split_tag = "group_ptunseen"
+            println("pretrain-unseen subsets: val $(length(val_idx))/$(length(val_full_idx)), " *
+                    "test $(length(test_idx))/$(length(test_full_idx)) samples " *
+                    "($(length(unique(argmax.(eachcol(y_oh[:, test_idx]))))) classes in unseen test)")
+        end
+    else
+        train_idx, test_idx, val_idx, _ = get_pt_idx(label_idx, model_dir; split_path=split_path)
+        if isnothing(train_idx)
+            @warn "no pretrain split for $fmt: falling back to a random split that depends on --seed"
+            _, _, _, train_idx, val_idx, test_idx = tvsplit_fn(Xf, 0.1f0, 0.1f0)
+            split_tag = "random"
+        else
+            isnothing(val_idx) && ((train_idx, val_idx) = _split_val_from_train(train_idx))
+            split_tag = "pretrain"
+        end
+        val_full_idx, test_full_idx = val_idx, test_idx
+    end
+    X_train, X_val, X_test = Xf[:, train_idx], Xf[:, val_idx], Xf[:, test_idx]
+    X_test_full = test_full_idx === test_idx ? X_test : Xf[:, test_full_idx]
+    println("split ($split_tag): $(length(train_idx)) train, $(length(val_idx)) val, $(length(test_idx)) test" *
+            (test_full_idx === test_idx ? "" : " ($(length(test_full_idx)) in full test groups)"))
+
+
     y_train, y_val, y_test = y_oh[:, train_idx], y_oh[:, val_idx], y_oh[:, test_idx]
+    y_test_full = y_oh[:, test_full_idx]
 
     cidx_dict, cs = config["level"] == "lvl2" ? oversmpl(y_train) : (nothing, nothing)
-    
+
+    # *_idx index into label_idx
     return (; X_train, X_val, X_test, y_train, y_val, y_test, train_idx, val_idx, test_idx,
+              X_test_full, y_test_full, test_full_idx, val_full_idx, split_tag, label_idx, label_names,
               n_genes, n_classifications=n_cls, cidx_dict, cs, pca_model=nothing, id_baseline=nothing)
 end
 

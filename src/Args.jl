@@ -223,6 +223,12 @@ function load_finetune_args()
         "--group_split"
             help = "1 = group split: tahoe PB by (drug, dose) (_gdd); LINCS by detection plate, whole plates held out (_gpl)"
             arg_type = Int
+        "--split_path"
+            help = "pretrain split file (default: ProcessLabels.CANONICAL_SPLITS)"
+            arg_type = String
+        "--lincs_min_n"
+            help = "LINCS lvl2: min profiles per trt_cp compound (default 500)"
+            arg_type = Int
         "--input"
             help = "abs (default) = stored log expression; delta = minus the mean DMSO of the same cell line + plate (elog/emlp/etf; _delta)"
             arg_type = String

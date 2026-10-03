@@ -87,10 +87,12 @@ if something(get(config, "standardize", nothing), 0) == 1
     if clip_c > 0
         println("clip ±$clip_c: $(round(100 * mean(abs.(Z_train) .> clip_c), digits=4))% of train values clipped")
         zc(X) = clamp.(z(X), -clip_c, clip_c)
-        d = merge(d, (; X_train=clamp.(Z_train, -clip_c, clip_c), X_val=zc(d.X_val), X_test=zc(d.X_test)))
+        d = merge(d, (; X_train=clamp.(Z_train, -clip_c, clip_c), X_val=zc(d.X_val), X_test=zc(d.X_test),
+                    X_test_full=(hasproperty(d, :X_test_full) ? zc(d.X_test_full) : nothing)))
         model_tag *= "_zc"
     else
-        d = merge(d, (; X_train=Z_train, X_val=z(d.X_val), X_test=z(d.X_test)))
+        d = merge(d, (; X_train=Z_train, X_val=z(d.X_val), X_test=z(d.X_test),
+                    X_test_full=(hasproperty(d, :X_test_full) ? z(d.X_test_full) : nothing)))
         model_tag *= "_z"
     end
     Z_train = nothing
@@ -140,15 +142,15 @@ else
 end
 
 # test eval for model m
-function run_test(m)
+function run_test(m; X_test=d.X_test, y_test=d.y_test)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
     eval_losses = Float32[]
-    n_test = size(d.X_test, 2)
+    n_test = size(X_test, 2)
     for s in 1:config["batch_size"]:n_test
         e = min(s + config["batch_size"] - 1, n_test)
-        x_gpu = cu(d.X_test[:, s:e])
-        y_gpu = cu(d.y_test[:, s:e])
+        x_gpu = cu(X_test[:, s:e])
+        y_gpu = cu(y_test[:, s:e])
         logits = m(x_gpu)
         if is_regression
             push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
@@ -241,7 +243,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         best_dir = joinpath(save_dir, "best")
         mkpath(best_dir)
         log_model(model, best_dir)
-        plot_loss(length(train_losses), train_losses, val_losses, best_dir, is_regression ? "MSE" : "CE")
+        plot_loss(length(train_losses), train_losses, val_losses, best_dir, is_regression ? "MSE" : "CE";
+                  steps_per_point=div(size(d.X_train, 2), config["batch_size"]))
         jldsave(joinpath(best_dir, "losses.jld2"); epochs=1:epoch,
                 train_losses=train_losses, val_losses=val_losses)
         if is_regression
@@ -279,8 +282,23 @@ else
     bp, bt
 end
 best_metrics = test_metrics(best_preds, best_trues, is_regression)
+# grouped split: also test on the full test groups
+has_full = hasproperty(d, :test_full_idx) && d.test_full_idx !== d.test_idx
+best_full_metrics = if has_full
+    m_full = isnothing(best_cpu) ? model : fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(m_full)
+    _, fp, ft = run_test(m_full; X_test=d.X_test_full, y_test=d.y_test_full)
+    test_metrics(fp, ft, is_regression)
+else
+    nothing
+end
+has_full && println("test (best model, full test groups): ", best_full_metrics)
 final_metrics = test_metrics(all_preds, all_trues, is_regression)
-isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+# with sample ids + class names
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues,
+    test_sample_idx=(hasproperty(d, :label_idx) ? collect(d.label_idx[d.test_idx]) : collect(d.test_idx)),
+    label_names=(hasproperty(d, :label_names) ? d.label_names : String[]),
+    split_tag=string(get(d, :split_tag, "lvl3")))
 println("test (best model, epoch $best_epoch): ", best_metrics)
 println("test (final model):         ", final_metrics)
 
@@ -293,7 +311,8 @@ if wb !== nothing
 end
 
 # log
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "CE")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "CE";
+                  steps_per_point=div(size(d.X_train, 2), config["batch_size"]))
 
 log_model(model, save_dir)
 log_info(; save_dir=save_dir, train_indices=d.train_idx, val_indices=d.val_idx, test_indices=d.test_idx,
@@ -327,5 +346,6 @@ else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=mlp_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               split_tag=string(get(d, :split_tag, "")), best_accuracy_fullgroup=(isnothing(best_full_metrics) ? NaN : best_full_metrics.accuracy),
                best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end

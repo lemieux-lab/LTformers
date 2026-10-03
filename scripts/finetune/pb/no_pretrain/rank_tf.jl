@@ -58,6 +58,7 @@ id_baseline = is_regression ? d.id_baseline : nothing
 n_genes = d.n_genes
 n_classifications = d.n_classifications
 X_train, X_val, X_test = d.X_train, d.X_val, d.X_test
+X_test_full = hasproperty(d, :X_test_full) ? d.X_test_full : X_test
 y_train, y_val, y_test = d.y_train, d.y_val, d.y_test
 train_idx, val_idx, test_idx = d.train_idx, d.val_idx, d.test_idx
 cidx_dict, cs = d.cidx_dict, d.cs
@@ -68,6 +69,7 @@ if top_k < n_genes
     X_train = X_train[1:top_k, :]
     X_val   = X_val[1:top_k, :]
     X_test  = X_test[1:top_k, :]
+    X_test_full = X_test_full[1:top_k, :]
     println("top_k truncation: $(n_genes) → $top_k ranked genes per sample")
 end
 
@@ -113,7 +115,7 @@ else
 end
 
 # test eval for model m
-function run_test(m)
+function run_test(m; X_test=X_test, y_test=y_test)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
     eval_losses = Float32[]
@@ -215,7 +217,8 @@ for epoch in ProgressBar(1:n_total_epochs)
         mkpath(best_dir)
 
         log_model(model, best_dir)
-        plot_loss(length(train_losses), train_losses, val_losses, best_dir, is_regression ? "MSE" : "logit-ce")
+        plot_loss(length(train_losses), train_losses, val_losses, best_dir, is_regression ? "MSE" : "logit-ce";
+                  steps_per_point=div(size(d.X_train, 2), config["batch_size"]))
         jldsave(joinpath(best_dir, "losses.jld2"); epochs=1:epoch,
                 train_losses=train_losses, val_losses=val_losses)
 
@@ -254,8 +257,23 @@ else
     bp, bt
 end
 best_metrics = test_metrics(best_preds, best_trues, is_regression)
+# grouped split: also test on the full test groups
+has_full = hasproperty(d, :test_full_idx) && d.test_full_idx !== d.test_idx
+best_full_metrics = if has_full
+    m_full = isnothing(best_cpu) ? model : fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(m_full)
+    _, fp, ft = run_test(m_full; X_test=X_test_full, y_test=d.y_test_full)
+    test_metrics(fp, ft, is_regression)
+else
+    nothing
+end
+has_full && println("test (best model, full test groups): ", best_full_metrics)
 final_metrics = test_metrics(all_preds, all_trues, is_regression)
-isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+# with sample ids + class names
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues,
+    test_sample_idx=(hasproperty(d, :label_idx) ? collect(d.label_idx[d.test_idx]) : collect(d.test_idx)),
+    label_names=(hasproperty(d, :label_names) ? d.label_names : String[]),
+    split_tag=string(get(d, :split_tag, "lvl3")))
 println("test (best model, epoch $best_epoch): ", best_metrics)
 println("test (final model):         ", final_metrics)
 
@@ -268,7 +286,8 @@ if wb !== nothing
 end
 
 # log
-plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "logit-ce")
+plot_loss(length(train_losses), train_losses, test_losses, save_dir, is_regression ? "MSE" : "logit-ce";
+                  steps_per_point=div(size(d.X_train, 2), config["batch_size"]))
 
 log_model(model, save_dir)
 log_info(; save_dir=save_dir, train_indices=train_idx, val_indices=val_idx, test_indices=test_idx,
@@ -301,5 +320,6 @@ else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
                skip=finetune_no_pt_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               split_tag=string(get(d, :split_tag, "")), best_accuracy_fullgroup=(isnothing(best_full_metrics) ? NaN : best_full_metrics.accuracy),
                best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end
