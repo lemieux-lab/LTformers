@@ -188,6 +188,8 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
     best_state = nothing  # best-val weights on cpu in RAM; written to best/ once after training (not at every improvement)
     save_model = something(get(config, "save_model", nothing), 1) != 0  # 0: no model_state.jld2 files (sweeps)
     step = 0; run_losses = Float32[]; done = false
+    patience = something(get(config, "patience", nothing), 0)  # stop after this many evals without val improvement
+    since_best = 0
 
     # --cache_val 1 (classification, streaming): read the val shards once, keep raw features in memory, reuse them at
     # every val eval (same cells/order/transform -> same val acc; saves ~20x100 shard reads per run). ~1G at 1024
@@ -223,6 +225,7 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
         # regression: lowest val loss; classification: highest val accuracy (ties -> lower loss).
         # val loss bottoms out early under held-out wells while accuracy keeps rising
         improved = is_regression ? vl < best_val_loss : (va > best_val_acc || (va == best_val_acc && vl < best_val_loss))
+        since_best = improved ? 0 : since_best + 1
         if improved
             best_val_loss = vl; best_val_acc = va; best_step = step
             best_dir = joinpath(save_dir, "best"); mkpath(best_dir)
@@ -255,6 +258,9 @@ function sc_finetune!(model, opt, d, fk, config; is_regression::Bool, save_dir::
             step += 1
             step % 1000 == 0 && (println("  step $step train_loss(last 1k)=$(round(mean(run_losses[max(1, end-999):end]), digits=4))"); flush(stdout))
             eval_every > 0 && step % eval_every == 0 && do_val!()
+            if patience > 0 && since_best >= patience
+                println("  early stop at step $step ($patience evals without val improvement)"); done = true; break
+            end
             if max_steps > 0 && step >= max_steps
                 done = true; break
             end

@@ -226,6 +226,9 @@ function load_finetune_args()
         "--split_path"
             help = "pretrain split file (default: ProcessLabels.CANONICAL_SPLITS)"
             arg_type = String
+        "--patience"
+            help = "stop after this many evals without val improvement (0 = off)"
+            arg_type = Int
         "--lincs_min_n"
             help = "LINCS lvl2: min profiles per trt_cp compound (default 500)"
             arg_type = Int
@@ -240,6 +243,9 @@ end
 function load_sc_finetune_args()
     s = ArgParseSettings()
     @add_arg_table s begin
+        "--patience"
+            help = "stop after this many evals without val improvement (0 = off)"
+            arg_type = Int
         # finetune args
         "--config", "-c"
             help = "path to TOML config file"
