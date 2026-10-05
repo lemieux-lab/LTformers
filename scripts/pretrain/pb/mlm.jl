@@ -70,7 +70,8 @@ end
 # seeded split, reseed after
 Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
-Random.seed!()
+# Random.seed!()
+isnothing(get(config, "seed", nothing)) ? Random.seed!() : Random.seed!(config["seed"])  # --seed fixes init + masking
 
 if use_exp
     X_expr = Float32.(data_expr)
