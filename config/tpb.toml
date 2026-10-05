@@ -5,14 +5,20 @@
 # ──────────────────────────────────────────────
 
 [pretrain.mlm.rtf]
-lr = 0.0047
+# lr = 0.0047
+# drop_prob = 0.06
+# sweeps au7ovvi0 + mv93c68s, best run 5qdypilu: lr 0.00480 drop 0.060, val 6.6878
+lr = 0.0048
 drop_prob = 0.06
 # mask_ratio = 0.28
 mask_ratio = 0.15 
 
 [pretrain.mlm.etf]
-lr = 0.003
-drop_prob = 0.125
+# lr = 0.003
+# drop_prob = 0.125
+# sweep uopkscex best run 7cv95h4y: lr 0.01857 drop 0.042, val 5.214
+lr = 0.019
+drop_prob = 0.042
 # mask_ratio = 0.17
 mask_ratio = 0.15 
 
@@ -238,21 +244,18 @@ drop_prob = 0.1940
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
-# HVG-1024, constant width, 10k steps, picked by best_val_acc, tuned with --group_split 1 (pass it on the CLI; not set here): sweep 83oze95p best (emlp_gdd_zc_nopt_tahoe_lvl2_2026-09-28_15-06_j8104528), val 0.439 test 0.444
-# lr = 0.0005
-# drop_prob = 0.06
-# n_layers = 2
-lr = 0.00020589
-drop_prob = 0.1725
-n_layers = 3
-mlp_hidden_dim = 1024
+# raw inputs, --group_split 1, pretrain split: sweep yx5s2ip8 best imaa5yub, val 0.406
+lr = 0.000022
+drop_prob = 0.16
+n_layers = 2
+mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.emlp.lvl2.full]
-# all genes (--n_hvg 0), tuned with --group_split 1 (pass it on the CLI; not set here): sweep g5cqrcfz best (emlp_full_gdd_zc_nopt_tahoe_lvl2_2026-09-28_15-28_j8104532), val 0.815 test 0.673 (sweep max test 0.824)
-lr = 0.00016827
-drop_prob = 0.2260
-n_layers = 2
-mlp_hidden_dim = 512
+# raw inputs, all genes, --group_split 1: sweep ggw1ej19 best 74l27aoc, val 0.425
+lr = 0.0000072
+drop_prob = 0.039
+n_layers = 3
+mlp_hidden_dim = 4096
 
 [finetune.no_pretrain.emlp.lvl3]
 lr = 0.0

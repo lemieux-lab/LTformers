@@ -2975,3 +2975,199 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
             -- Maybe: how ranks impose an ordering that does not exist IRL? 
     -- tahoe fig1
         -- 
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 3 2026 ###
+
+-- OVERALL:
+    -- check:
+        -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- depth property; thus for sc the representations are dominated by detection noise
+            -- more reason to aggregate, this is why evaluating on means is standard...
+            -- do i need to plot this as well?
+        -- what happened to 1,2,3 values for sparsity in addition to 0? (or each position of the matrix, compute number of unique count values and look at average for a given rank)
+        -- is there a difference due to gene set? (1024-hvg has same gene set while top-1024 has diff)
+    -- note: Within a plate, a Level 3 profile is close to a pure rank vector: knowing a gene's raw within-profile rank almost fully determines its value. Most of the extra magnitude information in the expression input is therefore:
+        -- the plate-level reference distribution, which carries batch signal;
+        -- the small residual differences between profiles.
+        -- due to quantile normalization applied per-plate after log2
+            -- ISS was salso applied before qnorm
+        -- also:  Geneformer's linear-scale x/median is equivalent to log x − log median.
+            -- so technically doing logx/logmedian on lincs is not the same...
+            -- but if u plot it its pre mcuh same ting
+    -- shoudl i exclude jkurkat (just th one plate) from lincs pretraining???
+            
+    -- to deal w/ later:
+        -- re-pretrain OOD compound for lvl3 eval
+        -- ICC vs SB in split half?
+        -- delta ablation (since it makes emlp much much better)
+    -- to implement still:
+        -- w_pretraining loading bugs
+        -- lvl3 task
+
+-- LINCS:
+    -- baselines
+        -- RUNNING elog, rlog, emlp, rmlp sweeps + good runs on lvl1
+        -- RUNNING elog, rlog sweeps + good runs on lvl2
+        -- !TO-RUN emlp, rmlp sweeps on lvl2
+        -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- RUNNING elog, rlog, emlp, rmlp sweeps + good runs on lvl1, lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+        -- pre-train
+            -- RUNNING mlm rtf, lrecon rtf sweeps (2)
+            -- !RUNNING mlm etf good runs! (1)
+            -- reviewed lrecon etf, erecon etf, erecon rtf good runs! (40k)
+                -- all good! note tho: lrecon best/ is kinda at an earlier point
+                    -- this could be due to the teacher target being just easier
+                    -- would want to finetune on btoh best/ and final/ to ensure that its the best it could be i guess
+        -- fine-tune
+    -- SC
+        -- baselines
+            -- RUNNING elog, rlog, emlp, rmlp sweeps on lvl1, lvl2
+            -- !TO-RUN emlp, rmlp good runs on lvl1, lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+        -- pre-train
+            -- !TO-RUN longer sweeps on gh200 (since CQ is taking too long?)
+        -- fine-tune
+
+-- FIGURES (demonstrate that:)
+    -- lincs fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- ranking essentaily retains plate effects, basically z scoring
+                -- delta-ing removes plate effects
+        -- maybe: is expression or ranks able to separate factors (like CL, drug, dose, plate/batch) better? 
+            -- auroc: cosine distance on same vs diff pairs, kendall on same vs diff pairs 
+                -- kendall = if genes are ordered same way on same pairs +1, diff on diff pairs +1
+            -- alternatively: how much of the variation in gene rank is explained by those^ factors? 
+                -- via variance explained?
+        -- maybe: can we reconstruct expression from ranks?
+            -- like fit a curve or like expression scaled [0,1] vs ranks scaled [0,1]
+            -- is this the same thing as aii) where we have gene on x and expression on left y and rank on right y tho?
+    -- lincs fig4
+        -- low entropy ranks are easier to predict 
+        -- maybe: high entropy ranks show better quality for downstream tasks??? (How entropy relates to representation quality?) 
+        -- maybe: how ranks impose an ordering that does not exist IRL? 
+    -- tahoe fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- full, hvg, top-k, or matched?
+                    -- top-k kendall computed by fagin kendall; union of top lists and then score; absent genes are 0
+                    -- hvg-1024 scored by ranking after selecting the HVGs
+                -- pb and sc side by side?
+            -- if we demonstrate in lincs that entropy ~ information, then should entropy v sparsity be here too?
+
+-- currently running:
+    -- all the prev. oct2 redo runs
+    -- testing tpb and lincs rmlp and emlp again w new sweeps to see if diff acc true
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 3 2026 ###
+
+-- OVERALL:
+    -- check:
+        -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- depth property; thus for sc the representations are dominated by detection noise
+            -- more reason to aggregate, this is why evaluating on means is standard...
+            -- do i need to plot this as well?
+        -- what happened to 1,2,3 values for sparsity in addition to 0? (or each position of the matrix, compute number of unique count values and look at average for a given rank)
+        -- is there a difference due to gene set? (1024-hvg has same gene set while top-1024 has diff)
+    -- note: Within a plate, a Level 3 profile is close to a pure rank vector: knowing a gene's raw within-profile rank almost fully determines its value. Most of the extra magnitude information in the expression input is therefore:
+        -- the plate-level reference distribution, which carries batch signal;
+        -- the small residual differences between profiles.
+        -- due to quantile normalization applied per-plate after log2
+            -- ISS was also applied before qnorm
+        -- is this true? should i test it somehow?
+    -- shoudl i exclude jurkat (just the one plate) from lincs pre-training???
+    -- wait did gf do 2048 = highest does this matter if i did 1 = highest??? 
+        -- if like value is assigned to like the hgiher value = higher importance or osmething? however its processed?
+    -- lincs methods:
+        -- is lrecon student have mlp head or nah
+        -- adam not adamW? if the param is 0
+        -- no reshuffling in each pass? of batchses?
+        -- is lvl1 236 classes or 305
+        -- why was rannk mlp lr so low before that resulted in lwoer performance? wb when i did rank prev as well?
+            
+    -- to deal w/ later:
+        -- re-pretrain OOD compound for lvl3 eval
+        -- ICC vs SB in split half?
+        -- delta ablation (since it makes emlp much much better)
+            -- done emlp sweeps for lincs lvl2, tpb lvl2 on hvg-1024 and full
+                -- sweeps are doing better than non delta sweeps
+                -- to make it conclusive, would need final 3 seeds for elog and emlp
+                -- on lincs (random split, group split) and tpb and optionally tsc
+    -- to implement still:
+        -- w_pretraining loading bugs
+            -- w_pretrain the probe head has a LayerNorm and the end-to-end head does not; align or state.??
+        -- lvl3 task
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- RUNNING elog, rlog, emlp, rmlp sweeps + good runs on lvl2
+            -- also RUNNING z score emlp sweep
+        -- !TO-RUN emlp, rmlp long runs on lvl2
+        -- !TO-RUN etf, rtf sweeps on lvl1, lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- RUNNING emlp, rmlp (1024, full) lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2
+        -- pre-train
+            -- done lrecon etf, erecon etf, erecon rtf good runs
+            -- RUNNING lrecon rtf sweeps (1)
+                -- also RUNNING quick lrecon repro runs (3)
+            -- RUNNING mlm etf, mlm rtf good runs! (2)
+        -- fine-tune
+            -- note: lrecon etf best/ is kinda at an earlier point
+                    -- this could be due to the teacher target being just easier
+                    -- would want to finetune on btoh best/ and final/ to ensure that its the best it could be i guess
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- RUNNING elog, rlog, emlp, rmlp (1024, full) on lvl2
+            -- !TO-RUN etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- !TO-RUN longer sweeps on gh200 (since CQ is taking too long?)
+        -- fine-tune
+
+-- FIGURES (demonstrate that:)
+    -- lincs fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- ranking essentaily retains plate effects, basically z scoring
+                -- delta-ing removes plate effects
+        -- maybe: is expression or ranks able to separate factors (like CL, drug, dose, plate/batch) better? 
+            -- auroc: cosine distance on same vs diff pairs, kendall on same vs diff pairs 
+                -- kendall = if genes are ordered same way on same pairs +1, diff on diff pairs +1
+            -- alternatively: how much of the variation in gene rank is explained by those^ factors? 
+                -- via variance explained?
+        -- maybe: can we reconstruct expression from ranks?
+            -- like fit a curve or like expression scaled [0,1] vs ranks scaled [0,1]
+            -- is this the same thing as aii) where we have gene on x and expression on left y and rank on right y tho?
+    -- lincs fig4
+        -- low entropy ranks are easier to predict 
+        -- maybe: high entropy ranks show better quality for downstream tasks??? (How entropy relates to representation quality?) 
+        -- maybe: how ranks impose an ordering that does not exist IRL? 
+    -- tahoe fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- full, hvg, top-k, or matched?
+                    -- top-k kendall computed by fagin kendall; union of top lists and then score; absent genes are 0
+                    -- hvg-1024 scored by ranking after selecting the HVGs
+                -- pb and sc side by side?
+            -- if we demonstrate in lincs that entropy ~ information, then should entropy v sparsity be here too?    -- TODO (later, maybe): z-scored expression finals. diagnostic so far = 3 emlp lvl2 sweeps only (LINCS hfkya8nk running,

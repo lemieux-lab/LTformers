@@ -180,9 +180,10 @@ n_layers = 2
 # lr = 0.000001
 # drop_prob = 0.03
 # n_layers = 6
-lr = 0.000052374
-drop_prob = 0.0500
-n_layers = 5
+# 322 classes (trt_cp >500), pretrain split: sweep 7b2av5cf best mc4vpes3, val 0.415
+lr = 0.000095
+drop_prob = 0.015
+n_layers = 3
 mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.rmlp.lvl3]
@@ -204,9 +205,10 @@ n_layers = 2
 # lr = 0.00011
 # drop_prob = 0.014
 # n_layers = 6
-lr = 0.00013427
-drop_prob = 0.2308
-n_layers = 2
+# 322 classes (trt_cp >500), pretrain split: sweep azmuwnh7 best lf4y9gfc, val 0.288
+lr = 0.000014
+drop_prob = 0.037
+n_layers = 5
 mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.emlp.lvl3]

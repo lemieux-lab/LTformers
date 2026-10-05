@@ -167,25 +167,30 @@ drop_prob = 0.0
 # n_layers = 0
 
 [finetune.no_pretrain.rmlp.lvl1]
-# top-1024, tapered, 10k steps, subset_shards 100: sweep 51pgrt8t best by val acc (rmlp_nopt_sc_lvl1_2026-09-30_14-34_j8107479), val 0.983 / test 0.981
-# lr = 0.0
-# drop_prob = 0.0
-# n_layers = 0
-# n_layers = 2
-lr = 0.000137
-drop_prob = 0.132
+# well_cl, random 100 shards: sweep 377wsi7j best xuqbtwok, val 0.983
+lr = 0.000020
+drop_prob = 0.29
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl1.full]
-# all genes (--rank_top_k 0): sweep wxof7aja best (rmlp_full_nopt_sc_lvl1_2026-09-30_12-41_j8107477), val 0.984 / test 0.982
-lr = 0.000058
-drop_prob = 0.092
+# well_cl, random 100 shards: sweep lz8g46zr best impokun5, val 0.983
+lr = 0.000054
+drop_prob = 0.039
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
-lr = 0.0
-drop_prob = 0.0
-n_layers = 0
+# drug_dose, val on pretrain-unseen shards: sweep on43rkff best ggeu8ko1, val 0.105
+lr = 0.00020
+drop_prob = 0.26
+n_layers = 1
+mlp_hidden_dim = 8192
+
+[finetune.no_pretrain.rmlp.lvl2.full]
+# all genes: sweep zesfy0xp best cbcka7mt, val 0.087
+lr = 0.00065
+drop_prob = 0.13
+n_layers = 1
+mlp_hidden_dim = 2048
 
 [finetune.no_pretrain.rmlp.lvl3]
 lr = 0.0
@@ -193,25 +198,30 @@ drop_prob = 0.0
 n_layers = 0
 
 [finetune.no_pretrain.emlp.lvl1]
-# HVG-1024, tapered, 10k steps, subset_shards 100: sweep drfgbsw0 best by val acc (emlp_zc_nopt_sc_lvl1_2026-09-30_11-56_j8107474), val 0.981 / test 0.977
-# lr = 0.0
-# drop_prob = 0.0
-# n_layers = 0
-# n_layers = 2
-lr = 0.000137
-drop_prob = 0.142
+# well_cl, random 100 shards: sweep 7bo0mlnd best obzmbdio, val 0.979
+lr = 0.00016
+drop_prob = 0.29
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl1.full]
-# all genes (--n_hvg 0): sweep dt63vrzx best (emlp_full_zc_nopt_sc_lvl1_2026-09-30_14-19_j8107481), val 0.981 / test 0.980
-lr = 0.0000674
-drop_prob = 0.091
+# well_cl, random 100 shards: sweep wx963pjn best v4kxpqqm, val 0.983
+lr = 0.0000034
+drop_prob = 0.052
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
-lr = 0.0
-drop_prob = 0.0
-n_layers = 0
+# drug_dose, val on pretrain-unseen shards: sweep 5ft2r0ck best 47i5o4lk, val 0.041
+lr = 0.00012
+drop_prob = 0.19
+n_layers = 2
+mlp_hidden_dim = 8192
+
+[finetune.no_pretrain.emlp.lvl2.full]
+# all genes: sweep zlq88bvp best kf15qkid, val 0.130
+lr = 0.00011
+drop_prob = 0.051
+n_layers = 1
+mlp_hidden_dim = 8192
 
 [finetune.no_pretrain.emlp.lvl3]
 lr = 0.0
