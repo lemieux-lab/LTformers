@@ -49,11 +49,15 @@ drop_prob = 0.17
 mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
-lr = 0.0024
-drop_prob = 0.1
+# lr = 0.0024
+# drop_prob = 0.1
+# sweep 8a5vk67w (TPB-PT-Sept, 10k steps, bs 100): best 900osel6 lr 0.00074 drop 0.177 ema 0.995, val 0.1332; all other runs ~0.989
+lr = 0.00074
+drop_prob = 0.18
 # mask_ratio = 0.25
-mask_ratio = 0.15 
-ema_decay = 0.82
+mask_ratio = 0.15
+# ema_decay = 0.82
+ema_decay = 0.995
 
 [pretrain.lrecon.etf]
 # lr = 0.0019

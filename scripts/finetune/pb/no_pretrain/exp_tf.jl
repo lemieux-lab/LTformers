@@ -258,7 +258,9 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
+                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step,
+                         "best_val_loss" => best_val_loss,  # per-epoch so hyperband early_terminate can see it
+                         "best_val_acc" => best_val_acc)    # sweep metric (classification): matches best/ selection
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
         end
@@ -302,6 +304,7 @@ println("test (final model):         ", final_metrics)
 
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
+    wb.summary["best_val_acc"] = best_val_acc
     wb.summary["best_epoch"] = best_epoch
     for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
     for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end

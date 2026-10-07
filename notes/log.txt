@@ -3071,7 +3071,7 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
 
 -----------------------------------------------------------------------------------------------------------
 
-### oct 3 2026 ###
+### oct 4 2026 ###
 
 -- OVERALL:
     -- check:
@@ -3170,4 +3170,232 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
                     -- top-k kendall computed by fagin kendall; union of top lists and then score; absent genes are 0
                     -- hvg-1024 scored by ranking after selecting the HVGs
                 -- pb and sc side by side?
-            -- if we demonstrate in lincs that entropy ~ information, then should entropy v sparsity be here too?    -- TODO (later, maybe): z-scored expression finals. diagnostic so far = 3 emlp lvl2 sweeps only (LINCS hfkya8nk running,
+            -- if we demonstrate in lincs that entropy ~ information, then should entropy v sparsity be here too?    -- TODO (later, maybe): z-scored expression finals. diagnostic so far = 3 emlp lvl2 sweeps only 
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 5 2026 ###
+
+-- OVERALL:
+    -- check:
+        -- is relationship between cosine and jaccard a single-cell property or depth property?
+            -- depth property; thus for sc the representations are dominated by detection noise
+            -- more reason to aggregate, this is why evaluating on means is standard...
+            -- do i need to plot this as well?
+                -- no; it doesn't really show anything about model representations. 
+                -- shows that disances between raw SC profiles are dominated by detection overlap 
+                -- which suggests to aggregate before evaluating, but nothing relaly else
+        -- what happened to 1,2,3 values for sparsity in addition to 0? (or each position of the matrix, compute number of unique count values and look at average for a given rank)
+            -- !TO-RUN plot this 
+        -- is there a difference due to gene set? (1024-hvg has same gene set while top-1024 has diff)
+            -- top-2048 behaves like full set because median cell detects about 1141 genes; top-2048 takes almost every gene
+            -- cosine vs kendall in full set reduct to detection overlap
+            -- what do i do w this info? 
+    -- note: Within a plate, a Level 3 profile is close to a pure rank vector: knowing a gene's raw within-profile rank almost fully determines its value. Most of the extra magnitude information in the expression input is therefore:
+        -- the plate-level reference distribution, which carries batch signal;
+        -- the small residual differences between profiles.
+        -- due to quantile normalization applied per-plate after log2
+            -- ISS was also applied before qnorm
+        -- is this true? should i test it somehow?
+            -- yes, a profile is close to a rank non median noramlized vector within a plate
+            -- thus, rank + plate's reference cuve determines the exressione value mostly
+    -- shoudl i exclude jurkat (just the one plate) from lincs pre-training???
+        -- yes
+    -- wait did gf do 2048 = highest does this matter if i did 1 = highest??? 
+        -- if like value is assigned to like the hgiher value = higher importance or osmething? however its processed?
+        -- no i did the same thing as them
+    -- lincs methods:
+        -- adam not adamW? if the param is 0
+            -- yeah could just do adam instead in the code
+        -- no reshuffling in each pass? of batchses?
+            -- no; is this really needed? training set is alr in a random order from split shuffle so each batch is still ranodm sample and masks are redrawn every pass
+        -- is lvl1 236 classes or 305
+            -- 305 (236 is parental cell line, 305 is specific stock the profiles came from)
+        -- why was rannk mlp lr so low before that resulted in lwoer performance? wb when i did rank prev as well?
+            -- old raw rank input required a lower range to learn from, but after dividing by n_genes then it needed higher
+    -- is there decoder for lrecon? why needed decoder if we are comparing embedding states?
+        -- yes; runs on the final hidden states at masked positions
+            -- needed because student sees [MASK] so need to output something thats comparable to teacher output
+
+    -- to deal w/ later:
+        -- re-pretrain OOD compound for lvl3 eval
+        -- ICC vs SB in split half?
+        -- delta ablation (since it makes emlp much much better)
+            -- done emlp sweeps for lincs lvl2, tpb lvl2 on hvg-1024 and full
+                -- sweeps are doing better than non delta sweeps
+                -- to make it conclusive, would need final 3 seeds for elog and emlp
+                -- on lincs (random split, group split) and tpb and optionally tsc
+    -- to implement still:
+        -- w_pretraining loading bugs
+            -- w_pretrain the probe head has a LayerNorm and the end-to-end head does not; align or state.??
+        -- lvl3 task
+    -- less important:
+        -- architecutre not held constant? 
+            -- would want to try to run a version of lvl2 emlp, rmlp that keeps architecutre constant, sweep only lr and dropout
+            -- based on lincs sweeps: 16384 x 4L or 8192 x 4L
+            -- based on tpb sweeps: 16384 x 2L
+            -- based on tsc sweeps: 8192 x 1L
+        -- lvl1 is shrinking architecutre while lvl2 is fixed width layers
+            -- not really needed to make lvl1 fixed layers but maybe it would be nice for consistency
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- done elog, rlog, emlp, rmlp sweeps + good runs on lvl2
+            -- done z score emlp sweep
+            -- RUNNING z score long runs on lvl2
+        -- !TO-RUN etf, rtf sweeps on lvl1, lvl2 (+ finals on random split, plate split)
+            -- RUNNING sweeps
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- RUNNING emlp, rmlp (1024, full) lvl2
+            -- !TO-RUN etf, rtf sweeps lvl1, lvl2 (+ finals)
+            -- RUNNING z score long runs on lvl2
+        -- pre-train
+            -- done lrecon etf, erecon etf, erecon rtf, mlm etf, mlm rtf good runs
+            -- ISSUE: lrecon rtf
+                -- none of its runs are learning except for a chance one that happened once
+                -- could just be that its much harder to predict identity than expression (as we see in mlm rtf not the best)
+                -- could warrant a change or could just mean its like that... leaning towards just letting it be
+                -- RUNNING final lrecon rtf 40k again; just gna leave it as that and explain analysis of it (1)
+        -- fine-tune
+            -- note: lrecon etf best/ is kinda at an earlier point
+                    -- this could be due to the teacher target being just easier
+                    -- would want to finetune on btoh best/ and final/ to ensure that its the best it could be i guess
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+    -- SC
+        -- baselines
+            -- done all lvl1, lvl2
+            -- !TO-RUN etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- RUNNING longer sweeps + finals of erecon etf, erecon rtf, mlm etf, mlm rtf (8)
+            -- !TO-RUN longer sweeps + finals of lrecon etf, lrecon rtf
+        -- fine-tune
+
+-- FIGURES (demonstrate that:)
+    -- lincs fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- ranking essentaily retains plate effects, basically z scoring
+                -- delta-ing removes plate effects
+        -- maybe: is expression or ranks able to separate factors (like CL, drug, dose, plate/batch) better? 
+            -- auroc: cosine distance on same vs diff pairs, kendall on same vs diff pairs 
+                -- kendall = if genes are ordered same way on same pairs +1, diff on diff pairs +1
+            -- alternatively: how much of the variation in gene rank is explained by those^ factors? 
+                -- via variance explained?
+        -- maybe: can we reconstruct expression from ranks?
+            -- like fit a curve or like expression scaled [0,1] vs ranks scaled [0,1]
+            -- is this the same thing as aii) where we have gene on x and expression on left y and rank on right y tho?
+    -- lincs fig4
+        -- low entropy ranks are easier to predict 
+        -- maybe: high entropy ranks show better quality for downstream tasks??? (How entropy relates to representation quality?) 
+        -- maybe: how ranks impose an ordering that does not exist IRL? 
+    -- tahoe fig1
+        -- how much information do ranks retain from raw expression? 
+            -- distance b/n vecs of raw exp vs. median normalized ranks
+                -- full, hvg, top-k, or matched?
+                    -- top-k kendall computed by fagin kendall; union of top lists and then score; absent genes are 0
+                    -- hvg-1024 scored by ranking after selecting the HVGs
+                -- pb and sc side by side?
+            -- if we demonstrate in lincs that entropy ~ information, then should entropy v sparsity be here too?    -- TODO (later, maybe): z-scored expression finals. diagnostic so far = 3 emlp lvl2 sweeps only 
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 6 2026 ###
+
+-- OVERALL:
+    -- review tsc vs tpb vector plots;
+        -- decide on all vs matched axes
+            -- show both
+            -- in matched tsc:
+                -- lower-left shoulder (cosine distance < 0.4) is about 35k of the 1M pairs
+                -- In these pairs both cells are deep: the shallower cell detects a median of 1,985 genes, against 846 in the main blob
+                -- ETF is depth sensitive; median falls significantly when shalower cell is under 800 genes bc deep cells detect more HVGs and thus share more of them
+                -- RTF does not have this because list is capped at genes whatever the depth
+            -- in pb there is 2 cl blobs because same cl pairs 
+        -- check why high tsc correlation vs lower tpb correlation (jaccard-related?)
+        -- how does correlation change for all vs matched?
+        -- how does gene set affect performance later on?
+        -- technically, with all genes or top-k, cosine and Kendall in SC mostly measure detection overlap
+            -- only a fixed gene set (HVG-1024) separates order from detection.
+            -- thus, this demonstrates that drug/dose/plate are at chance in raw SC distances
+            -- as a top-1024 rank sequence is just the set of detected genes w/ 1 bit of count level per gene in fixed order
+            -- thus SC evaluation should be done on pseudo-bulked means?
+        -- is the gap due to information lost or is it due to a difference in scaling?
+            -- because if we plot the centered (z-scored) versions, it has a much higher correlation
+            -- but then is the high correlation linked to retained information?
+    -- review results/tahoe/pb_vs_sc/figures/entropy/pb_vs_sc_unique_diversity.png
+        -- what is unique count diversity per rank?
+        -- or look at this: /home/golem/scratch/chans/transformers/results/tahoe/sc/figures/entropies/sc_30_rank_count_levels.png
+            -- maybe this is justificaiton for picking 1024?
+            -- but honestly if we did 2048 it would be even MORE sparse...
+                -- could test and see if there's actually a difference here?
+    -- just to confirm:
+        -- low rmlp performance prev. in lincs is because of accidentally not sweeping lr high enough (and changing rankings for rmlp)
+        -- decoder in lrecon is for ensuring that second last layer can be a representation learned and last layer focuses more on matching to the teacher
+            -- targets are standardized b/n 0,1 and student output isn't; thus the decoder allows layernorm to scale it properly
+
+-- NEXT:
+    -- remove broken jurkat plate from lincs pre-training
+        -- already removed from all lvl1, lvl2 no-pt runs
+        -- ensure also present for lvl3 once that's implemented
+        -- issue: checkpoint indices must = pre-training indices so fine-tuning from that checkpoint would error...
+    -- w_pretraining loading bugs
+        -- w_pretrain the probe head has a LayerNorm and the end-to-end head does not; align or state.??
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+    -- lvl1 lincs is using 305 cl (variants) instead of just the 236 cl
+        -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+
+-- LINCS:
+    -- baselines
+        -- RUNNING z score emlp long runs on lvl2
+        -- done etf, rtf sweeps on lvl1
+            -- !TO-RUN finals on random split, plate split
+        -- RUNNING etf, rtf sweeps on lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done etf, rtf sweeps on lvl1
+                -- !TO-RUN finals on random split
+            -- RUNNING etf, rtf sweeps on lvl2
+            -- done z score emlp long runs on lvl2
+        -- pre-train
+            -- RUNNING final lrecon rtf 40k again; no bueno but just gna explain it no fixing (1)
+        -- fine-tune
+            -- note: lrecon runs need to do on best/ and final/
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+    -- SC
+        -- baselines
+            -- !TO-RUN etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- RUNNING longer sweeps + finals of erecon etf, erecon rtf, mlm etf, mlm rtf (8)
+                -- note: good run has slightly too high of an lr i think?
+                -- because lr is chosen on 10k steps, but we are running for 40k steps
+                -- its kind of plateau'd already tho (at around 10k-20k steps) still going to let it continue running tho!
+            -- !TO-RUN longer sweeps + finals of lrecon etf, lrecon rtf 
+                -- doing later bc ik lrecon is not that good
+        -- fine-tune
