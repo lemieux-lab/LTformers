@@ -3399,3 +3399,75 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
             -- !TO-RUN longer sweeps + finals of lrecon etf, lrecon rtf 
                 -- doing later bc ik lrecon is not that good
         -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 7 2026 ###
+
+-- OVERALL:
+    -- review results/tahoe/pb_vs_sc/figures/entropy/pb_vs_sc_unique_diversity.png
+        -- what is unique count diversity per rank?
+        -- or look at this: /home/golem/scratch/chans/transformers/results/tahoe/sc/figures/entropies/sc_30_rank_count_levels.png
+            -- maybe this is justificaiton for picking 1024?
+            -- but honestly if we did 2048 it would be even MORE sparse...
+                -- could test and see if there's actually a difference here?
+
+-- NEXT:
+    -- remove broken jurkat plate from lincs pre-training
+        -- already removed from all lvl1, lvl2 no-pt runs
+        -- ensure also present for lvl3 once that's implemented
+        -- issue: checkpoint indices must = pre-training indices so fine-tuning from that checkpoint would error...
+    -- w_pretraining loading bugs
+        -- w_pretrain the probe head has a LayerNorm and the end-to-end head does not; align or state.??
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+    -- lvl1 lincs is using 305 cl (variants) instead of just the 236 cl
+        -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+
+-- LINCS:
+    -- baselines
+        -- done z score emlp long runs on lvl2
+        -- RUNNING etf, rtf finals on random split, plate split on lvl1
+            -- fyi sweep was only done on random; finals are done on diff splits
+        -- RUNNING etf, rtf finals on lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- RUNNING etf, rtf finals on lvl1
+            -- RUNNING etf, rtf finals on lvl2
+        -- pre-train
+            -- done final lrecon rtf 40k again
+        -- fine-tune
+            -- note: lrecon runs need to do on best/ and final/
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+    -- SC
+        -- baselines
+            -- tried z-score emlp for lvl2, didn't really make a difference
+            -- !TO-RUN etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- done erecon rtf, erecon etf finals
+                -- although could re-run erecon etf for longer; wasn't fully converged yet i think?
+            -- RUNNING longer sweeps + finals of mlm etf, mlm rtf (4)
+                -- note: good run has slightly too high of an lr i think?
+                -- because lr is chosen on 10k steps, but we are running for 40k steps
+                -- its kind of plateau'd already tho (at around 10k-20k steps) still going to let it continue running tho!
+            -- !TO-RUN longer sweeps + finals of lrecon etf, lrecon rtf 
+                -- doing later bc ik lrecon is not that good
+        -- fine-tune

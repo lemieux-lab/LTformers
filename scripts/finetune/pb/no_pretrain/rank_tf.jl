@@ -84,7 +84,11 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], config["modeltype"], timestamp)
+# result folder tag: rtf, + _gdd / _gpl for grouped splits, + _s<seed> (as exp_tf.jl)
+model_tag = config["modeltype"]
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")
+save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag,
+                    isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
 mkpath(save_dir)
 println("save dir: $save_dir")
 
@@ -103,6 +107,9 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
+# --patience: stop after this many evals without val improvement (0 = off)
+patience = something(get(config, "patience", nothing), 0)
+since_best = 0
 best_val_loss = Inf32
 best_val_acc = -Inf  # classification: best/ = highest val accuracy (val loss bottoms out early under held-out wells)
 val_accs = Float64[]
@@ -192,6 +199,15 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
     push!(val_losses, mean(val_eval_losses))
+    if patience > 0 && !is_regression
+        va = val_correct / max(val_n, 1)
+        if va > best_val_acc || (va == best_val_acc && val_losses[end] < best_val_loss)
+            global since_best = 0
+        else
+            global since_best += 1
+            since_best >= patience && (global done = true)
+        end
+    end
 
     # test eval (final epoch)
     is_last = is_last || done
