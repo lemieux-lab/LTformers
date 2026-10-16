@@ -17,29 +17,45 @@ etf = ""
 # tahoe pseudobulk
 
 [tahoe_pb.mlm]
-rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-21_22-50/best"
-etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.769, spearman=0.745, best_val_loss=5.450
+# rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-08-21_22-50/best"
+rtf = "results/tahoe/pb/pretrain/mlm/rtf/2026-10-04_11-36/best" # 40k final
+# etf = "results/tahoe/pb/pretrain/mlm/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.769, spearman=0.745, best_val_loss=5.450
+etf = "results/tahoe/pb/pretrain/mlm/etf/2026-10-03_19-34/best" # 40k final
 
 [tahoe_pb.lrecon]
 # after re-running lrecon (2026-09-25 fixes), point these at <run>/final, not <run>/best:
 # lrecon best-val tracks a moving teacher, so best/ is the epoch with the easiest targets
-rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-22_17-36/best"
-etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-27_11-51/best" # 160k steps, best_val_loss=0.0064 (newer script)
+# rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-08-22_17-36/best"
+# rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-10-05_13-13/best" # 40k final 1jjbq6iy, best val 0.082 (--ckpt final for final/)
+rtf = "results/tahoe/pb/pretrain/lrecon/rtf/2026-10-05_13-13/final" # 40k final 1jjbq6iy, final step
+# etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-08-27_11-51/best" # 160k steps, best_val_loss=0.0064 (newer script)
+# etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-10-02_11-04/best" # 40k final, best val 0.030 (--ckpt final for final/)
+etf = "results/tahoe/pb/pretrain/lrecon/etf/2026-10-02_11-04/final" # 40k final, final step
 
 [tahoe_pb.erecon]
-rtf = "results/tahoe/pb/pretrain/erecon/rtf/2026-08-18_13-15/best"
-etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.978, spearman=0.973, best_val_loss=0.029
+# rtf = "results/tahoe/pb/pretrain/erecon/rtf/2026-08-18_13-15/best"
+rtf = "results/tahoe/pb/pretrain/erecon/rtf/2026-10-02_11-05/best" # 40k final
+# etf = "results/tahoe/pb/pretrain/erecon/etf/2026-08-27_11-51/best" # 160k steps, pearson=0.978, spearman=0.973, best_val_loss=0.029
+etf = "results/tahoe/pb/pretrain/erecon/etf/2026-10-02_11-04/best" # 40k final
 
 # tahoe single-cell
 
 [tahoe_sc.mlm]
-rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-08-24_11-28/best"
-etf = "results/tahoe/sc/pretrain/mlm/etf/2026-08-27_03-27/best"
+# rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-08-24_11-28/best"
+rtf = "results/tahoe/sc/pretrain/mlm/rtf/2026-10-08_12-26_j8112945/best" # 40k final
+# etf = "results/tahoe/sc/pretrain/mlm/etf/2026-08-27_03-27/best"
+etf = "results/tahoe/sc/pretrain/mlm/etf/2026-10-09_11-12_j8112947/best" # 40k final
 
 [tahoe_sc.lrecon]
-rtf = "results/tahoe/sc/pretrain/lrecon/rtf/2026-08-23_23-39/best"
-etf = "results/tahoe/sc/pretrain/lrecon/etf/2026-08-23_23-48/best"
+# rtf = "results/tahoe/sc/pretrain/lrecon/rtf/2026-08-23_23-39/best"
+# rtf = "" # pending: TSC lrecon chain (8114956)
+rtf = "results/tahoe/sc/pretrain/lrecon/rtf/2026-10-13_17-50_j8114956/ema" # 40k final nysp6mjt, final teacher (= final student; no final/ saved)
+# etf = "results/tahoe/sc/pretrain/lrecon/etf/2026-08-23_23-48/best"
+# etf = "" # pending: TSC lrecon chain (8114954)
+etf = "results/tahoe/sc/pretrain/lrecon/etf/2026-10-12_13-22_j8114954/ema" # 40k final gnbpnby3, final teacher (= final student; no final/ saved)
 
 [tahoe_sc.erecon]
-rtf = "results/tahoe/sc/pretrain/erecon/rtf/2026-08-23_23-57/best"
-etf = "results/tahoe/sc/pretrain/erecon/etf/2026-08-24_00-04/best"
+# rtf = "results/tahoe/sc/pretrain/erecon/rtf/2026-08-23_23-57/best"
+rtf = "results/tahoe/sc/pretrain/erecon/rtf/2026-10-06_05-43_j8112941/best" # 40k final
+# etf = "results/tahoe/sc/pretrain/erecon/etf/2026-08-24_00-04/best"
+etf = "results/tahoe/sc/pretrain/erecon/etf/2026-10-07_03-13_j8112943/best" # 40k final

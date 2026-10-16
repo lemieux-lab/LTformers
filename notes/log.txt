@@ -3471,3 +3471,287 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
             -- !TO-RUN longer sweeps + finals of lrecon etf, lrecon rtf 
                 -- doing later bc ik lrecon is not that good
         -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 12 2026 ###
+
+-- OVERALL:
+    -- review results/tahoe/pb_vs_sc/figures/entropy/pb_vs_sc_unique_diversity.png
+        -- what is unique count diversity per rank?
+        -- or look at this: /home/golem/scratch/chans/transformers/results/tahoe/sc/figures/entropies/sc_30_rank_count_levels.png
+            -- maybe this is justificaiton for picking 1024?
+            -- but honestly if we did 2048 it would be even MORE sparse...
+                -- could test and see if there's actually a difference here?
+    -- review lab meeting notes at /home/golem/scratch/chans/transformers/thesis/sandbox/oct12
+        -- a.png: per-gene expression vs rank (mean exp vs mean rank) for all 3 datasets
+        -- b.png: contour plots for cosine vs kendall
+            -- lincs: much lower correlation in middle blob, in tpb/tsc its around the same
+            -- can ignore the centred plots
+            -- also, the metrics agree on very similar and very dissimilar pairs but barely order the middle genes the same way (in all datasets)
+            -- in sc they agree everywhere because they're mainly dependent on which genes are detected
+        -- c.png: 
+            -- c1.png: how often is cosine distance 1? 
+                -- cosine distance = 1 means two vectors shared detected genes
+                -- answer: no, we blessed
+            -- c2.png: does cosine just count shared detected genes? or is kendall high because HVGs just vary a lot?
+                -- in sc; nearly all of it. in pb; its chill (for cosine beign detected genes)
+                -- in pb, meatched on mean expression gives same distance on HVGs, thus high kendall comes from expression differences, not because of HVG gene selection
+                -- in sc, matching was not good beacuse there aren't enough highly expressed but non-HVG genes
+            -- c3.png: is sc pattern just low depth?
+                -- yes; if pb is thinned to sc depth, it look like sc
+        -- d.png: how sparse is each input, for the expression, how many of the HVGs are actually detected or how full is the profiles input/how much overlaps HVGs?
+            -- at sc depth, both inputs are mostly empty or ties, the expression model sees mostly zeroes thus mostly just ewhich detected genes are present for sc
+
+-- NEXT:
+    -- remove broken jurkat plate from lincs pre-training
+        -- already removed from all lvl1, lvl2 no-pt runs
+        -- ensure also present for lvl3 once that's implemented
+        -- issue: checkpoint indices must = pre-training indices so fine-tuning from that checkpoint would error...
+    -- w_pretraining loading bugs
+        -- w_pretrain the probe head has a LayerNorm and the end-to-end head does not; align or state.??
+        -- currently fixing!
+            -- checkpoint loading from .toml
+            -- dropout override (encoder TF dropout is set to same as finetune drop_prob)
+            -- linear probe added to compare against elog and rlog (so we have TF linear probe, MLP probe, and e2e full-tuning)
+            -- sc emb.jl fixed to follow what the no_pretrain TSCs do (val/test shards come from sc_eval_paths so its ones that pre-training did not see)
+            -- pb w_pretrain tfs updated to use no-pretrain things such as patience, best val acc/loss, gdd and gpl splits, X_test_full eval, and more detailed predstrues (ex sample tags for predictions, class names behind labels, split tags)
+            -- lrecon w_pretrain uses both best/ and final/
+            -- updated pretrained_models.toml and hp_sections so no lr=0.0 placeholders
+            -- fixing yamls to update
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider running longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+    -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+    -- lvl1 lincs is using 305 cl (variants) instead of just the 236 cl
+        -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+
+-- LINCS:
+    -- baselines
+        -- done etf, rtf finals on random split, plate split on lvl1
+        -- RUNNING etf, rtf finals on lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done etf, rtf finals on lvl1
+            -- RUNNING etf, rtf finals on lvl2
+        -- pre-train
+            -- done final lrecon rtf 40k again
+        -- fine-tune
+            -- note: lrecon runs need to do on best/ and final/
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- PENDING etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- done erecon rtf, erecon etf, mlm rtf, mlm etf finals
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+            -- RUNNING longer sweeps + finals of lrecon etf, lrecon rtf 
+        -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 14 2026 ###
+
+-- OVERALL:
+    -- review results/tahoe/pb_vs_sc/figures/entropy/pb_vs_sc_unique_diversity.png
+        -- what is unique count diversity per rank?
+        -- or look at this: /home/golem/scratch/chans/transformers/results/tahoe/sc/figures/entropies/sc_30_rank_count_levels.png
+            -- maybe this is justificaiton for picking 1024?
+            -- but honestly if we did 2048 it would be even MORE sparse...
+                -- could test and see if there's actually a difference here?
+
+-- NEXT:
+    -- remove broken jurkat plate from lincs pre-training
+        -- done
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider running longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+    -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+    -- lvl1 lincs is using 305 cl (variants) instead of just the 236 cl
+        -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+
+-- LINCS:
+    -- baselines
+        -- done etf, rtf finals on random split, plate split on lvl1
+        -- RUNNING etf, rtf finals on lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- PENDING mlm rtf,
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- RUNNING etf, rtf finals on lvl2
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+                -- note: lrecon runs need to do on best/ and final/
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- RUNNING etf, rtf sweeps on lvl1, lvl2
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+                    -- lrecon etf /best is at epoch 2
+                    -- lrecon rtf teacher target variance explodes; !REVIEW
+        -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 16 2026 ###
+
+-- OVERALL:
+    -- review results/tahoe/pb_vs_sc/figures/entropy/pb_vs_sc_unique_diversity.png
+        -- what is unique count diversity per rank?
+        -- or look at this: /home/golem/scratch/chans/transformers/results/tahoe/sc/figures/entropies/sc_30_rank_count_levels.png
+            -- maybe this is justificaiton for picking 1024?
+            -- but honestly if we did 2048 it would be even MORE sparse...
+                -- could test and see if there's actually a difference here?\
+    -- pre-training issues:
+        -- etf er/lr use corruption; etf mlm and all rtf use [MASK] so the model knows which positions are changed
+            -- would need visible mask for all 
+            -- or corruption for rtf er/lr
+        -- lrecon checkpoint chosen via val loss; not representative
+            -- could use final/ for all tasks or change what lrecon is evaluated on
+            -- or change the eval method
+        -- discrepancies between pb and sc:
+            -- swap donors are whole train set in pb, same batch in sc
+            -- lrecon target is standardized within plate in sc, randomly in pb
+            -- batch order is in order for sc pre-training
+        -- defensible:
+            -- equal compute is not equal convergence; some models learn faster than others
+                -- can either run with diff chckpoints at different steps to show downstream performance as a fxn of pretraining steps?
+                -- or ??? can just leave
+            -- gene medians and HVGs are computed on the whole dataset rather than train/test splits 
+                -- (doesnt change by much)
+            -- diff gene sets across etf and rtf
+                -- would need a baseline that predicts labels from qc features alone
+            -- early stopping hyperband favours settings that learn fast
+    -- w_pretrain:
+        -- final layernorm for the MLP probe as well
+    -- fixing lvl2:
+        -- group boostrapping over (drug, dose) units for tpb lvl2 ?
+        -- report plate encoding per encoder rather than plate lookup for tpb/tsc
+        -- report per-(well, cell line) accuracy as the co-primary metric for tsc
+        -- ceilings expressed as fraction of gap closed between majority/plate-only or replicate-consistency ceiling
+        -- ^can do most of these without needing re-training etc so wtv
+    -- actual TODOs:
+        1. see if possible to do sentinel masking on etf erecon/lrecon 
+            -- checked; swap is fine, sentinel doesnt work
+        2. fix lrecon logging via checking sweep checkpoints
+            -- checked; re-scored each sweep hckpoint with RankMe and kNN probes:
+            -- using final/ instead of best/ for all lrecon
+            -- the checkpoints chosen still scored best on different metrics ^ so val loss isnt the issue. 
+        3. fix discrepancies between pb and sc
+            -- via shard by shard streaming; just re-run the tsc fianls
+            -- checked; no shard by shard issues ; there is just a smal plate effect
+            -- Held-out loss nonetheless differs by only 2–6% across plates, with a pattern consistent across runs
+        for w_pretrain:
+            4. always load final/ for w_pretrain
+            5. standardize mlp probe inputs
+            6. test layer 1 vs layer 2 probes
+            7. equalize e2e sweep budgets
+
+-- NEXT:
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+    -- lvl1 lincs is using 305 cl (variants) instead of just the 236 cl
+        -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+    -- random init embeddings with same probes (linear, mlp) and/or PCA embeddings of input with same probes
+    -- plate probes on frozen embeddings
+    -- lvl1 eval label-efficiency per class?
+    -- mlp gene set encoding (rank on HVG panel and expression restricted to top-1024)
+        -- to eval if gene set diff or input diff
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+     -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider running longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+
+-- LINCS:
+    -- baselines
+        -- done etf, rtf finals on random split, plate split on lvl1
+        -- RUNNING etf, rtf finals on lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- RUNNING mlm rtf, mlm etf (can use MiG to queue more agents on MiGs when free later)
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tfs do significantly worse; could do evals on why via:
+                    -- z-score inputs to etf
+                    -- attention or cls instead of mean pooling
+                    -- warmup/weight decay
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+                -- note: lrecon runs need to do on best/ and final/
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- RUNNING etf, rtf sweeps on lvl1, lvl2
+                -- note: very underfitting, however not really sure if its worth it to run for longer
+                    -- since its just considered a baseline, we keep at 80k which is same as mlp
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+                    -- lrecon etf /best is at epoch 2
+                    -- lrecon rtf teacher target variance explodes; !REVIEW
+        -- fine-tune

@@ -42,6 +42,27 @@ drop_prob = 0.0
 mask_ratio = 0.15 
 ema_decay = 0.0
 
+# pasted notes (moved out of the ema_decay value, Oct 15):
+# **Kendall Tau error**
+# - Try putting gene ID as a struct
+# 	- That takes an int; this can help resolve potential issues like this
+# - Embedding layer idk if this would rly work but maybe symbol?
+#
+# **LINCS vector distances**
+# - 0-978 for the rank axis
+# - At a certain cosine distance, there is less correlation with rank?
+# - Also should choose either mean or median not use both? (or just use mean expression on x and mean rank on y so it doesn’t introduce bias of mean vs median)
+# - For large majority of pairs (yellow blob in the middle, some x%) then there is little relationship
+# - Or for very similar or very dissimilar profiles there is correlation or no correlation
+# - Contour plot for density of yellow thing?
+#
+# **Tahoe vector distances**
+# - Double check zeros treated on single-cell distances
+# - And thus the cosine distance being high when sparse ; look at cosine dist 1.0=perpendicular
+# - Subsample pseudobulk at 1500 and see if same thing gotten at the bottom then low depth demonstrates the relationship seen (third row below ci-iv)
+# - Most HVG u expect change often thus higher kt for model matched inputs
+# - Sparsity for HVG-1024 vs sparsity for top-1024??? compare
+
 # ──────────────────────────────────────────────
 # finetune — with pretrain
 # ──────────────────────────────────────────────
