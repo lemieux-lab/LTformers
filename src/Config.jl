@@ -3,6 +3,7 @@ module Config
 using TOML, PyCall
 
 export load_config, gpu_lr, init_wandb, wandb_project, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
+export wpt_task_tag
 
 
 # hp config per dataset
@@ -135,7 +136,8 @@ function resolve_model_dir!(config::Dict;
                            models_toml::String = joinpath(@__DIR__, "../config/pretrained_models.toml"))
     model_dir = get(config, "model_dir", "")
     if model_dir != ""
-        return config
+        # return config
+        return _apply_ckpt!(config)
     end
 
     fmt = get(config, "data_format", "tahoe")
@@ -183,8 +185,23 @@ function resolve_model_dir!(config::Dict;
     end
     config["model_dir"] = dir
     println("resolved model_dir: $dir")
+    # return config
+    return _apply_ckpt!(config)
+end
+
+# --ckpt final: <run>/best -> <run>/final
+function _apply_ckpt!(config::Dict)
+    something(get(config, "ckpt", nothing), "best") == "final" || return config
+    dir = rstrip(config["model_dir"], '/')
+    basename(dir) == "best" || error("--ckpt final needs a model_dir ending in best/, got $dir")
+    config["model_dir"] = joinpath(dirname(dir), "final")
+    isdir(config["model_dir"]) || error("no final/ checkpoint: $(config["model_dir"])")
+    println("ckpt final: model_dir -> $(config["model_dir"])")
     return config
 end
+
+# w_pretrain result/hp tag: task, + _final for the final/ checkpoint
+wpt_task_tag(config::Dict) = config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
 
 
 const DATA_PATHS = Dict(

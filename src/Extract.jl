@@ -3,9 +3,9 @@ module Extract
 using Flux, CUDA, Statistics, StatsBase
 
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
-using Models: encode, encode_rank, masked_mean_pool
+using Models: encode, encode_rank, masked_mean_pool, ExpModel, ExpLReconModel, ExpEReconModel
 
-export mpool, get_embeds, get_embeds_lrecon, get_embeds_exp
+export mpool, get_embeds, get_embeds_lrecon, get_embeds_exp, pool_embed
 
 
 function _batched_embed(forward_fn, X, batch_size::Int)
@@ -42,5 +42,13 @@ function get_embeds_exp(pt_model, X, batch_size::Int)
         dropdims(mean(transformed, dims=2), dims=2)
     end
 end
+
+# pooled embedding of a gpu batch (same pooling as get_embeds / get_embeds_exp)
+function pool_embed(pt_model::Union{ExpModel, ExpLReconModel, ExpEReconModel}, x)
+    x3d = reshape(x, 1, size(x)...)
+    combined = pt_model.proj(x3d) .+ pt_model.pos_emb(cu(Int32.(1:size(x, 1))))
+    return dropdims(mean(pt_model.transformer(pt_model.emb_dropout(combined)), dims=2), dims=2)
+end
+pool_embed(pt_model, x) = mpool(pt_model, x)
 
 end  # module Extract

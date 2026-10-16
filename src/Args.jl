@@ -124,6 +124,12 @@ function load_finetune_args()
         "--task"
             help = "pretrain objective: mlm, lrecon, or erecon"
             arg_type = String
+        "--probe"
+            help = "emb mode: mlp (default; = emlp head) or linear (z-scored embeddings -> one Dense; _linear)"
+            arg_type = String
+        "--ckpt"
+            help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
+            arg_type = String
         "--model_dir"
             help = "path to pretrained model directory (contains model_state.jld2)"
             arg_type = String
@@ -243,6 +249,9 @@ end
 function load_sc_finetune_args()
     s = ArgParseSettings()
     @add_arg_table s begin
+        "--weight_decay"
+            help = "SC linear probe: AdamW weight decay λ (default 0)"
+            arg_type = Float64
         "--patience"
             help = "stop after this many evals without val improvement (0 = off)"
             arg_type = Int
@@ -257,6 +266,12 @@ function load_sc_finetune_args()
             required = true
         "--task"
             help = "pretrain objective: mlm, lrecon, or erecon"
+            arg_type = String
+        "--probe"
+            help = "emb mode: mlp (default; = emlp head) or linear (z-scored embeddings -> one Dense; _linear)"
+            arg_type = String
+        "--ckpt"
+            help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
             arg_type = String
         "--model_dir"
             help = "path to pretrained model directory (contains model_state.jld2)"
