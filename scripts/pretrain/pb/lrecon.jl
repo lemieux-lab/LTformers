@@ -86,6 +86,8 @@ seq_len = use_exp ? n_genes : min(top_k, n_genes)
 # seeded split, reseed after
 Random.seed!(get(config, "split_seed", 42))
 _, _, _, train_indices, val_indices, test_indices = tvsplit(X_ranks, 0.1f0, 0.1f0)
+train_indices, val_indices, test_indices = drop_bad_plates(config, meta_df, train_indices, val_indices, test_indices;
+                                                               subset_idx=(@isdefined(subset_idx) ? subset_idx : nothing))
 # Random.seed!()
 isnothing(get(config, "seed", nothing)) ? Random.seed!() : Random.seed!(config["seed"])  # --seed fixes init + masking
 

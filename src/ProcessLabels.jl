@@ -5,7 +5,8 @@ using Flux, JLD2, Random, StatsBase, Statistics, DataFrames, MultivariateStats
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
 using Preprocess: nonzero_medians, gene_medians_for, rank_feature_k, rank_features, plate_delta
 
-export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline
+# export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline
+export get_labels, process_labels, oversmpl, downsmpl, dsplit, get_pt_idx, get_regression_pairs, get_regression_pairs_pca, identity_baseline, drop_bad_plates
 
 
 # keep (optional): columns allowed before labels are chosen (bad plates, delta filters)
@@ -285,9 +286,16 @@ function get_pt_idx(label_idx, model_dir::String; split_path::String = "")
                 isfile(p) || continue
                 ck = load(p)
                 haskey(ck, "train_indices") || continue
-                (sort(ck["train_indices"]) == sort(s.train) && sort(ck["test_indices"]) == sort(s.test)) ||
+                # (sort(ck["train_indices"]) == sort(s.train) && sort(ck["test_indices"]) == sort(s.test)) ||
+                #     error("checkpoint split $p differs from canonical split $split_path")
+                # println("  checkpoint split $p matches")
+                # ckpt split may omit excluded plates: must be a subset of the canonical split and agree on every finetune sample
+                L = Set(label_idx)
+                _same(a, b) = issubset(a, Set(b)) && sort(filter(in(L), a)) == sort(filter(in(L), b))
+                (_same(ck["train_indices"], s.train) && _same(ck["test_indices"], s.test)) ||
                     error("checkpoint split $p differs from canonical split $split_path")
-                println("  checkpoint split $p matches")
+                n_omit = length(s.train) + length(s.test) - length(ck["train_indices"]) - length(ck["test_indices"])
+                println("  checkpoint split $p matches" * (n_omit > 0 ? " ($n_omit excluded samples omitted)" : ""))
                 break
             end
         end
@@ -327,6 +335,17 @@ end
 # LINCS plates whose stored level 3 values are broken (flat, sd ~5e-4)
 # excluded from every LINCS task by default
 const LINCS_BAD_PLATES = ["REP.A010_JURKAT_24H_X3_B32"]
+
+# drop excluded LINCS plates from a pretrain split drawn on all samples (keeps the canonical split file valid)
+function drop_bad_plates(config, meta_df, idx_sets...; subset_idx = nothing)
+    get(config, "data_format", "tahoe") == "lincs" || return idx_sets
+    plate = string.(meta_df.det_plate)
+    isnothing(subset_idx) || (plate = plate[subset_idx])
+    bad = Set(string.(something(get(config, "exclude_plates", nothing), LINCS_BAD_PLATES)))
+    out = map(v -> [i for i in v if !(plate[i] in bad)], idx_sets)
+    println("excluded plates $(collect(bad)): dropped $(sum(length, idx_sets) - sum(length, out)) samples from the pretrain split")
+    return out
+end
 
 input_mode(config) = string(something(get(config, "input", nothing), "abs"))
 
