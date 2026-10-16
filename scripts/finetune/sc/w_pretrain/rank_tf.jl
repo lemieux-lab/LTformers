@@ -11,7 +11,11 @@ using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, FTModel
 using LoadSC, ProcessSC, SCTrain
 
 args = load_sc_finetune_args()
-config = load_config(args["config"], args)
+# config = load_config(args["config"], args)
+
+config = load_config(args["config"], args,
+                     hp_section=["finetune", "w_pretrain", args["modeltype"], wpt_task_tag(args), args["level"], "e2e"],
+                     dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
@@ -31,7 +35,11 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+
+# + pid and seed so same-minute runs don't share a save_dir
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid()) *
+            (isnothing(get(config, "seed", nothing)) ? "" : "_s$(config["seed"])")
 # --sc_split: drug_dose (lvl2 default), well_cl (lvl1 default), well
 sc_split = something(get(config, "sc_split", nothing), config["level"] == "lvl1" ? "well_cl" : "drug_dose")
 config["sc_split"] = sc_split  # logged to params.txt
@@ -86,13 +94,18 @@ opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
+# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
+                    # config["modeltype"], config["task"], "e2e", timestamp)
+
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    config["modeltype"], config["task"], "e2e", timestamp)
+                    config["modeltype"], wpt_task_tag(config), "e2e", timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "rtf_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "rtf_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+
+wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "rtf_$(wpt_task_tag(config))_e2e_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train: cross-shard mixed batches (class-balanced for lvl2), val every ft_eval_every steps, best-val checkpoint

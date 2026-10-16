@@ -9,7 +9,10 @@ push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src"))
 using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, FTModels
 
 args = load_finetune_args()
-config = load_config(args["config"], args)
+# config = load_config(args["config"], args)
+
+config = load_config(args["config"], args,
+                     hp_section=["finetune", "w_pretrain", args["modeltype"], wpt_task_tag(args), args["level"], "e2e"])
 resolve_data_path!(config)
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
@@ -44,6 +47,11 @@ else
     meta_df = data
 end
 
+# result folder tag: <mt>, + _gdd / _gpl for the group split
+model_tag = config["modeltype"]
+something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")
+string(something(get(config, "input", nothing), "abs")) == "delta" && (model_tag *= "_delta")
+
 d = dsplit(data_expr, config;
            label_path=get(config, "label_path", ""),
            label_source=(fmt == "tahoe" ? meta_df : nothing),
@@ -56,27 +64,42 @@ id_baseline = is_regression ? d.id_baseline : nothing
 
 # top-k
 top_k = get(config, "top_k", 1024)
+# if top_k < d.n_genes
+    # d = merge(d, (X_train = d.X_train[1:top_k, :],
+                   # X_val   = d.X_val[1:top_k, :],
+                   # X_test  = d.X_test[1:top_k, :]))
+
 if top_k < d.n_genes
     d = merge(d, (X_train = d.X_train[1:top_k, :],
                    X_val   = d.X_val[1:top_k, :],
-                   X_test  = d.X_test[1:top_k, :]))
+                   X_test  = d.X_test[1:top_k, :],
+                   X_test_full = (hasproperty(d, :X_test_full) ? d.X_test_full[1:top_k, :] : nothing)))
     println("top_k truncation: $(d.n_genes) → $top_k ranked genes per sample")
 end
 
+X_test_full = (hasproperty(d, :X_test_full) && !isnothing(d.X_test_full)) ? d.X_test_full : d.X_test
+
 # e2e model from pretrained
-ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=top_k)
+# ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=top_k)
+
+ft_model = build_e2em(config, d.n_classifications; n_genes=d.n_genes, seq_len=min(top_k, d.n_genes))
 ft_model = fix_gpu_dropout(cu(ft_model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
-save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    config["modeltype"], config["task"], "e2e", timestamp)
+# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
+                    # config["modeltype"], config["task"], "e2e", timestamp)
+
+save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"], model_tag,
+                    wpt_task_tag(config), "e2e", isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
 mkpath(save_dir)
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, wandb_project(config, "FT"), "rtf_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, wandb_project(config, "FT"), "rtf_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+
+wandb = init_wandb(config, wandb_project(config, "FT"), "rtf_$(wpt_task_tag(config))_e2e_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
@@ -90,6 +113,9 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
+# --patience: stop after this many evals without val improvement (0 = off)
+patience = something(get(config, "patience", nothing), 0)
+since_best = 0
 best_val_loss = Inf32
 best_val_acc = -Inf  # classification: best/ = highest val accuracy (val loss bottoms out early under held-out wells)
 val_accs = Float64[]
@@ -102,15 +128,25 @@ else
 end
 
 # test eval for model m
-function run_test(m)
+# function run_test(m)
+    # epoch_preds = is_regression ? Float32[] : Int[]
+    # epoch_trues = is_regression ? Float32[] : Int[]
+    # eval_losses = Float32[]
+    # n_test = size(d.X_test, 2)
+    # for s in 1:config["batch_size"]:n_test
+        # e = min(s + config["batch_size"] - 1, n_test)
+        # x_gpu = cu(Int32.(d.X_test[:, s:e]))
+        # y_gpu = cu(d.y_test[:, s:e])
+
+function run_test(m; X_test=d.X_test, y_test=d.y_test)
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
     eval_losses = Float32[]
-    n_test = size(d.X_test, 2)
+    n_test = size(X_test, 2)
     for s in 1:config["batch_size"]:n_test
         e = min(s + config["batch_size"] - 1, n_test)
-        x_gpu = cu(Int32.(d.X_test[:, s:e]))
-        y_gpu = cu(d.y_test[:, s:e])
+        x_gpu = cu(Int32.(X_test[:, s:e]))
+        y_gpu = cu(y_test[:, s:e])
         logits = m(x_gpu)
         if is_regression
             push!(eval_losses, Float32(cpu(Flux.mse(logits, y_gpu))))
@@ -179,6 +215,15 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
     push!(val_losses, mean(val_eval_losses))
+    if patience > 0 && !is_regression
+        va = val_correct / max(val_n, 1)
+        if va > best_val_acc || (va == best_val_acc && val_losses[end] < best_val_loss)
+            global since_best = 0
+        else
+            global since_best += 1
+            since_best >= patience && (global done = true)
+        end
+    end
 
     # test eval (final epoch)
     is_last = is_last || done
@@ -222,7 +267,11 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
+                         # "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
+
+                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step,
+                         "best_val_loss" => best_val_loss,  # per-epoch so hyperband early_terminate can see it
+                         "best_val_acc" => best_val_acc)    # sweep metric (classification): matches best/ selection
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
         end
@@ -244,13 +293,32 @@ else
     bp, bt
 end
 best_metrics = test_metrics(best_preds, best_trues, is_regression)
+# final_metrics = test_metrics(all_preds, all_trues, is_regression)
+# isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+
+# grouped split: also test on the full test groups
+has_full = hasproperty(d, :test_full_idx) && d.test_full_idx !== d.test_idx
+best_full_metrics = if has_full
+    m_full = isnothing(best_cpu) ? ft_model : fix_gpu_dropout(cu(best_cpu))
+    Flux.testmode!(m_full)
+    _, fp, ft = run_test(m_full; X_test=X_test_full, y_test=d.y_test_full)
+    test_metrics(fp, ft, is_regression)
+else
+    nothing
+end
+has_full && println("test (best model, full test groups): ", best_full_metrics)
 final_metrics = test_metrics(all_preds, all_trues, is_regression)
-isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+# with sample ids + class names
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues,
+    test_sample_idx=(hasproperty(d, :label_idx) ? collect(d.label_idx[d.test_idx]) : collect(d.test_idx)),
+    label_names=(hasproperty(d, :label_names) ? d.label_names : String[]),
+    split_tag=string(get(d, :split_tag, "lvl3")))
 println("test (best model, epoch $best_epoch): ", best_metrics)
 println("test (final model):         ", final_metrics)
 
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
+    wb.summary["best_val_acc"] = best_val_acc
     wb.summary["best_epoch"] = best_epoch
     for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
     for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
@@ -290,6 +358,10 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
+               # skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               # best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
+
                skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               split_tag=string(get(d, :split_tag, "")), best_accuracy_fullgroup=(isnothing(best_full_metrics) ? NaN : best_full_metrics.accuracy),
                best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end

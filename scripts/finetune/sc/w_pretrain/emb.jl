@@ -8,10 +8,18 @@ using ProgressBars, CairoMakie, StatsBase, DataFrames
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src/tahoe"))
 using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, Extract, FTModels
-using LoadSC, ProcessSC
+# using LoadSC, ProcessSC
+
+using LoadSC, ProcessSC, SCTrain
 
 args = load_sc_finetune_args()
-config = load_config(args["config"], args)
+# config = load_config(args["config"], args)
+
+# emb mode tag: emb (mlp probe) or emb_linear
+emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
+config = load_config(args["config"], args,
+                     hp_section=["finetune", "w_pretrain", args["modeltype"], wpt_task_tag(args), args["level"], emb_tag],
+                     dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_model_dir!(config)
 resolve_lvl3_cells!(config)
@@ -32,7 +40,11 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+
+# + pid and seed so same-minute runs don't share a save_dir
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid()) *
+            (isnothing(get(config, "seed", nothing)) ? "" : "_s$(config["seed"])")
 # --sc_split
 sc_split = something(get(config, "sc_split", nothing), config["level"] == "lvl1" ? "well_cl" : "drug_dose")
 config["sc_split"] = sc_split
@@ -103,9 +115,12 @@ end
 if is_streaming
     # stream embeddings shard-by-shard, then train MLP
 
-    # 1) pretrained encoder
-    ac = FTModels._load_arch_config(config["model_dir"], config)
-    state = JLD2.load("$(config["model_dir"])/model_state.jld2")["model_state"]
+    # # 1) pretrained encoder
+    # ac = FTModels._load_arch_config(config["model_dir"], config)
+    # state = JLD2.load("$(config["model_dir"])/model_state.jld2")["model_state"]
+
+    # 1) pretrained encoder (dims from checkpoint)
+    pt_model, ac = build_pt_model(config; n_genes_data=n_genes_for_model, seq_len_data=seq_len, hvg_idx=hvg_idx)
 
     # embedding fn per task
     if config["modeltype"] == "etf"
@@ -116,35 +131,36 @@ if is_streaming
         embed_fn = get_embeds
     end
 
-    # load pretrained model
-    if config["modeltype"] == "etf" && config["task"] == "lrecon"
-        pt_model = ExpLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    elseif config["modeltype"] == "etf" && config["task"] == "erecon"
-        pt_model = ExpEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    elseif config["modeltype"] == "etf" && config["task"] == "mlm"
-        pt_model = ExpModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_classes=n_genes_for_model,
-            n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
-        pt_model = RankLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
-        pt_model = RankEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    else
-        pt_model = RankModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            n_layers=ac["n_layers"], n_classes=n_genes_for_model,
-            n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    end
-    Flux.loadmodel!(pt_model, FTModels._clean_state(state, pt_model))
+    # # load pretrained model
+    # if config["modeltype"] == "etf" && config["task"] == "lrecon"
+        # pt_model = ExpLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # elseif config["modeltype"] == "etf" && config["task"] == "erecon"
+        # pt_model = ExpEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # elseif config["modeltype"] == "etf" && config["task"] == "mlm"
+        # pt_model = ExpModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_classes=n_genes_for_model,
+            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
+            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
+        # pt_model = RankLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
+        # pt_model = RankEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
+            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # else
+        # pt_model = RankModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
+            # n_layers=ac["n_layers"], n_classes=n_genes_for_model,
+            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
+            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # end
+    # Flux.loadmodel!(pt_model, FTModels._clean_state(state, pt_model))
+
     pt_model = fix_gpu_dropout(cu(pt_model))
     Flux.testmode!(pt_model)
 
@@ -212,65 +228,101 @@ if is_streaming
         y_train = y_train[:, 1:col_train]
     end
 
-    # 3) val embeddings
-    n_val = d.n_val_cells
+    # # 3) val embeddings
+    # n_val = d.n_val_cells
+    # val_input = zeros(Float32, embed_dim, n_val)
+    # y_val = zeros(Float32, d.n_classifications, n_val)
+    # println("streaming val embedding extraction: $(n_val) cells...")
+    # col_val = _stream_extract_embeddings!(val_input, y_val, d.val_shard_paths, d.val_shard_map,
+                                           # pt_model, n_val, "val")
+
+    # 3) val embeddings: same pretrain-unseen val shards as sc_finetune!
+    val_paths, test_paths = sc_eval_paths(d, config)
+    n_val = sum(length(d.val_shard_map[sp][1]) for sp in val_paths)
     val_input = zeros(Float32, embed_dim, n_val)
     y_val = zeros(Float32, d.n_classifications, n_val)
     println("streaming val embedding extraction: $(n_val) cells...")
-    col_val = _stream_extract_embeddings!(val_input, y_val, d.val_shard_paths, d.val_shard_map,
+    col_val = _stream_extract_embeddings!(val_input, y_val, val_paths, d.val_shard_map,
                                            pt_model, n_val, "val")
     if col_val < n_val
         val_input = val_input[:, 1:col_val]
         y_val = y_val[:, 1:col_val]
     end
 
-    # 4) test embeddings
-    n_test = d.n_test_cells
-    test_input = zeros(Float32, embed_dim, n_test)
-    y_test = zeros(Float32, d.n_classifications, n_test)
-    println("streaming test embedding extraction: $(n_test) cells...")
-    col_test = _stream_extract_embeddings!(test_input, y_test, d.test_shard_paths, d.test_shard_map,
-                                            pt_model, n_test, "test")
-    if col_test < n_test
-        test_input = test_input[:, 1:col_test]
-        y_test = y_test[:, 1:col_test]
-    end
+    # # 4) test embeddings
+    # n_test = d.n_test_cells
+    # test_input = zeros(Float32, embed_dim, n_test)
+    # y_test = zeros(Float32, d.n_classifications, n_test)
+    # println("streaming test embedding extraction: $(n_test) cells...")
+    # col_test = _stream_extract_embeddings!(test_input, y_test, d.test_shard_paths, d.test_shard_map,
+                                            # pt_model, n_test, "test")
+    # if col_test < n_test
+        # test_input = test_input[:, 1:col_test]
+        # y_test = y_test[:, 1:col_test]
+    # end
 
-    # free pretrained model
-    pt_model = nothing
+    # # free pretrained model
+    # pt_model = nothing
+    # GC.gc(true)
+    # CUDA.reclaim()
+
+    # # 5) MLP head
+    # ft_model = Flux.Chain(
+        # Flux.Dense(embed_dim => config["hidden_dim"], gelu),
+        # Flux.LayerNorm(config["hidden_dim"]),
+        # Flux.Dropout(config["drop_prob"]),
+        # Flux.Dense(config["hidden_dim"] => d.n_classifications))
+    # ft_model = fix_gpu_dropout(cu(ft_model))
+    # opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+
+    # 4) test: streamed through encoder + head at eval time (same _eval as sc_finetune!), pt_model kept
+    test_input = nothing; y_test = nothing
     GC.gc(true)
     CUDA.reclaim()
 
-    # 5) MLP head
-    ft_model = Flux.Chain(
-        Flux.Dense(embed_dim => config["hidden_dim"], gelu),
-        Flux.LayerNorm(config["hidden_dim"]),
-        Flux.Dropout(config["drop_prob"]),
-        Flux.Dense(config["hidden_dim"] => d.n_classifications))
+    # 5) probe head (mlp or linear); linear: z-scored embeddings
+    emb_stats = emb_tag == "emb_linear" ? standardize_embeds!(train_input, val_input) : nothing
+    ft_model = probe_head(config, embed_dim, d.n_classifications)
     ft_model = fix_gpu_dropout(cu(ft_model))
-    opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+    opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
 else
     # non-streaming (lvl3)
     X_train = d.X_train
     X_val, X_test = d.X_val, d.X_test
+    # ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
+                                                    # n_genes_for_model, d.n_classifications; X_val=X_val,
+                                                    # seq_len=seq_len)
+    # y_train = d.y_train
+    # y_val = d.y_val
+    # y_test = d.y_test
+    # opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+
     ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
                                                     n_genes_for_model, d.n_classifications; X_val=X_val,
-                                                    seq_len=seq_len)
+                                                    seq_len=seq_len, hvg_idx=hvg_idx)
     y_train = d.y_train
     y_val = d.y_val
     y_test = d.y_test
-    opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+    emb_stats = emb_tag == "emb_linear" ? standardize_embeds!(train_input, val_input, test_input) : nothing
+    opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
 end
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
+# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
+                    # config["modeltype"], config["task"], "emb", timestamp)
+# mkpath(save_dir)
+
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    config["modeltype"], config["task"], "emb", timestamp)
+                    config["modeltype"], wpt_task_tag(config), emb_tag, timestamp)
 mkpath(save_dir)
+isnothing(emb_stats) || jldsave(joinpath(save_dir, "emb_stats.jld2"); mu=emb_stats[1], sd=emb_stats[2])
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
+# wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
+
+wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "$(config["modeltype"])_$(wpt_task_tag(config))_$(emb_tag)_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
@@ -284,6 +336,9 @@ global_step = 0
 ft_step_limit = get(config, "max_ft_steps", 0)
 use_max_steps = ft_step_limit > 0
 done = false
+# --patience: stop after this many evals without val improvement (0 = off)
+patience = something(get(config, "patience", nothing), 0)
+since_best = 0
 best_val_loss = Inf32
 best_val_acc = -Inf  # classification: best/ = highest val accuracy (val loss bottoms out early under held-out wells)
 val_accs = Float64[]
@@ -310,8 +365,27 @@ else
     config["n_epochs"]
 end
 
-# test eval for model m
-function run_test(m)
+# # test eval for model m
+# function run_test(m)
+
+# streaming test: encoder + head over the test shards, same _eval (well / well_cl / pt-unseen) as sc_finetune!
+test_ga = Dict{Symbol, Any}()
+if is_streaming
+    fk = (; token_to_idx, n_coding, top_k, batch_size=config["batch_size"], feat_mt=config["modeltype"],
+            n_cls=d.n_classifications, hvg_idx=hvg_idx,
+            to_x=(config["modeltype"] == "rtf" ? (x -> CuArray(Int32.(x))) : (x -> CuArray(x))),
+            process_cell_topk_flat_fn=process_cell_topk_flat, cell_to_dense_flat_fn=cell_to_dense_flat!)
+    unseen = is_regression ? nothing : sc_pt_unseen_shards(config)
+    emb_mu, emb_sd = isnothing(emb_stats) ? (nothing, nothing) : (cu(emb_stats[1]), cu(emb_stats[2]))
+end
+function run_test(m; which=:final)
+    if is_streaming
+        zf = isnothing(emb_mu) ? identity : (e -> (e .- emb_mu) ./ emb_sd)
+        res = SCTrain._eval(x -> m(zf(pool_embed(pt_model, x))), fk, is_regression; paths=test_paths, shard_map=d.test_shard_map,
+                            label="test", group_map=(is_regression ? nothing : d.test_group_map), unseen=unseen)
+        length(res) == 5 && (test_ga[which] = res[5])
+        return res[1], res[3], res[4]
+    end
     epoch_preds = is_regression ? Float32[] : Int[]
     epoch_trues = is_regression ? Float32[] : Int[]
     eval_losses = Float32[]
@@ -388,6 +462,15 @@ for epoch in ProgressBar(1:n_total_epochs)
         end
     end
     push!(val_losses, mean(val_eval_losses))
+    if patience > 0 && !is_regression
+        va = val_correct / max(val_n, 1)
+        if va > best_val_acc || (va == best_val_acc && val_losses[end] < best_val_loss)
+            global since_best = 0
+        else
+            global since_best += 1
+            since_best >= patience && (global done = true)
+        end
+    end
 
     # test eval (final epoch)
     is_last = is_last || done
@@ -430,7 +513,11 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
+                         # "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
+
+                         "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step,
+                         "best_val_loss" => best_val_loss,  # per-epoch so hyperband early_terminate can see it
+                         "best_val_acc" => best_val_acc)    # sweep metric (classification): matches best/ selection
         if !isempty(test_losses)
             log_dict["test_loss"] = test_losses[end]
         end
@@ -448,17 +535,44 @@ best_preds, best_trues = if isnothing(best_cpu)
 else
     best_model = fix_gpu_dropout(cu(best_cpu))
     Flux.testmode!(best_model)
-    _, bp, bt = run_test(best_model)
+    # _, bp, bt = run_test(best_model)
+
+    _, bp, bt = run_test(best_model; which=:best)
     bp, bt
 end
+# best_metrics = test_metrics(best_preds, best_trues, is_regression)
+# final_metrics = test_metrics(all_preds, all_trues, is_regression)
+# isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+
+# streaming classification: test = pretrain-unseen cells, *_full = all test cells (as sc_finetune!)
+no_agg = (well_acc = NaN, n_wells = 0, wellcl_acc = NaN, n_wellcl = 0)
+final_agg = get(test_ga, :final, no_agg)
+best_agg = get(test_ga, :best, final_agg)
+all_preds_full, all_trues_full, best_preds_full, best_trues_full = all_preds, all_trues, best_preds, best_trues
+best_agg_full = best_agg
+best_ids = hasproperty(best_agg, :pred_shard) ?
+    (shard = basename.(test_paths)[best_agg.pred_shard], cell = best_agg.pred_cell, pt_unseen = best_agg.unseen_mask) : nothing
+_u(a) = hasproperty(a, :unseen_mask) ? (well_acc = a.well_acc_u, n_wells = a.n_wells_u, wellcl_acc = a.wellcl_acc_u, n_wellcl = a.n_wellcl_u) : a
+has_unseen = is_streaming && !is_regression && !isnothing(unseen) && hasproperty(final_agg, :unseen_mask)
+if has_unseen
+    all_preds, all_trues = all_preds[final_agg.unseen_mask], all_trues[final_agg.unseen_mask]
+    best_preds, best_trues = best_preds[best_agg.unseen_mask], best_trues[best_agg.unseen_mask]
+    final_agg, best_agg = _u(final_agg), _u(best_agg)
+end
+split_tag = !(is_streaming && !is_regression) ? "lvl3" : has_unseen ? "sc_ptunseen" : "sc_full"
 best_metrics = test_metrics(best_preds, best_trues, is_regression)
 final_metrics = test_metrics(all_preds, all_trues, is_regression)
-isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
+isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues,
+    all_preds_full=best_preds_full, all_trues_full=best_trues_full, split_tag=split_tag,
+    test_shard=(isnothing(best_ids) ? String[] : best_ids.shard), test_cell=(isnothing(best_ids) ? Int32[] : best_ids.cell),
+    test_pt_unseen=(isnothing(best_ids) ? Bool[] : collect(best_ids.pt_unseen)),
+    label_names=((hasproperty(d, :label_to_id) && d.label_to_id isa AbstractDict) ? sort(collect(keys(d.label_to_id)), by=k -> d.label_to_id[k]) : String[]))
 println("test (best model, epoch $best_epoch): ", best_metrics)
 println("test (final model):         ", final_metrics)
 
 if wb !== nothing
     wb.summary["best_val_loss"] = best_val_loss
+    wb.summary["best_val_acc"] = best_val_acc
     wb.summary["best_epoch"] = best_epoch
     for (k, v) in pairs(best_metrics); wb.summary["best_$(k)"] = v; end
     for (k, v) in pairs(final_metrics); wb.summary["final_$(k)"] = v; end
@@ -498,6 +612,13 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
+               # skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               # best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
+
                skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
+               best_well_acc=best_agg.well_acc, best_wellcl_acc=best_agg.wellcl_acc,
+               split_tag=split_tag, best_accuracy_fullgroup=(isempty(best_preds_full) ? NaN : mean(best_preds_full .== best_trues_full)),
+               best_wellcl_acc_fullgroup=best_agg_full.wellcl_acc,
+               final_well_acc=final_agg.well_acc, final_wellcl_acc=final_agg.wellcl_acc,
                best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
 end
