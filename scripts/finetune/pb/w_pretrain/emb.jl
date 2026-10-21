@@ -12,11 +12,15 @@ args = load_finetune_args()
 # config = load_config(args["config"], args)
 
 # emb mode tag: emb (mlp probe) or emb_linear
-emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
+# emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
+# + _raw for unstandardized embeddings (--emb_std 0)
+emb_std = something(args["emb_std"], 1) == 1
+emb_tag = (something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb") * (emb_std ? "" : "_raw")
 config = load_config(args["config"], args,
                      hp_section=["finetune", "w_pretrain", args["modeltype"], wpt_task_tag(args), args["level"], emb_tag])
 resolve_data_path!(config)
 resolve_model_dir!(config)
+Extract.FINAL_LN[] = something(get(config, "final_ln", nothing), 0) == 1
 resolve_lvl3_cells!(config)
 
 # seed
@@ -109,12 +113,40 @@ end
 # grouped split: embed the full test groups once, test = its pretrain-split subset
 has_full = hasproperty(d, :test_full_idx) && d.test_full_idx !== d.test_idx
 X_test_emb = has_full ? d.X_test_full : d.X_test
-ft_model, train_input, val_input, test_input_full = build_embm(config, d.X_train, X_test_emb,
-                                                n_genes_for_model, d.n_classifications; X_val=d.X_val,
-                                                seq_len=seq_len, hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
+# ft_model, train_input, val_input, test_input_full = build_embm(config, d.X_train, X_test_emb,
+                                                # n_genes_for_model, d.n_classifications; X_val=d.X_val,
+                                                # seq_len=seq_len, hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
+# frozen embeddings cached per encoder x split (sweep runs reuse them); cache stores the split indices and is checked on load
+test_emb_idx = has_full ? d.test_full_idx : d.test_idx
+emb_key = join([realpath(config["model_dir"]), config["level"], model_tag, seq_len, Extract.FINAL_LN[],
+                size(d.X_train, 2), size(d.X_val, 2), size(X_test_emb, 2)], "|")
+emb_cache = joinpath("results", fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb"), "finetune", "w_pretrain", "emb_cache",
+                     "$(config["modeltype"])_$(wpt_task_tag(config))_$(config["level"])_$(string(hash(emb_key), base=16)).jld2")
+cached = isfile(emb_cache) ? load(emb_cache) : nothing
+if !isnothing(cached) && cached["key"] == emb_key && cached["train_idx"] == d.train_idx && cached["val_idx"] == d.val_idx &&
+   cached["test_idx"] == test_emb_idx
+    train_input, val_input, test_input_full = cached["train"], cached["val"], cached["test"]
+    # ft_model = fix_gpu_dropout(cu(probe_head(config, size(train_input, 1), d.n_classifications)))
+    println("embeddings: loaded cache $emb_cache")
+else
+    ft_model, train_input, val_input, test_input_full = build_embm(config, d.X_train, X_test_emb,
+                                                    n_genes_for_model, d.n_classifications; X_val=d.X_val,
+                                                    seq_len=seq_len, hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
+    mkpath(dirname(emb_cache))
+    tmp_cache = "$(emb_cache).$(getpid()).tmp"
+    jldsave(tmp_cache; key=emb_key, train_idx=d.train_idx, val_idx=d.val_idx, test_idx=test_emb_idx,
+            train=train_input, val=val_input, test=test_input_full)
+    mv(tmp_cache, emb_cache; force=true)
+    println("embeddings: wrote cache $emb_cache")
+end
+# probe head rebuilt after a reseed, so cached and uncached runs start from the same weights
+isnothing(seed) || Random.seed!(seed)
+ft_model = fix_gpu_dropout(cu(probe_head(config, size(train_input, 1), d.n_classifications)))
 test_input = has_full ? test_input_full[:, something.(indexin(d.test_idx, d.test_full_idx))] : test_input_full
-# linear probe: z-score embeddings with train mean/sd
-emb_stats = emb_tag == "emb_linear" ? standardize_embeds!(train_input, val_input, test_input, has_full ? test_input_full : nothing) : nothing
+# both probes: z-score embeddings with train mean/sd (embedding scale differs ~300x across encoders)
+# emb_stats = standardize_embeds!(train_input, val_input, test_input, has_full ? test_input_full : nothing)
+# --emb_std 0: raw embeddings (test_input is a copy, so test_input_full is z-scored separately)
+emb_stats = emb_std ? standardize_embeds!(train_input, val_input, test_input, has_full ? test_input_full : nothing) : nothing
 wd = Float64(something(get(config, "weight_decay", nothing), 0.0))
 opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), wd), ft_model)
 

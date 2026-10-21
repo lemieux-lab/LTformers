@@ -10,7 +10,11 @@ using Extract: get_embeds, get_embeds_lrecon, get_embeds_exp
 export RankClassifier, ExpClassifier
 export RankFTModel, ExpFTModel
 export build_embm, build_e2em
-export build_pt_model, set_dropout, probe_head, standardize_embeds!
+# export build_pt_model, set_dropout, probe_head, standardize_embeds!
+# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
+# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
+# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!
+export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
 
 
 # emb only models
@@ -263,7 +267,10 @@ function build_pt_model(config::Dict; n_genes_data::Int, seq_len_data::Int, hvg_
         n_genes_data == n_genes || error("finetune gene vocab $n_genes_data != checkpoint vocab $n_genes ($model_dir)")
     else
         n_genes = seq_len
+        # hvg_path = joinpath(dirname(model_dir), "hvg_indices.jld2")
+        # run root is one level up (best/, final/, ema/) or two (final/ema/)
         hvg_path = joinpath(dirname(model_dir), "hvg_indices.jld2")
+        isfile(hvg_path) || (hvg_path = joinpath(dirname(dirname(model_dir)), "hvg_indices.jld2"))
         if !isnothing(hvg_idx) && isfile(hvg_path)
             load(hvg_path)["hvg_idx"] == hvg_idx || error("finetune HVG genes differ from the checkpoint's ($hvg_path)")
             println("HVG genes match checkpoint: $hvg_path")
@@ -304,6 +311,48 @@ function standardize_embeds!(train, others...)
         isnothing(X) || (X .= (X .- μ) ./ σ)
     end
     return μ, σ
+end
+
+# --head_init: rescale the first head Dense so it sees z-scored pooled embeddings at step 0 (same architecture, all trainable)
+function init_head_from_embeds!(m::Union{RankFTModel, ExpFTModel}, batches)
+    enc = typeof(m).name.wrapper(m.pretrained, Flux.Chain(identity))
+    Flux.testmode!(m)
+    E = reduce(hcat, [cpu(enc(x)) for x in batches])
+    μ = mean(E, dims=2)
+    σ = std(E, dims=2)
+    σ[σ .< 1f-6] .= 1f0
+    d1 = m.head.layers[1]
+    W = cpu(d1.weight) ./ permutedims(σ)
+    copyto!(d1.weight, W)
+    copyto!(d1.bias, cpu(d1.bias) .- W * vec(μ))
+    println("head init: $(size(E, 2)) pooled train embeddings, dim-sd median $(round(median(vec(σ)), sigdigits=3)) " *
+            "(min $(round(minimum(σ), sigdigits=3)), max $(round(maximum(σ), sigdigits=3)))"); flush(stdout)
+    return μ, σ
+end
+
+# fixed (untrained) per-dim z-score of the pooled embedding
+struct FixedStd{V}
+    mu::V
+    sd::V
+end
+Flux.@layer FixedStd
+Flux.trainable(::FixedStd) = (;)
+(s::FixedStd)(x) = (x .- s.mu) ./ s.sd
+
+# copy of an e2e model (field `head` last) with its head replaced
+_with_head(m, h) = typeof(m).name.wrapper((f == :head ? h : getfield(m, f) for f in fieldnames(typeof(m)))...)
+
+# --pool_std: FixedStd in front of the head, stats = pooled train embeddings of the encoder at finetune start
+function with_pool_std(m, batches)
+    enc = _with_head(m, Flux.Chain(identity))
+    Flux.testmode!(m)
+    E = reduce(hcat, [cpu(enc(x)) for x in batches])
+    μ = vec(mean(E, dims=2))
+    σ = vec(std(E, dims=2))
+    σ[σ .< 1f-6] .= 1f0
+    println("pool std: $(size(E, 2)) pooled train embeddings, dim-sd median $(round(median(σ), sigdigits=3)) " *
+            "(min $(round(minimum(σ), sigdigits=3)), max $(round(maximum(σ), sigdigits=3)))"); flush(stdout)
+    return _with_head(m, Flux.Chain(FixedStd(cu(μ), cu(σ)), m.head.layers...))
 end
 
 function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X_val=nothing, seq_len::Int=n_genes, hvg_idx=nothing)

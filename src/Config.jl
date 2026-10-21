@@ -190,8 +190,19 @@ function resolve_model_dir!(config::Dict;
 end
 
 # --ckpt final: <run>/best -> <run>/final
+# no --ckpt: <run>/best -> <run>/final when final/ exists (lrecon entries already point at the final teacher)
 function _apply_ckpt!(config::Dict)
-    something(get(config, "ckpt", nothing), "best") == "final" || return config
+    if isnothing(get(config, "ckpt", nothing))
+        dir = rstrip(config["model_dir"], '/')
+        fin = joinpath(dirname(dir), "final")
+        if basename(dir) == "best" && isfile(joinpath(fin, "model_state.jld2"))
+            config["model_dir"] = fin
+            println("final/ present: model_dir -> $fin")
+        end
+        return config
+    end
+    # something(get(config, "ckpt", nothing), "best") == "final" || return config
+    config["ckpt"] == "final" || return config
     dir = rstrip(config["model_dir"], '/')
     basename(dir) == "best" || error("--ckpt final needs a model_dir ending in best/, got $dir")
     config["model_dir"] = joinpath(dirname(dir), "final")

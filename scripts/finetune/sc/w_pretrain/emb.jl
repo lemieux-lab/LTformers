@@ -22,6 +22,7 @@ config = load_config(args["config"], args,
                      dataset="tahoe_sc")
 config["data_format"] = "tahoe_sc"
 resolve_model_dir!(config)
+Extract.FINAL_LN[] = something(get(config, "final_ln", nothing), 0) == 1
 resolve_lvl3_cells!(config)
 
 # seed
@@ -216,17 +217,27 @@ if is_streaming
         return col_offset
     end
 
-    # 2) train embeddings
-    n_train = d.n_train_cells
+    # 2) train embeddings: same train mix as sc_finetune! (max_ft_steps x batch_size cells, class-balanced at lvl2)
+    n_mix = get(config, "max_ft_steps", 0) > 0 ? config["max_ft_steps"] * config["batch_size"] : d.n_train_cells
+    picked = draw_train_cells(d.train_cells, d.label_to_id, n_mix; balanced=use_oversmpl)
+    mix_map = Dict{String, Tuple{Vector{Int}, Vector{Int}}}()
+    for j in picked
+        sp, ci, lab, _ = d.train_cells[j]
+        e = get!(mix_map, sp, (Int[], Int[]))
+        push!(e[1], ci); push!(e[2], d.label_to_id[lab])
+    end
+    n_train = length(picked)
     train_input = zeros(Float32, embed_dim, n_train)
     y_train = zeros(Float32, d.n_classifications, n_train)
-    println("streaming train embedding extraction: $(n_train) cells into ($(embed_dim), $(n_train)) matrix...")
-    col_train = _stream_extract_embeddings!(train_input, y_train, d.train_shard_paths, d.train_shard_map,
+    println("streaming train embedding extraction: $(n_train) cells from $(length(mix_map)) shards (balanced=$use_oversmpl)...")
+    col_train = _stream_extract_embeddings!(train_input, y_train, sort(collect(keys(mix_map))), mix_map,
                                              pt_model, n_train, "train")
     if col_train < n_train
         train_input = train_input[:, 1:col_train]
         y_train = y_train[:, 1:col_train]
     end
+    # mix is already class-balanced: one shuffled pass, as sc_finetune!
+    use_oversmpl = false
 
     # # 3) val embeddings
     # n_val = d.n_val_cells
@@ -280,8 +291,8 @@ if is_streaming
     GC.gc(true)
     CUDA.reclaim()
 
-    # 5) probe head (mlp or linear); linear: z-scored embeddings
-    emb_stats = emb_tag == "emb_linear" ? standardize_embeds!(train_input, val_input) : nothing
+    # 5) probe head (mlp or linear) on z-scored embeddings
+    emb_stats = standardize_embeds!(train_input, val_input)
     ft_model = probe_head(config, embed_dim, d.n_classifications)
     ft_model = fix_gpu_dropout(cu(ft_model))
     opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
@@ -303,7 +314,7 @@ else
     y_train = d.y_train
     y_val = d.y_val
     y_test = d.y_test
-    emb_stats = emb_tag == "emb_linear" ? standardize_embeds!(train_input, val_input, test_input) : nothing
+    emb_stats = standardize_embeds!(train_input, val_input, test_input)
     opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
 end
 
@@ -358,8 +369,13 @@ if use_oversmpl
     end
 end
 
+# streaming: one shuffled pass over the train mix, val every ft_eval_every steps (as sc_finetune!)
+stream_pass = is_streaming && use_max_steps
+eval_every = something(get(config, "ft_eval_every", nothing), 4000)
+eval_every = eval_every > 0 ? eval_every : ft_step_limit
+mix_perm = stream_pass ? randperm(size(train_input, 2)) : nothing
 n_total_epochs = if use_max_steps
-    bpe = div(size(train_input, 2), config["batch_size"])
+    bpe = stream_pass ? eval_every : div(size(train_input, 2), config["batch_size"])
     cld(ft_step_limit, max(bpe, 1))
 else
     config["n_epochs"]
@@ -416,14 +432,14 @@ for epoch in ProgressBar(1:n_total_epochs)
     Flux.trainmode!(ft_model)
     epoch_losses = Float32[]
     n_train = size(train_input, 2)
-    num_batches = div(n_train, config["batch_size"])
-    perm = use_oversmpl ? nothing : randperm(n_train)
+    num_batches = stream_pass ? eval_every : div(n_train, config["batch_size"])
+    perm = use_oversmpl ? nothing : stream_pass ? mix_perm : randperm(n_train)
 
     for i in 1:num_batches
         if use_oversmpl
             batch_idx = [rand(cidx_dict[rand(cs)]) for _ in 1:config["batch_size"]]
         else
-            s = (i - 1) * config["batch_size"] + 1
+            s = (stream_pass ? global_step : i - 1) * config["batch_size"] + 1
             e = min(s + config["batch_size"] - 1, n_train)
             batch_idx = perm[s:e]
         end

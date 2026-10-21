@@ -67,6 +67,33 @@ function load_pretrain_args()
         "--ema_decay"
             help = "EMA decay rate for teacher model"
             arg_type = Float64
+        "--final_ln"
+            help = "lrecon ablation: 1 = per-token LayerNorm (no affine) on the encoder output, student + teacher"
+            arg_type = Int
+        "--target_k"
+            help = "lrecon ablation: target = mean of per-token-normalized top-K teacher blocks (default 1 = last block)"
+            arg_type = Int
+        "--target_norm"
+            help = "lrecon ablation: batch (default: z-score over the batch) | token (per-token LN) | none"
+            arg_type = String
+        "--ema_sched"
+            help = "lrecon ablation: fixed (default) | cosine (ema_decay -> ema_end)"
+            arg_type = String
+        "--ema_end"
+            help = "lrecon ablation: final teacher decay for --ema_sched cosine (default 0.9999)"
+            arg_type = Float64
+        "--lr_loss"
+            help = "lrecon ablation: mse (default) | cos (1 - cosine similarity)"
+            arg_type = String
+        "--vic_var"
+            help = "lrecon ablation: VICReg variance weight on the masked predictions (default 0)"
+            arg_type = Float64
+        "--vic_cov"
+            help = "lrecon ablation: VICReg covariance weight on the masked predictions (default 0)"
+            arg_type = Float64
+        "--pt_weight_decay"
+            help = "pretrain AdamW weight decay (default 0)"
+            arg_type = Float64
         "--eval_every"
             help = "PB pretrain: val/checkpoint/log every N train steps (0 = once per pass over the data)"
             arg_type = Int
@@ -127,6 +154,9 @@ function load_finetune_args()
         "--probe"
             help = "emb mode: mlp (default; = emlp head) or linear (z-scored embeddings -> one Dense; _linear)"
             arg_type = String
+        "--emb_std"
+            help = "emb mode: 1 = z-score frozen embeddings with train mean/sd (default), 0 = raw embeddings (tag _raw)"
+            arg_type = Int
         "--ckpt"
             help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
             arg_type = String
@@ -234,6 +264,16 @@ function load_finetune_args()
             arg_type = String
         "--patience"
             help = "stop after this many evals without val improvement (0 = off)"
+            arg_type = Int
+        "--final_ln"
+            help = "w_pretrain emb/e2e: 1 = per-token LayerNorm on encoder outputs before pooling (for lrecon --final_ln 1 checkpoints)"
+            arg_type = Int
+        "--head_init"
+#             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 0)"
+            help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 1; 0 = off)"
+            arg_type = Int
+        "--pool_std"
+            help = "e2e TF: 1 = fixed z-score of the pooled embeddings before the head (train stats at finetune start, not trained); tag _ps<v>"
             arg_type = Int
         "--lincs_min_n"
             help = "LINCS lvl2: min profiles per trt_cp compound (default 500)"
@@ -350,6 +390,16 @@ function load_sc_finetune_args()
             arg_type = Float64
         "--cache_val"
             help = "SC finetune: 1 = read val shards once and keep features in memory (use for <=1024 features; ~19G at full genes)"
+            arg_type = Int
+        "--final_ln"
+            help = "w_pretrain emb/e2e: 1 = per-token LayerNorm on encoder outputs before pooling (for lrecon --final_ln 1 checkpoints)"
+            arg_type = Int
+        "--head_init"
+#             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 0)"
+            help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 1; 0 = off)"
+            arg_type = Int
+        "--pool_std"
+            help = "e2e TF: 1 = fixed z-score of the pooled embeddings before the head (train stats at finetune start, not trained); tag _ps<v>"
             arg_type = Int
         "--sc_split"
             help = "SC finetune split unit: drug_dose (default; all wells of a drug-dose together), well (_well), or well_cl ((well, cell line) units = random PB split; _wcl)"

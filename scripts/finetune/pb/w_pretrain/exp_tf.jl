@@ -80,6 +80,20 @@ ft_model = build_e2em(config, d.n_classifications; n_genes=n_genes_orig, seq_len
                       hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 ft_model = fix_gpu_dropout(cu(ft_model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+# --head_init (default 1): first head layer sees z-scored pooled embeddings at step 0 (5000 train samples, fixed rng)
+# if something(get(config, "head_init", nothing), 0) == 1
+if something(get(config, "head_init", nothing), 1) == 1
+    hi_cols = randperm(MersenneTwister(7), size(d.X_train, 2))[1:min(5000, size(d.X_train, 2))]
+    init_head_from_embeds!(ft_model, [cu(d.X_train[:, c]) for c in Iterators.partition(hi_cols, config["batch_size"])])
+end
+# # --pool_std 1: fixed z-score of the pooled embeddings before the head (5000 train samples, fixed rng)
+# ps = get(config, "pool_std", nothing)
+# if something(ps, 0) == 1
+#     ps_cols = randperm(MersenneTwister(7), size(d.X_train, 2))[1:min(5000, size(d.X_train, 2))]
+#     ft_model = with_pool_std(ft_model, [cu(d.X_train[:, c]) for c in Iterators.partition(ps_cols, config["batch_size"])])
+#     opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+# end
+# isnothing(ps) || (model_tag *= "_ps$(ps)")
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")

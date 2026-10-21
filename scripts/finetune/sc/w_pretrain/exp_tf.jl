@@ -44,6 +44,7 @@ timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB
 sc_split = something(get(config, "sc_split", nothing), config["level"] == "lvl1" ? "well_cl" : "drug_dose")
 config["sc_split"] = sc_split  # logged to params.txt
 sc_split == "well_cl" && (timestamp *= "_wcl")
+# isnothing(get(config, "pool_std", nothing)) || (timestamp *= "_ps$(config["pool_std"])")
 sc_split == "well" && (timestamp *= "_well")
 
 # data
@@ -125,6 +126,14 @@ wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 fk = (; token_to_idx, n_coding, top_k, batch_size=config["batch_size"], feat_mt="etf",
         n_cls=d.n_classifications, hvg_idx=hvg_idx, to_x=x -> CuArray(x),
         process_cell_topk_flat_fn=process_cell_topk_flat, cell_to_dense_flat_fn=cell_to_dense_flat!)
+# --head_init (default 1): first head layer sees z-scored pooled embeddings at step 0 (10 train shards x 500 cells, fixed rng)
+# something(get(config, "head_init", nothing), 0) == 1 && init_head_from_embeds!(ft_model, sc_head_init_batches(d, fk))
+something(get(config, "head_init", nothing), 1) == 1 && init_head_from_embeds!(ft_model, sc_head_init_batches(d, fk))
+# # --pool_std 1: fixed z-score of the pooled embeddings before the head (10 train shards x 500 cells, fixed rng)
+if something(get(config, "pool_std", nothing), 0) == 1
+    ft_model = with_pool_std(ft_model, sc_head_init_batches(d, fk))
+    opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
+end
 r = sc_finetune!(ft_model, opt, d, fk, config; is_regression=is_regression, save_dir=save_dir,
                  gpu_info=gpu_info, skip=finetune_skip, loss_name=is_regression ? "MSE" : "CE", wb=wb,
                  val_paths=val_paths, test_paths=test_paths)

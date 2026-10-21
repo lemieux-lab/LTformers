@@ -11,7 +11,8 @@ using Plot: plot_loss
 using Models: fix_gpu_dropout
 using LoadSC: finetune_batches_from_shard, finetune_train_batches, draw_train_cells, load_shard_pyarrow, _build_ft_batch, memlog
 
-export sc_eval_paths, sc_finetune!, sc_feature_stats, sc_pt_unseen_shards
+# export sc_eval_paths, sc_finetune!, sc_feature_stats, sc_pt_unseen_shards
+export sc_eval_paths, sc_finetune!, sc_feature_stats, sc_pt_unseen_shards, sc_head_init_batches
 
 
 # shards pretraining didn't train on
@@ -64,6 +65,26 @@ function sc_feature_stats(d, fk; n_shards::Int = 100, n_per_shard::Int = 2000)
     println("feature stats: $n cells from $(length(shards)) train shards, mean sd = $(round(mean(σ), digits=4))"); flush(stdout)
     memlog("after feature stats")
     return Float32.(μ), Float32.(σ)
+end
+
+# model-ready train batches from n_shards random train shards x <=n_per_shard cells (fixed rng), for --head_init
+function sc_head_init_batches(d, fk; n_shards::Int = 10, n_per_shard::Int = 500)
+    by_shard = Dict{String, Vector{Int}}()
+    for (sp, ci) in ((r[1], r[2]) for r in d.train_cells)
+        push!(get!(by_shard, sp, Int[]), ci)
+    end
+    shards = shuffle(MersenneTwister(7), sort(collect(keys(by_shard))))[1:min(n_shards, length(by_shard))]
+    xs = Any[]
+    for sp in shards
+        cis = by_shard[sp]
+        cis = length(cis) > n_per_shard ? shuffle(MersenneTwister(7), cis)[1:n_per_shard] : cis
+        shard = load_shard_pyarrow(sp)
+        for c in Iterators.partition(cis, fk.batch_size)
+            push!(xs, fk.to_x(_build_ft_batch(shard, collect(c), fk.token_to_idx, fk.n_coding, fk.top_k, fk.feat_mt,
+                                              fk.hvg_idx, fk.process_cell_topk_flat_fn, fk.cell_to_dense_flat_fn)))
+        end
+    end
+    return xs
 end
 
 _loss(logits, y, is_regression) = is_regression ? Flux.mse(logits, y) : Flux.logitcrossentropy(logits, y)
