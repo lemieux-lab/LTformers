@@ -3755,3 +3755,369 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
                     -- lrecon etf /best is at epoch 2
                     -- lrecon rtf teacher target variance explodes; !REVIEW
         -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 19 2026 ###
+
+-- OVERALL:
+    -- w-pre-train:
+        -- done:
+            -- no early stopping/patience for fine-tuning?
+            -- set all lvl2 run caps to 15; increase lr and drop_prob ranges
+            -- standardize mlp probe inputs (as linear probe does)
+            -- tsc probes embed only fine-tuning cells
+            -- added pca-128 baseline for lvl2 (pca -> linear probe; pca -> mlp probe)
+        -- looking into:
+            ** always load final/ for w_pretrain?
+                -- RUNNING check on final/ vs best/
+            ** lrecon final/ or ema teacher/ weights for w-pretrain? or need to re-run with saved final?
+                -- RUNNING check on final/ vs best/ vs ema/
+            -- tsc npt rtf lvl2 still improving
+                -- if run for longer, would need to run all for longer? *later
+            -- lincs npt tf lvl2 still improving
+                -- if run for longer, would need to run all for longer? *later
+            ** lrecon embedding scale grows in all datasets
+                -- either: re-pretrain, layernorm on encoder output in ft, or standardize inputs?
+                    -- fixed standarization layer from encoder on train data then apply that z-score in front of head at each step
+                        -- likely better? works for both e2e and emb and adds no trainable parameters
+                        -- only issue is that the statistics drift slowly as the encoder changes
+                        -- does this affect the embeddings learned tho if its done at teach step? shoudl it instead be just done once or something?
+                    -- layernorm on encoder output before pooling and before head: GOOD but for e2e only
+                    -- standardize pooled embeddings: only works for emb mode, not e2e
+                    -- layernorm in encoder or per-token target normalization: needs re-running of pre-train
+                        -- but this would mean erecon and mlm should also get this, which would need re-running of everything
+                -- RUNNING a check rn on if head standardization at init then ft would help tsc rtf lrecon and tpb rtf mlm
+                    -- also RUNNING check on fixed stsandardization if it helps those ^ or if it changes no-pretrain
+                        -- if it does change no-pretrain, may need to re-run those
+            -- tpb npt tf lvl2 memorization
+                -- can ignore, just overfitting and we save best checkpoint anyways
+                -- for little data in tpb, its memorizing but for lots of data in lincs/tsc, its slow learning (not converged yet)
+            -- tpb lvl2 mlps # steps r diff
+                -- emlp/rmlp full were tested at patience and 40k while z scored versions were only tested at patience
+                -- can kinda ignore, just show long vs long or long vs 40k
+        -- from literature:
+            -- https://arxiv.org/pdf/2608.05928
+                -- test block level? did i do the other two tests that they did (lrecon and erecon?)
+                    -- no need also they don't have code avail
+                    -- can test depth dependence as they did
+                    -- they also discussed lrecon collapse, remedied via variance/covariance penalty
+                    -- concluded that span-masking rather than scattered position masking is better (harder to solve)
+            -- https://www.cell.com/cell/fulltext/S0092-8674(26)00921-9
+                -- cell eval benchmark? how is this better or worse than what i have now?
+                    -- already did a split half ceiling
+                    -- could add discrimination score on compound-mean or frozen embeddings?
+                    -- not really valid comparison, this is DE based metrics for no labels evaluation
+            -- https://arxiv.org/pdf/2609.32527
+                -- dictates to report gain over mean, no wasserstein/energy distances, direction agreement?
+                    -- suggestsed to boostrap intervals over compounds
+                    -- can also include direction agreement, pearson delta, and R^2 in lvl3
+
+-- NEXT:
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+    -- lvl2 baselines 
+        1. group boostrapping over (drug, dose) units for tpb lvl2 ?
+        2. report plate encoding per encoder rather than plate lookup for tpb/tsc
+        3. report per-(well, cell line) accuracy as the co-primary metric for tsc
+        4. ceilings expressed as fraction of gap closed between majority/plate-only or replicate-consistency ceiling
+
+-- LATER:
+    -- ablations:
+        -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+        -- mlp gene set encoding (rank on HVG panel and expression restricted to top-1024)
+            -- to eval if gene set diff or input diff
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+        -- direction agreement?
+    -- lvl1:
+        -- lincs is using 305 cl (variants) instead of just the 236 cl
+            -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+        -- eval label-efficiency per class?
+    -- baselines:
+        -- random init embeddings with same probes (linear, mlp) and/or PCA embeddings of input with same probes
+        -- plate probes on frozen embeddings
+    -- re-run test set of mlm pre-training results to get top-k accuracies for all datasets
+    -- fix lrecon via bioM-JEPA penalty? would help with tsc and tpb rtf...
+    -- test lrecon results via effective-rank and depth diagnostic on frozen embeddings?
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+     -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider running longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- done all lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- RUNNING mlm rtf, erecon etf, erecon rtf, lrecon etf, lerecon rtf sweeps
+            -- RUNNING mlm etf final
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tfs do significantly worse; could do evals on why via:
+                    -- z-score inputs to etf
+                    -- attention or cls instead of mean pooling
+                    -- warmup/weight decay
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+                -- note: lrecon runs need to do on best/ and final/
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: very underfitting, however not really sure if its worth it to run for longer
+                    -- since its just considered a baseline, we keep at 80k which is same as mlp
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+                    -- lrecon etf /best is at epoch 2
+                    -- lrecon rtf teacher target variance explodes
+        -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 20 2026 ###
+
+-- OVERALL:
+    -- w-pre-train:
+        -- always load final/ for w_pretrain?
+            -- final weights never saved for mlm and erecon; either way mostly best/ picked last-sih evals anyways
+            -- probably same thing anyways
+        -- lrecon final/ or ema teacher/ weights for w-pretrain? or need to re-run with saved final?
+            -- final teacher gave best results in linear probe in lvl1 so we can use that
+            -- still validl; this is what i-JEPA uses (target encoder mean pooled)
+        ** lrecon embedding scale grows in all datasets
+            -- issues is that we forgot a final LayerNorm after the last transformer block
+            -- ideally we would re-pretrain everything
+            -- alternative is doing head init on e2e, then z score embeddings at each step for mlp probe and linear probe
+            -- RUNNING quick test to see if final layernorm would acc make a difference
+                -- either way, woudl still need scaling before linear and mlp probes tho
+                -- since layernorm normalizes within a sample, but standardization goes across dimensions
+            -- RUNNING quick test to see if head init would negatively affect our pretrained encoders
+
+-- NEXT:
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+    -- lvl2 baselines 
+        1. group boostrapping over (drug, dose) units for tpb lvl2 ?
+        2. report plate encoding per encoder rather than plate lookup for tpb/tsc
+        3. report per-(well, cell line) accuracy as the co-primary metric for tsc
+        4. ceilings expressed as fraction of gap closed between majority/plate-only or replicate-consistency ceiling
+
+-- LATER:
+    -- ablations:
+        -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+        -- mlp gene set encoding (rank on HVG panel and expression restricted to top-1024)
+            -- to eval if gene set diff or input diff
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+        -- direction agreement?
+    -- lvl1:
+        -- lincs is using 305 cl (variants) instead of just the 236 cl
+            -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+        -- eval label-efficiency per class?
+    -- baselines:
+        -- random init embeddings with same probes (linear, mlp) and/or PCA embeddings of input with same probes
+        -- plate probes on frozen embeddings
+    -- re-run test set of mlm pre-training results to get top-k accuracies for all datasets
+    -- fix lrecon via bioM-JEPA penalty? would help with tsc and tpb rtf...
+    -- test lrecon results via effective-rank and depth diagnostic on frozen embeddings?
+    -- tsc npt rtf lvl2 still improving
+    -- lincs npt tf lvl2 still improving
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+     -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider running longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- done all lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- RUNNING mlm rtf, erecon etf, erecon rtf, lrecon etf, lerecon rtf sweeps
+            -- RUNNING mlm etf final
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tfs do significantly worse; could do evals on why via:
+                    -- z-score inputs to etf
+                    -- attention or cls instead of mean pooling
+                    -- warmup/weight decay
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+                -- note: lrecon runs need to do on best/ and final/
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: very underfitting, however not really sure if its worth it to run for longer
+                    -- since its just considered a baseline, we keep at 80k which is same as mlp
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+                    -- lrecon etf /best is at epoch 2
+                    -- lrecon rtf teacher target variance explodes
+        -- fine-tune
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 21 2026 ###
+
+-- OVERALL:
+    -- w-pre-train:
+        -- lrecon embedding scale grows in all datasets
+            -- head init helps and fixes the scale
+            -- pooled embedding standardization has ssame result on head init but breaks no-pt runs
+            -- final layernorm fixes the scale but doesn't affect loss or downstream
+            -- thus going to use head init! (for e2e only)
+                -- emb and linear probe do z-scoring on frozen embeddings beforehand
+            -- RUNINNG check on tsc if head init or no rescaling or z-standardization affects downstream
+                -- because it was mentioned that tsc needs further than tpb and lincs
+    -- pre-train:
+        -- lrecon rtf is an issue across all datasets? should i be testing diff abalations of fixes?
+            -- RUNNING test of different things on lrecon etf/rtf on all datasets to see if difference
+    -- downstream evlas:
+        -- for all:
+            -- trivial: chance, majority, plate lookup
+            -- learned: linear, nonlinear, transformer
+            -- pre-trained: linear probe, mlp probe, full-tuning
+                -- note, we are doing z-scoring on probe inputs thus they are logreg and mlp z-scored to compare against!!!
+                -- lwokey would need to do both non z-scored and z-scored
+        -- splits:
+            -- lvl1:
+                -- lincs: random
+                -- tpb: random
+                -- tsc: well x held-out cl
+            -- lvl2:
+                -- lincs: random, plate held-out
+                -- tpb: (drug, dose) held-out
+                -- tsc: (drug, dose) held-out
+        -- baselines:
+            -- lvl1:
+                -- nothing needed
+            -- lvl2:
+                -- add:
+                    -- random init frozen encoder probe
+                        -- essentailly tests for usefulness of pre-trained embeddings w/o training encoder
+                        -- can add this later tbh, consists of both linear probe and mlp probe...
+                    -- tsc well x cl metric as a secondary metric to the cell split
+                        -- already computed in scripts
+                    -- boostrapping by compound (could do for lvl1 too but probably not needed since lvl1 is just baseline)
+                        -- can do this afterwards iwth the results
+            -- lvl3:
+                -- i think this is where the split reproducibility actually matters right?
+                -- also ceiling as fraction of gap closed
+
+-- NEXT:
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- ablations:
+        -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+        -- mlp gene set encoding (rank on HVG panel and expression restricted to top-1024)
+            -- to eval if gene set diff or input diff
+        -- accuracy vs. depth curve for tsc models
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+        -- direction agreement?
+    -- lvl1:
+        -- lincs is using 305 cl (variants) instead of just the 236 cl
+            -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+        -- eval label-efficiency per class? via training probes on fractions of labelled training data and plot accuracy against fraction
+            -- thus demonstrates performances when labels are scarce
+    -- pre-training:
+        -- re-run test set of mlm pre-training results to get top-k accuracies for all datasets
+        -- fix lrecon via bioM-JEPA penalty? would help with tsc and tpb rtf...
+        -- test lrecon results via effective-rank and depth diagnostic on frozen embeddings?
+    -- lvl2:
+        -- tsc npt rtf still improving
+        -- lincs npt tf still improving
+        -- eval label-efficiency per class? via training probes on fractions of labelled training data and plot accuracy against fraction
+            -- thus demonstrates performances when labels are scarce
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+     -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider run ning longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+    -- post-processing embeddings via subtracting plate DMSO avg or TVN centering
+        -- this removes the plate effects from the embeddings BUT the splits are already accounting for plate, so maybe doesn't matter?
+        -- also would technically need to re-run all of the npts
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- done all lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- done mlm etf, mlm rtf, erecon etf, erecon rtf
+                -- note: mlm rtf still improving after 40k steps
+            -- RUNNING lrecon etf, lerecon rtf sweeps
+                -- lrecon rtf sweep might not be side enough?
+                -- pending lrecon ablation studies before running finals
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tfs do significantly worse; could do evals on why via:
+                    -- z-score inputs to etf
+                    -- attention or cls instead of mean pooling
+                    -- warmup/weight decay
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- !TO-RUN emb, e2e on lvl1, lvl2
+                -- RUNNING linear probe, mlp probe on lvl1, lvl2 for all except lrecon pt models sweeps
+                    -- linear sweeps lr and weight decay, mlp sweeps lr and dropout
+                    -- doing on both a raw embedding input and z-standardized embedding input
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tf very underfitting, however not really sure if its worth it to run for longer
+                    -- since its just considered a baseline, we keep at 80k which is same as mlp
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+        -- fine-tune

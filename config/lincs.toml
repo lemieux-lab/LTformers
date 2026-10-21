@@ -5,234 +5,88 @@
 # ──────────────────────────────────────────────
 
 [pretrain.mlm.rtf]
-lr = 0.0
-drop_prob = 0.0
-# mask_ratio = 0.0
+# wide sweep drnaaiwf best (lr 0.0027 drop 0.0041); 40k final 2026-10-20_14-11 val 6.098
+lr = 0.0027
+drop_prob = 0.0041
 mask_ratio = 0.15 
 
 [pretrain.mlm.etf]
-lr = 0.0
-drop_prob = 0.0
-# mask_ratio = 0.0
+# sweep h1iy0tpf best; 40k final 2026-10-18_17-35 val 5.783 (trivial 6.750)
+lr = 0.012
+drop_prob = 0.013
 mask_ratio = 0.15 
 
 [pretrain.erecon.rtf]
-lr = 0.0
-drop_prob = 0.0
-# mask_ratio = 0.0
+# wide sweep nylqxuf4 best; 40k final 2026-10-20_14-13 val 3.419 (trivial 3.609)
+lr = 0.0087
+drop_prob = 0.13
 mask_ratio = 0.3 
 
 [pretrain.erecon.etf]
-lr = 0.0
-drop_prob = 0.0
-# mask_ratio = 0.0
+# wide sweep njsofsp8 best; 40k final 2026-10-20_11-51 val 0.563 (trivial 1.842)
+lr = 0.012
+drop_prob = 0.12
 mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
+# sweep 51wa8fzy (lr 5e-5-1e-3): no run learned yet (all ~0.99); placeholders kept
 lr = 0.0
 drop_prob = 0.0
-# mask_ratio = 0.0
 mask_ratio = 0.15 
 ema_decay = 0.0
 
 [pretrain.lrecon.etf]
-lr = 0.0
-drop_prob = 0.0
-# mask_ratio = 0.0
+# sweep 38otp8c7 best g2syb52y val 0.0729; 40k final pending
+lr = 0.0012
+drop_prob = 0.11
+ema_decay = 0.95
 mask_ratio = 0.15 
-ema_decay = 0.0
 
-# pasted notes (moved out of the ema_decay value, Oct 15):
-# **Kendall Tau error**
-# - Try putting gene ID as a struct
-# 	- That takes an int; this can help resolve potential issues like this
-# - Embedding layer idk if this would rly work but maybe symbol?
 #
-# **LINCS vector distances**
-# - 0-978 for the rank axis
-# - At a certain cosine distance, there is less correlation with rank?
-# - Also should choose either mean or median not use both? (or just use mean expression on x and mean rank on y so it doesn’t introduce bias of mean vs median)
-# - For large majority of pairs (yellow blob in the middle, some x%) then there is little relationship
-# - Or for very similar or very dissimilar profiles there is correlation or no correlation
-# - Contour plot for density of yellow thing?
 #
-# **Tahoe vector distances**
-# - Double check zeros treated on single-cell distances
-# - And thus the cosine distance being high when sparse ; look at cosine dist 1.0=perpendicular
-# - Subsample pseudobulk at 1500 and see if same thing gotten at the bottom then low depth demonstrates the relationship seen (third row below ci-iv)
-# - Most HVG u expect change often thus higher kt for model matched inputs
-# - Sparsity for HVG-1024 vs sparsity for top-1024??? compare
-
-# ──────────────────────────────────────────────
-# finetune — with pretrain
-# ──────────────────────────────────────────────
-
-[finetune.w_pretrain.rtf.mlm.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.mlm.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.mlm.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.erecon.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.erecon.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.erecon.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.lrecon.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.lrecon.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.rtf.lrecon.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.mlm.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.mlm.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.mlm.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.erecon.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.erecon.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.erecon.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.lrecon.lvl1]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.lrecon.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.w_pretrain.etf.lrecon.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-# ──────────────────────────────────────────────
-# finetune — no pretrain
-# ──────────────────────────────────────────────
 
 [finetune.no_pretrain.rtf.lvl1]
-lr = 0.0
-drop_prob = 0.0
+# sweep 54xzcmne best x5anddwg (10k), finals 10k: 0.981
+lr = 0.002
+drop_prob = 0.2
 
 [finetune.no_pretrain.rtf.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.no_pretrain.rtf.lvl3]
-lr = 0.0
-drop_prob = 0.0
+# sweep 60isallz best; finals long (200k, --patience 10, CLI): 0.340 / _gpl 0.272
+lr = 0.00094
+drop_prob = 0.12
 
 [finetune.no_pretrain.etf.lvl1]
-lr = 0.0
-drop_prob = 0.0
+# sweep hcad94an best 7f60hyh6 (10k), finals 10k: 0.984
+lr = 0.00083
+drop_prob = 0.027
 
 [finetune.no_pretrain.etf.lvl2]
-lr = 0.0
-drop_prob = 0.0
-
-[finetune.no_pretrain.etf.lvl3]
-lr = 0.0
-drop_prob = 0.0
-
-# [finetune.no_pretrain.rlog.lvl1]
-# lr = 0.001
-# drop_prob = 0.0
-# n_layers = 0
-
-# [finetune.no_pretrain.rlog.lvl2]
-# lr = 0.001
-# drop_prob = 0.0
-# n_layers = 0
-
-# [finetune.no_pretrain.elog.lvl1]
-# lr = 0.001
-# drop_prob = 0.0
-# n_layers = 0
-
-# [finetune.no_pretrain.elog.lvl2]
-# lr = 0.001
-# drop_prob = 0.0
-# n_layers = 0
+# sweep mpcay7fg best 682fy0zl; finals long (200k, --patience 10, CLI): 0.299 / _gpl 0.245
+lr = 0.00041
+drop_prob = 0.064
 
 [finetune.no_pretrain.rmlp.lvl1]
 # 978 genes, tapered (mlp_hidden_dim 0), 10k steps: sweep bddu4rvg best (rmlp_nopt_lincs_lvl1_2026-09-27_14-35_j8103590), acc 0.9931
-# lr = 0.000001
-# drop_prob = 0.015
-# n_layers = 2
 lr = 0.00028059
 drop_prob = 0.2548
 n_layers = 2
 
 [finetune.no_pretrain.rmlp.lvl2]
 # 978 genes, constant width, 10k steps, picked by best_val_acc: sweep lpm1bnse best of 21/25 runs (rmlp_nopt_lincs_lvl2_2026-09-28_15-09_j8104526), val 0.659 test 0.659 (h=8192 = top of sweep range)
-# lr = 0.000001
-# drop_prob = 0.03
-# n_layers = 6
-# 322 classes (trt_cp >500), pretrain split: sweep 7b2av5cf best mc4vpes3, val 0.415
 lr = 0.000095
 drop_prob = 0.015
 n_layers = 3
 mlp_hidden_dim = 8192
 
-[finetune.no_pretrain.rmlp.lvl3]
-lr = 0.0
-drop_prob = 0.0
-n_layers = 0
-
 [finetune.no_pretrain.emlp.lvl1]
 # 978 genes, tapered (mlp_hidden_dim 0), 10k steps: sweep zhkn9kmk best (emlp_nopt_lincs_lvl1_2026-09-27_14-24_j8103589), acc 0.9888
-# lr = 0.00005
-# drop_prob = 0.014
-# n_layers = 2
 lr = 0.000047367
 drop_prob = 0.08279
 n_layers = 2
 
 [finetune.no_pretrain.emlp.lvl2]
 # 978 genes, constant width, 10k steps, picked by best_val_acc: sweep ghzr2bsn best (emlp_zc_nopt_lincs_lvl2_2026-09-28_14-28_j8104525), val 0.663 test 0.667 (h=8192 = top of sweep range)
-# lr = 0.00011
-# drop_prob = 0.014
-# n_layers = 6
-# 322 classes (trt_cp >500), pretrain split: sweep azmuwnh7 best lf4y9gfc, val 0.288
 lr = 0.000014
 drop_prob = 0.037
 n_layers = 5
 mlp_hidden_dim = 8192
-
-[finetune.no_pretrain.emlp.lvl3]
-lr = 0.0
-drop_prob = 0.0
-n_layers = 0

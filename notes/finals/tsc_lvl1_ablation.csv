@@ -1,0 +1,1 @@
+dataset,level,split,category,model,input,gene_set,pretrain,checkpoint,seed,accuracy,accuracy_fullgroup,wellcl_acc,wellcl_acc_fullgroup,final_accuracy,best_epoch,best_step,total_steps,max_ft_steps,patience,lr,drop_prob,mlp_hidden_dim,note,path

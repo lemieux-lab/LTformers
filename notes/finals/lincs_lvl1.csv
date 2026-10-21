@@ -1,0 +1,22 @@
+dataset,level,split,category,model,input,gene_set,pretrain,checkpoint,seed,accuracy,accuracy_fullgroup,wellcl_acc,wellcl_acc_fullgroup,final_accuracy,best_epoch,best_step,total_steps,max_ft_steps,patience,lr,drop_prob,mlp_hidden_dim,note,path
+lincs,lvl1,random,trivial,chance,,,none,,,0.003278688524590164,,,,,,,,,,,,,"n_classes 305, n_test 141232 (headline)",results/lincs/analyses/plate/baselines.csv
+lincs,lvl1,random,trivial,majority_class,,,none,,,0.10149257958536309,,,,,,,,,,,,,"n_classes 305, n_test 141232 (headline)",results/lincs/analyses/plate/baselines.csv
+lincs,lvl1,random,trivial,plate_lookup,,,none,,,0.99945479777954,,,,,,,,,,,,,"n_classes 305, n_test 141232 (headline)",results/lincs/analyses/plate/baselines.csv
+lincs,lvl1,random,npt,elog,raw,978,none,,1,0.9804222839016653,,,,0.9804222839016653,4.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/elog/2026-10-02_19-46_s1
+lincs,lvl1,random,npt,elog,raw,978,none,,2,0.9796575846833578,,,,0.967620652543333,3.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/elog/2026-10-02_20-27_s2
+lincs,lvl1,random,npt,elog,raw,978,none,,3,0.9851379290812281,,,,0.9851379290812281,4.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/elog/2026-10-02_21-07_s3
+lincs,lvl1,random,npt,emlp,raw,978,none,,1,0.9941160643480231,,,,0.9940523394131642,3.0,,40000.0,40000.0,,4.7367e-05,0.08279,,,results/lincs/finetune/no_pretrain/lvl1/emlp/2026-10-02_19-52_j8112429_p260566_s1
+lincs,lvl1,random,npt,emlp,raw,978,none,,2,0.9937691174804577,,,,0.9914466976322647,3.0,,40000.0,40000.0,,4.7367e-05,0.08279,,,results/lincs/finetune/no_pretrain/lvl1/emlp/2026-10-02_20-33_j8112435_p262475_s2
+lincs,lvl1,random,npt,emlp,raw,978,none,,3,0.9952206298855784,,,,0.9952206298855784,4.0,,40000.0,40000.0,,4.7367e-05,0.08279,,,results/lincs/finetune/no_pretrain/lvl1/emlp/2026-10-02_21-13_j8112441_p264385_s3
+lincs,lvl1,random,npt,etf,raw,978,none,,1,0.9836014500962954,,,,0.9836014500962954,1.0,,10000.0,10000.0,,0.00083,0.027,,,results/lincs/finetune/no_pretrain/lvl1/etf/2026-10-07_07-36_s1
+lincs,lvl1,random,npt,etf,raw,978,none,,2,0.9833040670669536,,,,0.9833040670669536,1.0,,10000.0,10000.0,,0.00083,0.027,,,results/lincs/finetune/no_pretrain/lvl1/etf/2026-10-07_12-34_s2
+lincs,lvl1,random,npt,etf,raw,978,none,,3,0.9849750764699219,,,,0.9849750764699219,1.0,,10000.0,10000.0,,0.00083,0.027,,,results/lincs/finetune/no_pretrain/lvl1/etf/2026-10-07_17-30_s3
+lincs,lvl1,random,npt,rlog,rank,978,none,,1,0.998513084853291,,,,0.998513084853291,4.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/rlog/2026-10-02_19-49_s1
+lincs,lvl1,random,npt,rlog,rank,978,none,,2,0.9986476152713266,,,,0.9986476152713266,4.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/rlog/2026-10-02_20-29_s2
+lincs,lvl1,random,npt,rlog,rank,978,none,,3,0.9985626486915147,,,,0.9985626486915147,4.0,,40000.0,40000.0,,0.001,0.1,,,results/lincs/finetune/no_pretrain/lvl1/rlog/2026-10-02_21-10_s3
+lincs,lvl1,random,npt,rmlp,rank,978,none,,1,0.9974651637022771,,,,0.9968987198368642,2.0,,40000.0,40000.0,,0.00028059,0.2548,,,results/lincs/finetune/no_pretrain/lvl1/rmlp/2026-10-02_19-55_j8112429_p260701_s1
+lincs,lvl1,random,npt,rmlp,rank,978,none,,2,0.9973660360258298,,,,0.9966792228390167,3.0,,40000.0,40000.0,,0.00028059,0.2548,,,results/lincs/finetune/no_pretrain/lvl1/rmlp/2026-10-02_20-35_j8112435_p262613_s2
+lincs,lvl1,random,npt,rmlp,rank,978,none,,3,0.9973943582191005,,,,0.9967925116120993,3.0,,40000.0,40000.0,,0.00028059,0.2548,,,results/lincs/finetune/no_pretrain/lvl1/rmlp/2026-10-02_21-16_j8112441_p264522_s3
+lincs,lvl1,random,npt,rtf,rank,978,none,,1,0.979466409878781,,,,0.979466409878781,1.0,,10000.0,10000.0,,0.002,0.2,,,results/lincs/finetune/no_pretrain/lvl1/rtf/2026-10-07_09-03
+lincs,lvl1,random,npt,rtf,rank,978,none,,2,0.9820154072731392,,,,0.9820154072731392,1.0,,10000.0,10000.0,,0.002,0.2,,,results/lincs/finetune/no_pretrain/lvl1/rtf/2026-10-07_14-05
+lincs,lvl1,random,npt,rtf,rank,978,none,,3,0.9816401382123031,,,,0.9816401382123031,1.0,,10000.0,10000.0,,0.002,0.2,,,results/lincs/finetune/no_pretrain/lvl1/rtf/2026-10-07_19-05
