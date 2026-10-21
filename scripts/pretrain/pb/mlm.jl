@@ -237,6 +237,13 @@ for epoch in ProgressBar(1:n_total_epochs)
     # test eval (final epoch only)
     is_last = is_last || done
 
+    # final weights, before the best reload
+    if is_last
+        mkpath(joinpath(save_dir, "final"))
+        log_model(model, joinpath(save_dir, "final"), config)
+        save_indices(joinpath(save_dir, "final"))
+    end
+
     # reload best
     if is_last && isfile(joinpath(save_dir, "best", "model_state.jld2"))
         best_state = load(joinpath(save_dir, "best", "model_state.jld2"))["model_state"]

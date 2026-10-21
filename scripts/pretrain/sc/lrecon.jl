@@ -10,6 +10,7 @@ using ProgressBars, CairoMakie, StatsBase
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src/tahoe"))
 using Models, Train, Log, Plot, Args, Config
+using LReconAblation
 using LoadSC, ProcessSC, EvalSC
 
 args = load_pretrain_args()
@@ -49,11 +50,20 @@ end
 model = fix_gpu_dropout(cu(model))
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
-opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
+# opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "pt_weight_decay", nothing), 0.0)))), model)
+# lrecon ablation switches (src/LReconAblation.jl); all default to the original lrecon
+lro = lr_opts(config)
+lr_orig_loss = lr_default_targets(lro) && lro.loss == "mse" && lro.vic_var == 0 && lro.vic_cov == 0
+lr_tgt(teacher, x) = lr_default_targets(lro) ? teacher_targets(teacher, x, use_exp) : lr_targets(teacher, x, use_exp, lro)
+lr_l(m, x, t, mk) = lr_orig_loss ? masked_lrecon_loss(m, x, t, mk) : lr_loss(m, x, t, mk, lro)
+println("lrecon opts: ", lro, " | weight decay ", something(get(config, "pt_weight_decay", nothing), 0.0))
+
 mask_bufs = sc_mask_buffers(mc)
 
 # save dir + logging
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid())
 save_dir = joinpath("results", "tahoe", "sc", "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
 println("save dir: $save_dir")
@@ -104,12 +114,12 @@ for epoch in ProgressBar(1:n_periods)
         Optimisers.adjust!(opt, lr)
         b = sc_mask!(mask_bufs, batch, mc)
         x_gpu, mask_gpu = CuArray(b.x), CuArray(Float32.(b.m))
-        targets = teacher_targets(ema_model, CuArray(b.clean), use_exp)
+        targets = lr_tgt(ema_model, CuArray(b.clean))
         l_val, grads = Flux.withgradient(model) do m
-            masked_lrecon_loss(m, x_gpu, targets, mask_gpu)[1]
+            lr_l(m, x_gpu, targets, mask_gpu)[1]
         end
         Flux.update!(opt, model, grads[1])
-        ema_update!(ema_model, model, Float32(config["ema_decay"]))
+        ema_update!(ema_model, model, ema_decay_at(global_step + 1, sched.total_steps, config["ema_decay"], lro))
         push!(epoch_losses, l_val)
         isnothing(collapse_check_batch) && (global collapse_check_batch = copy(b.clean))
         global global_step += 1
@@ -139,8 +149,8 @@ for epoch in ProgressBar(1:n_periods)
     Flux.testmode!(model)
     val_eval_losses = Float32[]
     for c in val_cache
-        targets = teacher_targets(ema_model, CuArray(c.clean), use_exp)
-        push!(val_eval_losses, Float32(masked_lrecon_loss(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))[1]))
+        targets = lr_tgt(ema_model, CuArray(c.clean))
+        push!(val_eval_losses, Float32(lr_l(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))[1]))
     end
     push!(val_losses, mean(val_eval_losses))
     if val_losses[end] < best_val_loss
@@ -160,8 +170,8 @@ for epoch in ProgressBar(1:n_periods)
         end
         eval_losses = Float32[]
         for (bi, c) in enumerate(eval_cache)
-            targets = teacher_targets(ema_model, CuArray(c.clean), use_exp)
-            loss_val, preds_embed, targets_embed = masked_lrecon_loss(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))
+            targets = lr_tgt(ema_model, CuArray(c.clean))
+            loss_val, preds_embed, targets_embed = lr_l(model, CuArray(c.x), targets, CuArray(Float32.(c.m)))
             push!(eval_losses, Float32(loss_val))
             isnothing(preds_embed) && continue
             accumulate_lrecon_diag!(err_acc, lrecon_diag, cpu(preds_embed), cpu(targets_embed), c.m, c.ids_or_ranks, hvg_idx;

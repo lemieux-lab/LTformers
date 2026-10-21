@@ -7,6 +7,7 @@ using ProgressBars, CairoMakie, StatsBase, DataFrames
 
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../src"))
 using Preprocess, Models, Train, Log, Plot, Args, Config, ProcessLabels
+using LReconAblation
 
 args = load_pretrain_args()
 config = load_config(args["config"], args;
@@ -121,7 +122,15 @@ model = fix_gpu_dropout(model)
 
 ema_model = deepcopy(model)
 Flux.testmode!(ema_model)
-opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
+# opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"])), model)
+opt = Flux.setup(OptimiserChain(ClipNorm(1.0), AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "pt_weight_decay", nothing), 0.0)))), model)
+# lrecon ablation switches (src/LReconAblation.jl); all default to the original lrecon
+lro = lr_opts(config)
+lr_orig_loss = lr_default_targets(lro) && lro.loss == "mse" && lro.vic_var == 0 && lro.vic_cov == 0
+lr_tgt(teacher, x) = lr_default_targets(lro) ? get_target_embeds(teacher, x, use_exp) : lr_targets(teacher, x, use_exp, lro)
+lr_l(m, x, t, mk) = lr_orig_loss ? masked_lrecon_loss(m, x, t, mk) : lr_loss(m, x, t, mk, lro)
+println("lrecon opts: ", lro, " | weight decay ", something(get(config, "pt_weight_decay", nothing), 0.0))
+
 
 # mask val
 X_val_masked = similar(X_val)
@@ -144,7 +153,8 @@ else
 end
 
 # save dir
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM")
+timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid())
 dataset_tag = fmt == "lincs" ? joinpath("lincs") : joinpath("tahoe", "pb")
 save_dir = joinpath("results", dataset_tag, "pretrain", "lrecon", config["modeltype"], timestamp)
 mkpath(save_dir)
@@ -227,7 +237,7 @@ for epoch in ProgressBar(1:n_total_epochs)
 
         x_batch = CuArray(X_train_masked[:, start_idx:end_idx])
         x_clean_batch = CuArray(X_train[:, start_idx:end_idx])
-        target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
+        target_embeds = lr_tgt(ema_model, x_clean_batch)
 
         if use_exp
             m_batch = CuArray(Float32.(train_corrupt_mask[:, start_idx:end_idx]))
@@ -239,10 +249,10 @@ for epoch in ProgressBar(1:n_total_epochs)
 
         Optimisers.adjust!(opt, compute_lr_step(global_step + 1, total_steps, config["lr"], warmup_steps))
         l_val, grads = Flux.withgradient(model) do m
-            masked_lrecon_loss(m, x_batch, target_embeds, mask_2d)[1]
+            lr_l(m, x_batch, target_embeds, mask_2d)[1]
         end
         Flux.update!(opt, model, grads[1])
-        ema_update!(ema_model, model, Float32(config["ema_decay"]))
+        ema_update!(ema_model, model, ema_decay_at(global_step + 1, total_steps, config["ema_decay"], lro))
         push!(epoch_losses, l_val)
         global global_step += 1
         if use_max_steps && global_step >= config["max_steps"]
@@ -268,7 +278,7 @@ for epoch in ProgressBar(1:n_total_epochs)
         end_idx = min(start_idx + config["batch_size"] - 1, n_val_eval)
         x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
         x_clean_batch = CuArray(X_val[:, start_idx:end_idx])
-        target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
+        target_embeds = lr_tgt(ema_model, x_clean_batch)
         if use_exp
             m_batch = CuArray(Float32.(val_corrupt_mask[:, start_idx:end_idx]))
             mask_2d = m_batch
@@ -276,7 +286,7 @@ for epoch in ProgressBar(1:n_total_epochs)
             y_batch = CuArray(y_val_masked[:, start_idx:end_idx])
             mask_2d = Float32.(y_batch .!= -100)
         end
-        loss_val, _, _ = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
+        loss_val, _, _ = lr_l(model, x_batch, target_embeds, mask_2d)
         push!(val_eval_losses, cpu(loss_val))
     end
     push!(val_losses, mean(val_eval_losses))
@@ -294,10 +304,10 @@ for epoch in ProgressBar(1:n_total_epochs)
         for start_idx in 1:config["batch_size"]:n_val_eval
             end_idx = min(start_idx + config["batch_size"] - 1, n_val_eval)
             x_batch = CuArray(X_val_masked[:, start_idx:end_idx])
-            frozen_targets = get_target_embeds(frozen_teacher, CuArray(X_val[:, start_idx:end_idx]), use_exp)
+            frozen_targets = lr_tgt(frozen_teacher, CuArray(X_val[:, start_idx:end_idx]))
             mask_2d = use_exp ? CuArray(Float32.(val_corrupt_mask[:, start_idx:end_idx])) :
                                 Float32.(CuArray(y_val_masked[:, start_idx:end_idx]) .!= -100)
-            push!(frozen_eval_losses, masked_lrecon_loss(model, x_batch, frozen_targets, mask_2d)[1])
+            push!(frozen_eval_losses, lr_l(model, x_batch, frozen_targets, mask_2d)[1])
         end
         push!(val_losses_frozen, mean(frozen_eval_losses))
     end
@@ -350,7 +360,7 @@ for epoch in ProgressBar(1:n_total_epochs)
 
             x_batch = CuArray(X_test_masked[:, start_idx:end_idx])
             x_clean_batch = CuArray(X_test[:, start_idx:end_idx])
-            target_embeds = get_target_embeds(ema_model, x_clean_batch, use_exp)
+            target_embeds = lr_tgt(ema_model, x_clean_batch)
 
             if use_exp
                 m_batch = CuArray(Float32.(test_corrupt_mask[:, start_idx:end_idx]))
@@ -363,7 +373,7 @@ for epoch in ProgressBar(1:n_total_epochs)
                 mask_cpu = cpu(mask_bool)
             end
 
-            loss_val, decoded_masked, tgt_masked = masked_lrecon_loss(model, x_batch, target_embeds, mask_2d)
+            loss_val, decoded_masked, tgt_masked = lr_l(model, x_batch, target_embeds, mask_2d)
             push!(eval_losses, cpu(loss_val))
 
             if !isnothing(decoded_masked)

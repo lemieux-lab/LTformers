@@ -130,6 +130,9 @@ for epoch in ProgressBar(1:n_periods)
     # test
     is_last = (epoch == n_periods) || done
     if is_last
+        # final weights, before the best reload
+        mkpath(joinpath(save_dir, "final"))
+        log_model(model, joinpath(save_dir, "final"), config)
         best_cpu = load_best_cpu(model, save_dir)
         if !isnothing(best_cpu)
             global model = fix_gpu_dropout(cu(best_cpu))
