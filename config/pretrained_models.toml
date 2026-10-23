@@ -7,7 +7,8 @@
 # rtf = "results/lincs/pretrain/mlm/rtf/2026-08-03_01-36/best"
 # etf = "results/lincs/pretrain/mlm/etf/2026-08-03_01-36/best"
 rtf = "results/lincs/pretrain/mlm/rtf/2026-10-20_14-11/best" # 40k final (wide sweep drnaaiwf), val 6.098
-etf = "results/lincs/pretrain/mlm/etf/2026-10-18_17-35/best" # 40k final (sweep h1iy0tpf), val 5.783
+# etf = "results/lincs/pretrain/mlm/etf/2026-10-18_17-35/best" # 40k final (sweep h1iy0tpf), val 5.783
+etf = "results/lincs/pretrain/mlm/etf/2026-10-20_16-09/best" # 40k final with final/ (sweep h1iy0tpf), val 5.830
 
 [lincs.lrecon]
 rtf = "" # pending: sweep 51wa8fzy not learning; see lrecon ablation
@@ -15,7 +16,8 @@ etf = "" # pending: sweep 38otp8c7 done, 40k final not run yet
 
 [lincs.erecon]
 rtf = "results/lincs/pretrain/erecon/rtf/2026-10-20_14-13/best" # 40k final (wide sweep nylqxuf4), val 3.419
-etf = "results/lincs/pretrain/erecon/etf/2026-10-20_11-51/best" # 40k final (wide sweep njsofsp8), val 0.563
+# etf = "results/lincs/pretrain/erecon/etf/2026-10-20_11-51/best" # 40k final (wide sweep njsofsp8), val 0.563
+etf = "results/lincs/pretrain/erecon/etf/2026-10-20_14-12/best" # 40k final with final/ (wide sweep njsofsp8), val 0.570
 
 # tahoe pseudobulk
 
