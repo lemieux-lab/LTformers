@@ -1,0 +1,43 @@
+dataset	model	arm	job	flags
+tahoe	etf	A0	8128277		CANCELLED (save-dir collision)
+tahoe	etf	A1	8128278	--final_ln 1	CANCELLED (save-dir collision)
+tahoe	etf	A2	8128279	--target_k 2 --target_norm token	CANCELLED (save-dir collision)
+tahoe	etf	A3	8128280	--ema_sched cosine	CANCELLED (save-dir collision)
+tahoe	etf	A4	8128281	--pt_weight_decay 0.05
+tahoe	etf	A5	8128282	--lr_loss cos
+tahoe	etf	A6	8128283	--vic_var 1 --vic_cov 0.04
+tahoe	etf	R1	8128284	--final_ln 1 --target_k 2 --target_norm token --ema_sched cosine --pt_weight_decay 0.05
+tahoe	etf	R2	8128285	--ema_sched cosine --lr_loss cos --vic_var 1 --vic_cov 0.04 --pt_weight_decay 2e-4
+tahoe	rtf	A0	8128286	
+tahoe	rtf	A1	8128287	--final_ln 1
+tahoe	rtf	A2	8128288	--target_k 2 --target_norm token
+tahoe	rtf	A3	8128289	--ema_sched cosine
+tahoe	rtf	A4	8128290	--pt_weight_decay 0.05
+tahoe	rtf	A5	8128291	--lr_loss cos
+tahoe	rtf	A6	8128292	--vic_var 1 --vic_cov 0.04
+tahoe	rtf	R1	8128293	--final_ln 1 --target_k 2 --target_norm token --ema_sched cosine --pt_weight_decay 0.05
+tahoe	rtf	R2	8128294	--ema_sched cosine --lr_loss cos --vic_var 1 --vic_cov 0.04 --pt_weight_decay 2e-4
+lincs	etf	A0	8128295	
+lincs	etf	A1	8128296	--final_ln 1
+lincs	etf	A2	8128297	--target_k 2 --target_norm token
+lincs	etf	A3	8128298	--ema_sched cosine
+lincs	etf	A4	8128299	--pt_weight_decay 0.05
+lincs	etf	A5	8128300	--lr_loss cos
+lincs	etf	A6	8128301	--vic_var 1 --vic_cov 0.04
+lincs	etf	R1	8128302	--final_ln 1 --target_k 2 --target_norm token --ema_sched cosine --pt_weight_decay 0.05
+lincs	etf	R2	8128303	--ema_sched cosine --lr_loss cos --vic_var 1 --vic_cov 0.04 --pt_weight_decay 2e-4
+lincs	rtf	A0	8128304	
+lincs	rtf	A1	8128305	--final_ln 1
+lincs	rtf	A2	8128306	--target_k 2 --target_norm token
+lincs	rtf	A3	8128307	--ema_sched cosine
+lincs	rtf	A4	8128308	--pt_weight_decay 0.05
+lincs	rtf	A5	8128309	--lr_loss cos
+lincs	rtf	A6	8128310	--vic_var 1 --vic_cov 0.04
+lincs	rtf	R1	8128311	--final_ln 1 --target_k 2 --target_norm token --ema_sched cosine --pt_weight_decay 0.05
+lincs	rtf	R2	8128312	--ema_sched cosine --lr_loss cos --vic_var 1 --vic_cov 0.04 --pt_weight_decay 2e-4
+tahoe_sc	etf+rtf	all (3 lanes)	8128313	see out/lrab_sc_l*_8128313.out
+tahoe	etf	A0	8128504	
+tahoe	etf	A1	8128505	--final_ln 1
+tahoe	etf	A2	8128506	--target_k 2 --target_norm token
+tahoe	etf	A3	8128507	--ema_sched cosine
+tahoe_sc	rtf	all (2 lanes, 48%)	8128923	see out/lrab_sc_l*_8128923.out
