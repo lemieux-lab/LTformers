@@ -157,6 +157,12 @@ function load_finetune_args()
         "--emb_std"
             help = "emb mode: 1 = z-score frozen embeddings with train mean/sd (default), 0 = raw embeddings (tag _raw)"
             arg_type = Int
+        "--random_init"
+            help = "w_pretrain: 1 = checkpoint architecture with random weights (fixed init seed, task tag random), the frozen-probe control"
+            arg_type = Int
+        "--init_seed"
+            help = "w_pretrain --random_init 1: encoder init seed (default 0; k != 0 -> save/cache tag random_i<k>, hps still from the random section)"
+            arg_type = Int
         "--ckpt"
             help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
             arg_type = String
@@ -292,6 +298,21 @@ function load_sc_finetune_args()
         "--weight_decay"
             help = "SC linear probe: AdamW weight decay λ (default 0)"
             arg_type = Float64
+        "--emb_std"
+            help = "SC emb mode: 1 = z-score frozen embeddings with train mean/sd (default), 0 = raw embeddings (tag _raw)"
+            arg_type = Int
+        "--random_init"
+            help = "SC w_pretrain: 1 = checkpoint architecture with random weights (task tag random), the frozen-probe control"
+            arg_type = Int
+        "--init_seed"
+            help = "SC w_pretrain --random_init 1: encoder init seed (default 0; k != 0 -> save/cache tag random_i<k>)"
+            arg_type = Int
+        "--emb_cache"
+            help = "SC emb mode: 1 = fixed-seed train draw + cached train/val embeddings (sweeps / finals reuse them), default 0"
+            arg_type = Int
+        "--split_seed"
+            help = "SC emb --emb_cache 1: seed of the cached train draw (default 42)"
+            arg_type = Int
         "--patience"
             help = "stop after this many evals without val improvement (0 = off)"
             arg_type = Int

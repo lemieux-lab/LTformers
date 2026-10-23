@@ -118,10 +118,12 @@ X_test_emb = has_full ? d.X_test_full : d.X_test
                                                 # seq_len=seq_len, hvg_idx=(@isdefined(hvg_idx) ? hvg_idx : nothing))
 # frozen embeddings cached per encoder x split (sweep runs reuse them); cache stores the split indices and is checked on load
 test_emb_idx = has_full ? d.test_full_idx : d.test_idx
+# emb_key = join([realpath(config["model_dir"]), config["level"], model_tag, seq_len, Extract.FINAL_LN[],
+                # size(d.X_train, 2), size(d.X_val, 2), size(X_test_emb, 2)], "|")
 emb_key = join([realpath(config["model_dir"]), config["level"], model_tag, seq_len, Extract.FINAL_LN[],
-                size(d.X_train, 2), size(d.X_val, 2), size(X_test_emb, 2)], "|")
+                size(d.X_train, 2), size(d.X_val, 2), size(X_test_emb, 2), wpt_run_tag(config)], "|")
 emb_cache = joinpath("results", fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb"), "finetune", "w_pretrain", "emb_cache",
-                     "$(config["modeltype"])_$(wpt_task_tag(config))_$(config["level"])_$(string(hash(emb_key), base=16)).jld2")
+                     "$(config["modeltype"])_$(wpt_run_tag(config))_$(config["level"])_$(string(hash(emb_key), base=16)).jld2")
 cached = isfile(emb_cache) ? load(emb_cache) : nothing
 if !isnothing(cached) && cached["key"] == emb_key && cached["train_idx"] == d.train_idx && cached["val_idx"] == d.val_idx &&
    cached["test_idx"] == test_emb_idx
@@ -157,7 +159,7 @@ dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
 # mkpath(save_dir)
 
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"], model_tag,
-                    wpt_task_tag(config), emb_tag, isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
+                    wpt_run_tag(config), emb_tag, isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
 mkpath(save_dir)
 isnothing(emb_stats) || jldsave(joinpath(save_dir, "emb_stats.jld2"); mu=emb_stats[1], sd=emb_stats[2])
 println("save dir: $save_dir")
@@ -165,7 +167,7 @@ println("save dir: $save_dir")
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
 # wandb = init_wandb(config, wandb_project(config, "FT"), "emb_$(fmt)_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 
-wandb = init_wandb(config, wandb_project(config, "FT"), "$(config["modeltype"])_$(wpt_task_tag(config))_$(emb_tag)_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, wandb_project(config, "FT"), "$(config["modeltype"])_$(wpt_run_tag(config))_$(emb_tag)_$(fmt)_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train

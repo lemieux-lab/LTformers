@@ -3,7 +3,7 @@ module Config
 using TOML, PyCall
 
 export load_config, gpu_lr, init_wandb, wandb_project, resolve_model_dir!, resolve_data_path!, resolve_lvl3_cells!
-export wpt_task_tag
+export wpt_task_tag, wpt_run_tag
 
 
 # hp config per dataset
@@ -212,7 +212,12 @@ function _apply_ckpt!(config::Dict)
 end
 
 # w_pretrain result/hp tag: task, + _final for the final/ checkpoint
-wpt_task_tag(config::Dict) = config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
+# wpt_task_tag(config::Dict) = config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
+# random for the random-init control (--random_init 1)
+wpt_task_tag(config::Dict) = something(get(config, "random_init", nothing), 0) == 1 ? "random" :
+    config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
+# save/cache tag: task tag, + _i<k> for random-init encoder seed k != 0
+wpt_run_tag(config::Dict) = (k = something(get(config, "init_seed", nothing), 0); wpt_task_tag(config) * (k != 0 && wpt_task_tag(config) == "random" ? "_i$k" : ""))
 
 
 const DATA_PATHS = Dict(

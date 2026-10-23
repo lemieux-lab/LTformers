@@ -1,6 +1,6 @@
 module FTModels
 
-using Flux, CUDA, Functors, Statistics, JLD2
+using Flux, CUDA, Functors, Statistics, JLD2, Random
 
 let d = @__DIR__; d in LOAD_PATH || push!(LOAD_PATH, d); end
 using Models: Transf, RankModel, ExpModel, RankLReconModel, ExpLReconModel,
@@ -278,10 +278,20 @@ function build_pt_model(config::Dict; n_genes_data::Int, seq_len_data::Int, hvg_
     end
     kw = (n_genes=n_genes, embed_dim=ac["embed_dim"], n_layers=ac["n_layers"], n_heads=ac["n_heads"],
           hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
+    # random-init control: fixed init seed, so every run probes the same random encoder
+    random_init = something(get(config, "random_init", nothing), 0) == 1
+    # random_init && Random.seed!(0)
+    random_init && Random.seed!(something(get(config, "init_seed", nothing), 0))
     pt_model = task == "mlm" ? _pt_ctor(mt, task)(; kw..., n_classes=size(state.classifier.layers[end].weight, 1)) :
                                _pt_ctor(mt, task)(; kw...)
-    Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-    println("loaded pretrained $mt $task: seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
+    # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
+    # println("loaded pretrained $mt $task: seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
+    if random_init
+        println("random-init $mt $task (init seed $(something(get(config, "init_seed", nothing), 0)), checkpoint arch only): seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
+    else
+        Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
+        println("loaded pretrained $mt $task: seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
+    end
     return pt_model, ac
 end
 

@@ -16,7 +16,10 @@ args = load_sc_finetune_args()
 # config = load_config(args["config"], args)
 
 # emb mode tag: emb (mlp probe) or emb_linear
-emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
+# emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
+# + _raw for unstandardized embeddings (--emb_std 0)
+emb_std = something(args["emb_std"], 1) == 1
+emb_tag = (something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb") * (emb_std ? "" : "_raw")
 config = load_config(args["config"], args,
                      hp_section=["finetune", "w_pretrain", args["modeltype"], wpt_task_tag(args), args["level"], emb_tag],
                      dataset="tahoe_sc")
@@ -219,7 +222,24 @@ if is_streaming
 
     # 2) train embeddings: same train mix as sc_finetune! (max_ft_steps x batch_size cells, class-balanced at lvl2)
     n_mix = get(config, "max_ft_steps", 0) > 0 ? config["max_ft_steps"] * config["batch_size"] : d.n_train_cells
+    # --emb_cache 1: train draw from a fixed seed, train/val embeddings cached per encoder x split x n_mix (runs reuse them); default unchanged
+    use_cache = something(get(config, "emb_cache", nothing), 0) == 1
+    use_cache && Random.seed!(something(get(config, "split_seed", nothing), 42))
     picked = draw_train_cells(d.train_cells, d.label_to_id, n_mix; balanced=use_oversmpl)
+    emb_key = join([realpath(config["model_dir"]), config["level"], config["modeltype"], wpt_run_tag(config), Extract.FINAL_LN[],
+                    sc_split, something(get(config, "subset_shards", nothing), 0), top_k, n_mix, use_oversmpl,
+                    length(d.train_cells), string(hash(picked), base=16)], "|")
+    emb_cache = joinpath("results", "tahoe", "sc", "finetune", "w_pretrain", "emb_cache",
+                         "$(config["modeltype"])_$(wpt_run_tag(config))_$(config["level"])_$(string(hash(emb_key), base=16)).jld2")
+    cached = use_cache && isfile(emb_cache) ? load(emb_cache) : nothing
+    _onehot(l) = (y = zeros(Float32, d.n_classifications, length(l)); for (j, c) in enumerate(l); y[c, j] = 1f0; end; y)
+    if !isnothing(cached) && cached["key"] == emb_key && cached["picked"] == picked
+    val_paths, test_paths = sc_eval_paths(d, config)
+    basename.(val_paths) == cached["val_paths"] || error("val shards differ from the embedding cache $emb_cache")
+    train_input, val_input = cached["train"], cached["val"]
+    y_train, y_val = _onehot(cached["y_train"]), _onehot(cached["y_val"])
+    println("embeddings: loaded cache $emb_cache ($(size(train_input, 2)) train, $(size(val_input, 2)) val cells)")
+    else
     mix_map = Dict{String, Tuple{Vector{Int}, Vector{Int}}}()
     for j in picked
         sp, ci, lab, _ = d.train_cells[j]
@@ -259,6 +279,19 @@ if is_streaming
         val_input = val_input[:, 1:col_val]
         y_val = y_val[:, 1:col_val]
     end
+    if use_cache
+        yl_train, yl_val = Int32.(Flux.onecold(y_train)), Int32.(Flux.onecold(y_val))
+        (_onehot(yl_train) == y_train && _onehot(yl_val) == y_val) || error("labels are not one-hot; embedding cache would change them")
+        mkpath(dirname(emb_cache))
+        tmp_cache = "$(emb_cache).$(getpid()).tmp"
+        jldsave(tmp_cache; key=emb_key, picked=picked, val_paths=basename.(val_paths),
+                train=train_input, val=val_input, y_train=yl_train, y_val=yl_val)
+        mv(tmp_cache, emb_cache; force=true)
+        println("embeddings: wrote cache $emb_cache")
+    end
+    end
+    # mix is already class-balanced: one shuffled pass (also for cached embeddings)
+    use_oversmpl = false
 
     # # 4) test embeddings
     # n_test = d.n_test_cells
@@ -292,7 +325,10 @@ if is_streaming
     CUDA.reclaim()
 
     # 5) probe head (mlp or linear) on z-scored embeddings
-    emb_stats = standardize_embeds!(train_input, val_input)
+    # emb_stats = standardize_embeds!(train_input, val_input)
+    emb_stats = emb_std ? standardize_embeds!(train_input, val_input) : nothing
+    # cached and uncached runs start the head from the same RNG state
+    use_cache && (isnothing(seed) ? Random.seed!() : Random.seed!(seed))
     ft_model = probe_head(config, embed_dim, d.n_classifications)
     ft_model = fix_gpu_dropout(cu(ft_model))
     opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
@@ -314,7 +350,8 @@ else
     y_train = d.y_train
     y_val = d.y_val
     y_test = d.y_test
-    emb_stats = standardize_embeds!(train_input, val_input, test_input)
+    # emb_stats = standardize_embeds!(train_input, val_input, test_input)
+    emb_stats = emb_std ? standardize_embeds!(train_input, val_input, test_input) : nothing
     opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
 end
 
@@ -325,7 +362,7 @@ dataset_tag = joinpath("tahoe", "sc")
 # mkpath(save_dir)
 
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    config["modeltype"], wpt_task_tag(config), emb_tag, timestamp)
+                    config["modeltype"], wpt_run_tag(config), emb_tag, timestamp)
 mkpath(save_dir)
 isnothing(emb_stats) || jldsave(joinpath(save_dir, "emb_stats.jld2"); mu=emb_stats[1], sd=emb_stats[2])
 println("save dir: $save_dir")
@@ -333,7 +370,7 @@ println("save dir: $save_dir")
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
 # wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
 
-wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "$(config["modeltype"])_$(wpt_task_tag(config))_$(emb_tag)_sc_$(config["level"])$(seed_tag)_$(timestamp)")
+wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "$(config["modeltype"])_$(wpt_run_tag(config))_$(emb_tag)_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
 # train
