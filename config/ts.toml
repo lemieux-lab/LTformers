@@ -113,3 +113,549 @@ lr = 0.00011
 drop_prob = 0.051
 n_layers = 1
 mlp_hidden_dim = 8192
+
+# ──────────────────────────────────────────────
+# finetune — with pretrain, frozen probes (sc emb.jl, emb_cache 1): sweep winners (Oct 27)
+# ──────────────────────────────────────────────
+
+[finetune.w_pretrain.etf.erecon.lvl1.emb]
+# sweep uwhar7jh (5 finished runs) best ssakj1np (uwhar7jh), val 0.9683
+lr = 0.0016
+drop_prob = 0.2
+
+# [finetune.w_pretrain.etf.erecon.lvl2.emb]
+# # sweep b07cin4g (15 finished runs) best m4v3cqti (b07cin4g), val 0.0076
+# # EDGE: lr max
+# lr = 0.0059
+# drop_prob = 0.37
+
+# [finetune.w_pretrain.etf.lrecon.lvl1.emb]
+# # sweep 236feuui (5 finished runs) best pyreuq2o (236feuui), val 0.4220
+# # EDGE: lr max
+# lr = 0.0098
+# drop_prob = 0.14
+
+# [finetune.w_pretrain.etf.lrecon.lvl2.emb]
+# # sweep wis8x306 (14 finished runs) best wkw1u5gt (wis8x306), val 0.0119
+# # EDGE: lr max
+# lr = 0.0066
+# drop_prob = 0.44
+
+[finetune.w_pretrain.etf.mlm.lvl1.emb]
+# sweep q4oukii4 (4 finished runs) best f1ip0s2z (q4oukii4), val 0.3313
+lr = 0.0013
+drop_prob = 0.023
+
+# [finetune.w_pretrain.etf.mlm.lvl2.emb]
+# # sweep bqeye8bs (14 finished runs) best mci54dzg (bqeye8bs), val 0.0092
+# # EDGE: lr max
+# lr = 0.0094
+# drop_prob = 0.46
+
+[finetune.w_pretrain.etf.random.lvl1.emb]
+# sweep e3ejiyve (5 finished runs) best l3m3nw6e (e3ejiyve), val 0.6931
+lr = 0.0019
+drop_prob = 0.28
+
+# [finetune.w_pretrain.etf.random.lvl2.emb]
+# # sweep ym8r90c0 (13 finished runs) best 1w2twuux (ym8r90c0), val 0.0081
+# # EDGE: lr max
+# lr = 0.0057
+# drop_prob = 0.4
+
+[finetune.w_pretrain.etf.erecon.lvl1.emb_linear]
+# sweep cmrvw83y (5 finished runs) best ez3moks4 (cmrvw83y), val 0.9667
+lr = 0.0013
+weight_decay = 0.01
+
+[finetune.w_pretrain.etf.erecon.lvl2.emb_linear]
+# sweep 1heiryxy (14 finished runs) best n5tfcco2 (1heiryxy), val 0.0080
+lr = 0.00093
+weight_decay = 0.01
+
+[finetune.w_pretrain.etf.lrecon.lvl1.emb_linear]
+# sweep f5aarcsk (4 finished runs) best ads3yf2u (f5aarcsk), val 0.3846
+lr = 0.0042
+weight_decay = 0.01
+
+[finetune.w_pretrain.etf.lrecon.lvl2.emb_linear]
+# sweep rcg1kr6j (14 finished runs) best w5ixd8gi (rcg1kr6j), val 0.0077
+lr = 0.00084
+weight_decay = 0.1
+
+[finetune.w_pretrain.etf.mlm.lvl1.emb_linear]
+# sweep e4kou5bq (4 finished runs) best qyi3xg9i (e4kou5bq), val 0.2369
+lr = 0.0032
+weight_decay = 0.01
+
+[finetune.w_pretrain.etf.mlm.lvl2.emb_linear]
+# sweep uxf888as (14 finished runs) best gbrc898n (uxf888as), val 0.0111
+lr = 0.0012
+weight_decay = 0.01
+
+[finetune.w_pretrain.etf.random.lvl1.emb_linear]
+# sweep 8zokfkx9 (4 finished runs) best 7n7pcuam (8zokfkx9), val 0.4736
+lr = 0.00031
+weight_decay = 0.1
+
+# [finetune.w_pretrain.etf.random.lvl2.emb_linear]
+# # sweep gwxiksht (14 finished runs) best yf620ltx (gwxiksht), val 0.0106
+# # EDGE: weight_decay max
+# lr = 0.0022
+# weight_decay = 1
+
+# [finetune.w_pretrain.etf.erecon.lvl1.emb_linear_raw]
+# # sweep 35sh62m7 (5 finished runs) best jomg0fld (35sh62m7), val 0.9527
+# # EDGE: weight_decay max
+# lr = 8.7e-05
+# weight_decay = 1
+
+# [finetune.w_pretrain.etf.erecon.lvl2.emb_linear_raw]
+# # sweep mur9kjtv (13 finished runs) best 2zl7onaf (mur9kjtv), val 0.0096
+# # EDGE: lr max
+# lr = 0.0055
+# weight_decay = 0.01
+
+# [finetune.w_pretrain.etf.lrecon.lvl1.emb_linear_raw]
+# # sweep cm6qfc0q (4 finished runs) best ssh3mxd3 (cm6qfc0q), val 0.3507
+# # EDGE: weight_decay max
+# lr = 0.00022
+# weight_decay = 1
+
+# [finetune.w_pretrain.etf.lrecon.lvl2.emb_linear_raw]
+# # sweep pvfd23ol (13 finished runs) best xb9xmdy5 (pvfd23ol), val 0.0065
+# # EDGE: weight_decay max
+# lr = 0.0006
+# weight_decay = 1
+
+[finetune.w_pretrain.etf.mlm.lvl1.emb_linear_raw]
+# sweep iza36lhg (4 finished runs) best ch4acnhw (iza36lhg), val 0.2260
+lr = 0.0032
+weight_decay = 0
+
+# [finetune.w_pretrain.etf.mlm.lvl2.emb_linear_raw]
+# # sweep 45gc1hmt (13 finished runs) best rvba24gu (45gc1hmt), val 0.0549
+# # EDGE: weight_decay max
+# lr = 6.3e-06
+# weight_decay = 1
+
+# [finetune.w_pretrain.etf.random.lvl1.emb_linear_raw]
+# # sweep jysemeol (5 finished runs) best sxq5xiuq (jysemeol), val 0.1321
+# # EDGE: lr max
+# lr = 0.0078
+# weight_decay = 0
+
+# [finetune.w_pretrain.etf.random.lvl2.emb_linear_raw]
+# # sweep z4bt25ni (14 finished runs) best k6hjkcvv (z4bt25ni), val 0.0248
+# # EDGE: weight_decay max
+# lr = 0.00019
+# weight_decay = 1
+
+[finetune.w_pretrain.rtf.erecon.lvl1.emb_linear_raw]
+# sweep kk64dh4w (5 finished runs) best euxk2173 (kk64dh4w), val 0.1302
+lr = 0.00084
+weight_decay = 0
+
+# [finetune.w_pretrain.rtf.erecon.lvl2.emb_linear_raw]
+# # sweep vbtnegz9 (11 finished runs) best bcsd9cjx (vbtnegz9), val 0.0089
+# # EDGE: weight_decay max
+# lr = 0.00067
+# weight_decay = 1
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.emb_linear_raw]
+# sweep zhchcuez (4 finished runs) best 6xazxka4 (zhchcuez), val 0.0353
+lr = 0.0014
+weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.emb_linear_raw]
+# sweep 7wdu1dro (14 finished runs) best 65kxlu4m (7wdu1dro), val 0.0051
+lr = 1.1e-05
+weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.mlm.lvl1.emb_linear_raw]
+# sweep xgwxomld (5 finished runs) best 64nu7xwr (xgwxomld), val 0.7680
+lr = 0.00072
+weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.mlm.lvl2.emb_linear_raw]
+# sweep v19jqbmq (13 finished runs) best m1sg5118 (v19jqbmq), val 0.0081
+lr = 0.0036
+weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.random.lvl1.emb_linear_raw]
+# sweep hoytk067 (5 finished runs) best z4f618ko (hoytk067), val 0.2536
+lr = 0.0019
+weight_decay = 0
+
+# [finetune.w_pretrain.rtf.random.lvl2.emb_linear_raw]
+# # sweep lz4kf28v (14 finished runs) best vsdocfxy (lz4kf28v), val 0.0692
+# # EDGE: weight_decay max
+# lr = 0.0024
+# weight_decay = 1
+
+[finetune.w_pretrain.rtf.erecon.lvl1.emb_linear]
+# sweep 7jgmk014 (5 finished runs) best zfwtfcka (7jgmk014), val 0.1709
+lr = 0.0023
+weight_decay = 0
+
+# [finetune.w_pretrain.rtf.erecon.lvl2.emb_linear]
+# # sweep nvtq300t (11 finished runs) best kj6bizpv (nvtq300t), val 0.0105
+# # EDGE: weight_decay max
+# lr = 0.002
+# weight_decay = 1
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.emb_linear]
+# sweep 3j584nce (4 finished runs) best 4qusq065 (3j584nce), val 0.0622
+lr = 0.00094
+weight_decay = 0.1
+
+# [finetune.w_pretrain.rtf.lrecon.lvl2.emb_linear]
+# # sweep xaxn1zol (12 finished runs) best 6mzgmmkd (xaxn1zol), val 0.0054
+# # EDGE: lr min
+# lr = 0.00011
+# weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.mlm.lvl1.emb_linear]
+# sweep snflbrqo (5 finished runs) best hum9yjti (snflbrqo), val 0.7838
+lr = 0.0046
+weight_decay = 0.01
+
+[finetune.w_pretrain.rtf.mlm.lvl2.emb_linear]
+# sweep oy8pn43q (14 finished runs) best dsktepc7 (oy8pn43q), val 0.0067
+lr = 0.0023
+weight_decay = 0.1
+
+[finetune.w_pretrain.rtf.random.lvl1.emb_linear]
+# sweep grw7f2at (5 finished runs) best mp34m5kd (grw7f2at), val 0.4427
+lr = 0.00087
+weight_decay = 0.01
+
+[finetune.w_pretrain.rtf.random.lvl2.emb_linear]
+# sweep jxk3la5k (14 finished runs) best z1yz2nrl (jxk3la5k), val 0.0058
+lr = 0.0018
+weight_decay = 0
+
+[finetune.w_pretrain.etf.erecon.lvl1.emb_raw]
+# sweep d5pd5dfr (5 finished runs) best 6iv3al6l (d5pd5dfr), val 0.9641
+lr = 0.00015
+drop_prob = 0.38
+
+[finetune.w_pretrain.etf.erecon.lvl2.emb_raw]
+# sweep 4t1awdyn (14 finished runs) best akpi7ndr (4t1awdyn), val 0.0115
+lr = 5.9e-06
+drop_prob = 0.34
+
+# [finetune.w_pretrain.etf.lrecon.lvl1.emb_raw]
+# # sweep fau2oeg9 (4 finished runs) best e9dv6ovh (fau2oeg9), val 0.4396
+# # EDGE: lr max
+# lr = 0.0088
+# drop_prob = 0.00045
+
+[finetune.w_pretrain.etf.lrecon.lvl2.emb_raw]
+# sweep de983vvi (14 finished runs) best kz1ybcu2 (de983vvi), val 0.0059
+lr = 0.0001
+drop_prob = 0.19
+
+[finetune.w_pretrain.etf.mlm.lvl1.emb_raw]
+# sweep 53pu98k5 (5 finished runs) best wzqp6vd8 (53pu98k5), val 0.2543
+lr = 0.0017
+drop_prob = 0.34
+
+# [finetune.w_pretrain.etf.mlm.lvl2.emb_raw]
+# # sweep ho0p0djb (13 finished runs) best 7up408cl (ho0p0djb), val 0.0079
+# # EDGE: lr max, drop_prob max
+# lr = 0.0091
+# drop_prob = 0.5
+
+# [finetune.w_pretrain.etf.random.lvl1.emb_raw]
+# # sweep 8254vmuv (5 finished runs) best 32rgaeav (8254vmuv), val 0.1611
+# # EDGE: lr max
+# lr = 0.0059
+# drop_prob = 0.1
+
+[finetune.w_pretrain.etf.random.lvl2.emb_raw]
+# sweep dltuphs5 (14 finished runs) best nrfu9qg6 (dltuphs5), val 0.0088
+lr = 2e-05
+drop_prob = 0.093
+
+# [finetune.w_pretrain.rtf.erecon.lvl1.emb_raw]
+# # sweep bgprlp3b (4 finished runs) best lyvnwf0z (bgprlp3b), val 0.1933
+# # EDGE: lr max
+# lr = 0.0072
+# drop_prob = 0.09
+
+[finetune.w_pretrain.rtf.erecon.lvl2.emb_raw]
+# sweep 22bck3bs (13 finished runs) best yy5v3cm9 (22bck3bs), val 0.0072
+lr = 0.0033
+drop_prob = 0.26
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.emb_raw]
+# sweep 6grcqr7h (4 finished runs) best wc9ppepf (6grcqr7h), val 0.0659
+lr = 0.00049
+drop_prob = 0.2
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.emb_raw]
+# sweep 4motu18j (15 finished runs) best o8tyx2tf (4motu18j), val 0.0094
+lr = 0.00011
+drop_prob = 0.45
+
+# [finetune.w_pretrain.rtf.mlm.lvl1.emb_raw]
+# # sweep 2grjc24e (5 finished runs) best sz7yvcy7 (2grjc24e), val 0.8011
+# # EDGE: lr max
+# lr = 0.01
+# drop_prob = 0.17
+
+# [finetune.w_pretrain.rtf.mlm.lvl2.emb_raw]
+# # sweep z5cmi5tg (14 finished runs) best v9k6x2pa (z5cmi5tg), val 0.0207
+# # EDGE: lr min
+# lr = 2e-06
+# drop_prob = 0.13
+
+[finetune.w_pretrain.rtf.random.lvl1.emb_raw]
+# sweep yle3q2nz (5 finished runs) best yw7jbw9y (yle3q2nz), val 0.3778
+lr = 0.0021
+drop_prob = 0.047
+
+[finetune.w_pretrain.rtf.random.lvl2.emb_raw]
+# sweep jrg0rt5b (12 finished runs) best to28r22k (jrg0rt5b), val 0.0093
+lr = 0.0009
+drop_prob = 0.21
+
+[finetune.w_pretrain.rtf.erecon.lvl1.emb]
+# sweep d9l0s80k (5 finished runs) best esh81fmo (d9l0s80k), val 0.1441
+lr = 3.9e-05
+drop_prob = 0.34
+
+# [finetune.w_pretrain.rtf.erecon.lvl2.emb]
+# # sweep ci3fbsv1 (11 finished runs) best y03h6otw (ci3fbsv1), val 0.0146
+# # EDGE: lr max
+# lr = 0.0062
+# drop_prob = 0.13
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.emb]
+# sweep zhwm89pk (5 finished runs) best 4w64xpq5 (zhwm89pk), val 0.0665
+lr = 0.0027
+drop_prob = 0.19
+
+# [finetune.w_pretrain.rtf.lrecon.lvl2.emb]
+# # sweep x89u3uyc (14 finished runs) best vk60kdik (x89u3uyc), val 0.0100
+# # EDGE: lr max
+# lr = 0.0053
+# drop_prob = 0.42
+
+[finetune.w_pretrain.rtf.mlm.lvl1.emb]
+# sweep m40eb3et (4 finished runs) best evdxi25u (m40eb3et), val 0.8196
+lr = 0.0044
+drop_prob = 0.017
+
+# [finetune.w_pretrain.rtf.mlm.lvl2.emb]
+# # sweep 9i78xh2g (12 finished runs) best 1hl297ap (9i78xh2g), val 0.0071
+# # EDGE: lr max
+# lr = 0.005
+# drop_prob = 0.077
+
+[finetune.w_pretrain.rtf.random.lvl1.emb]
+# sweep xet3qav7 (4 finished runs) best nwafyavl (xet3qav7), val 0.4390
+lr = 0.00039
+drop_prob = 0.19
+
+# [finetune.w_pretrain.rtf.random.lvl2.emb]
+# # sweep cx6792tl (14 finished runs) best q4n6j113 (cx6792tl), val 0.0066
+# # EDGE: lr max
+# lr = 0.0082
+# drop_prob = 0.26
+
+# TSC widened-range re-sweep: wpt_tsc_emb_etf_erecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.erecon.lvl2.emb]
+# sweep b07cin4g+2n7ay01y (30 finished runs) best tyx2kbs7 (2n7ay01y), val 0.0086
+# EDGE: lr max
+lr = 0.041
+drop_prob = 0.029
+
+# TSC widened-range re-sweep: wpt_tsc_emb_etf_lrecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.lrecon.lvl2.emb]
+# sweep wis8x306+jifz3nhm (28 finished runs) best wkw1u5gt (wis8x306), val 0.0119
+lr = 0.0066
+drop_prob = 0.44
+
+# TSC widened-range re-sweep: wpt_tsc_emb_etf_mlm_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.mlm.lvl2.emb]
+# sweep bqeye8bs+wz00owlr (26 finished runs) best mci54dzg (bqeye8bs), val 0.0092
+lr = 0.0094
+drop_prob = 0.46
+
+# TSC widened-range re-sweep: wpt_tsc_emb_etf_random_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.random.lvl2.emb]
+# sweep ym8r90c0+1c1h0qh2 (25 finished runs) best uuo9ez7a (1c1h0qh2), val 0.0174
+# EDGE: lr max
+lr = 0.049
+drop_prob = 0.37
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_etf_random_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.random.lvl2.emb_linear]
+# sweep gwxiksht+z3ag0od7 (28 finished runs) best yf620ltx (gwxiksht), val 0.0106
+lr = 0.0022
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_erecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.erecon.lvl2.emb_linear_raw]
+# sweep mur9kjtv+g6adyv39 (27 finished runs) best vukbt9zb (g6adyv39), val 0.0210
+# EDGE: weight_decay max
+lr = 0.01
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_lrecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.lrecon.lvl2.emb_linear_raw]
+# sweep pvfd23ol+glp952wk (26 finished runs) best txn0dg76 (glp952wk), val 0.0079
+lr = 0.00064
+weight_decay = 10
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_mlm_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.mlm.lvl2.emb_linear_raw]
+# sweep 45gc1hmt+3e7e85vt (27 finished runs) best rvba24gu (45gc1hmt), val 0.0549
+lr = 6.3e-06
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_random_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.random.lvl2.emb_linear_raw]
+# sweep z4bt25ni+lvesng5x (28 finished runs) best k6hjkcvv (z4bt25ni), val 0.0248
+lr = 0.00019
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_rtf_erecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.erecon.lvl2.emb_linear_raw]
+# sweep vbtnegz9+96y5nx8h (24 finished runs) best m8wxbm7o (96y5nx8h), val 0.0104
+lr = 0.00072
+weight_decay = 10
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_rtf_random_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.random.lvl2.emb_linear_raw]
+# sweep lz4kf28v+m9kwyqqh (26 finished runs) best vsdocfxy (lz4kf28v), val 0.0692
+lr = 0.0024
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_rtf_erecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.erecon.lvl2.emb_linear]
+# sweep nvtq300t+zew8qhoy (26 finished runs) best kj6bizpv (nvtq300t), val 0.0105
+lr = 0.002
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_rtf_lrecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.emb_linear]
+# sweep xaxn1zol+oiavf7fc (26 finished runs) best 6mzgmmkd (xaxn1zol), val 0.0054
+lr = 0.00011
+weight_decay = 0.1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_etf_mlm_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.mlm.lvl2.emb_raw]
+# sweep ho0p0djb+9jzbqbv1 (28 finished runs) best o59d8z0b (9jzbqbv1), val 0.0263
+# EDGE: lr max
+lr = 0.093
+drop_prob = 0.68
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_rtf_mlm_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.mlm.lvl2.emb_raw]
+# sweep z5cmi5tg+8gax86v3 (29 finished runs) best v9k6x2pa (z5cmi5tg), val 0.0207
+lr = 2e-06
+drop_prob = 0.13
+
+# TSC widened-range re-sweep: wpt_tsc_emb_etf_lrecon_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.lrecon.lvl1.emb]
+# sweep 236feuui+jaezdyqh (10 finished runs) best zpwtplc8 (jaezdyqh), val 0.4326
+lr = 0.0012
+drop_prob = 0.24
+
+# TSC widened-range re-sweep: wpt_tsc_emb_rtf_erecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.erecon.lvl2.emb]
+# sweep ci3fbsv1+dcp92k8t (23 finished runs) best cgngr3bt (dcp92k8t), val 0.0168
+# EDGE: lr max
+lr = 0.052
+drop_prob = 0.02
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_erecon_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.erecon.lvl1.emb_linear_raw]
+# sweep 35sh62m7+8p9ab6v9 (10 finished runs) best 1x12n9ud (8p9ab6v9), val 0.9574
+lr = 0.0029
+weight_decay = 0.1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_lrecon_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.lrecon.lvl1.emb_linear_raw]
+# sweep cm6qfc0q+8u57jnb0 (9 finished runs) best ssh3mxd3 (cm6qfc0q), val 0.3507
+lr = 0.00022
+weight_decay = 1
+
+# TSC widened-range re-sweep: wpt_tsc_emb_linear_raw_etf_random_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.random.lvl1.emb_linear_raw]
+# sweep jysemeol+ycd100l4 (9 finished runs) best sxq5xiuq (jysemeol), val 0.1321
+lr = 0.0078
+weight_decay = 0
+
+# TSC widened-range re-sweep: wpt_tsc_emb_rtf_lrecon_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.emb]
+# sweep x89u3uyc+d7svoq61 (29 finished runs) best n8xmwcah (d7svoq61), val 0.0224
+lr = 0.0037
+drop_prob = 0.28
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_etf_lrecon_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.lrecon.lvl1.emb_raw]
+# sweep fau2oeg9+dil1hm7y (9 finished runs) best e9dv6ovh (fau2oeg9), val 0.4396
+lr = 0.0088
+drop_prob = 0.00045
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_etf_random_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.etf.random.lvl1.emb_raw]
+# sweep 8254vmuv+20ij7yz1 (9 finished runs) best qo1mtqps (20ij7yz1), val 0.1777
+lr = 0.0043
+drop_prob = 0.13
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_rtf_mlm_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.mlm.lvl1.emb_raw]
+# sweep 2grjc24e+m9kfi6gx (9 finished runs) best cd7tylt7 (m9kfi6gx), val 0.8037
+lr = 0.006
+drop_prob = 0.21
+
+# TSC widened-range re-sweep: wpt_tsc_emb_raw_rtf_erecon_lvl1 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.erecon.lvl1.emb_raw]
+# sweep bgprlp3b+vrcjuovp (9 finished runs) best lyvnwf0z (bgprlp3b), val 0.1933
+lr = 0.0072
+drop_prob = 0.09
+
+# TSC widened-range re-sweep: wpt_tsc_emb_rtf_mlm_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.mlm.lvl2.emb]
+# sweep 9i78xh2g+8xytagbv (25 finished runs) best 7vbmtgu6 (8xytagbv), val 0.0105
+# EDGE: lr max
+lr = 0.04
+drop_prob = 0.41
+
+# TSC widened-range re-sweep: wpt_tsc_emb_rtf_random_lvl2 (winner pooled over original + _wide)
+
+[finetune.w_pretrain.rtf.random.lvl2.emb]
+# sweep cx6792tl+b85efv92 (27 finished runs) best 86t81fcn (b85efv92), val 0.0133
+lr = 0.034
+drop_prob = 0.44

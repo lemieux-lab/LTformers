@@ -29,11 +29,14 @@ drop_prob = 0.12
 mask_ratio = 0.3 
 
 [pretrain.lrecon.rtf]
-# sweep 51wa8fzy (lr 5e-5-1e-3): no run learned yet (all ~0.99); placeholders kept
-lr = 0.0
-drop_prob = 0.0
+# sweep 51wa8fzy (lr 5e-5-1e-3): all 25 runs stuck at ~0.989; final uses TPB rtf hps
+# lr = 0.0
+# drop_prob = 0.0
+# ema_decay = 0.0
+lr = 0.00074
+drop_prob = 0.18
 mask_ratio = 0.15 
-ema_decay = 0.0
+ema_decay = 0.995
 
 [pretrain.lrecon.etf]
 # sweep 38otp8c7 best g2syb52y val 0.0729; 40k final pending

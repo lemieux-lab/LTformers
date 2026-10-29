@@ -4350,3 +4350,139 @@ corkendall([9,2,7,5,1], [7,2,9,5,1])    (same result on the rank vectors above)
                     -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
         -- fine-tune
             -- RUNNING linear, mlp probes for lvl1, lvl2 (random init, w-pt)
+
+-----------------------------------------------------------------------------------------------------------
+
+### oct 28 2026 ###
+
+-- RN:
+    -- should i make a wandb project of finals so easier to track/compare?
+    -- look at: 
+        -- need re-pretrains (see notes below) at all? 
+        -- baselines completed? (the non probes)
+        -- run thru all convos to find referneces/sources etc
+    -- pre-train:
+        -- done test of different things on lrecon etf/rtf on all datasets to see if difference
+            -- realistically we want same config for etf vs rtf to compare between the two; thus:
+            -- best across all 3 datasets for both etf and rtf are:
+                -- A5: cosine loss instead of MSE
+                -- A6: VIGreg variance + covariance terms
+                -- R2: cosine EMA ramp + cosine loss + VIGreg variance + covariance terms + weight decay (GeneJEPA)
+                    -- wait a sec what happened to GeneJEPA doing by block? or something?
+                    -- doesn't really work here because block targets need a gene graph and big gene sets
+            -- only split pb vs sc if probes show that the shared arm is clearly worse or not working on one of them
+            -- additionally can test instance norm? which would demonstrate that etf tokens are highly correlated within a sample
+                -- via normalizing each ft over the positions within one sample
+            -- so the two things we want is 1. learning 2. variance scale
+                -- but variance scale maybe doesn't matter much because we alr do standardization for the probes/e2e
+            -- ok actually we alr did linear probes:
+                -- A0 still does the best; the issue is that the pre-training results for rtfs are no bueno
+            -- i think it would be best to have an alternative (or 2) that doesn't collapse in the pretraining as well to demonstrate that even tho it did terrible it still underperforms in probes?
+            -- but for now, keep A0 as the headline result
+                -- alternative to run pre-train sweep + all downstream (random init, linear probe, mlp probe, e2e):
+                    -- A5 has partial collapse and R2 has noise-like predictions
+                    -- thus A6 may be best, but this can be done later imo
+
+-- NEXT:
+    -- lvl3 task impl + cl choices
+    -- check SC per-rank error; split into bands
+        -- expected that at rank 500+, gene at rank is mostly predictable from detected set + median table
+
+-- LATER:
+    -- ablations:
+        -- delta ablation (alr done on lvl2 lincs & tpb emlps, not on tfs or tsc)
+        -- mlp gene set encoding (rank on HVG panel and expression restricted to top-1024)
+            -- to eval if gene set diff or input diff
+        -- accuracy vs. depth curve for tsc models
+    -- pre-training:
+        -- re-run test set of mlm pre-training results to get top-k accuracies for all datasets
+        -- fix lrecon via bioM-JEPA penalty? would help with tsc and tpb rtf...
+        -- test lrecon results via effective-rank and depth diagnostic on frozen embeddings?
+    -- lvl3:
+        -- re-pretrain OOD compounds for lvl3 eval
+        -- ICC vs SB in split-half repro?
+        -- direction agreement?
+        -- i think this is where the split reproducibility actually matters right?
+            -- also ceiling as fraction of gap closed
+    -- lvl2:
+        -- tsc npt rtf still improving
+        -- lincs npt tf still improving
+        -- eval label-efficiency per class? via training probes on fractions of labelled training data and plot accuracy against fraction
+            -- thus demonstrates performances when labels are scarce
+        -- baselines add:
+            -- random init frozen encoder probe
+                -- essentailly tests for usefulness of pre-trained embeddings w/o training encoder
+                -- can add this later tbh, consists of both linear probe and mlp probe...
+            -- tsc well x cl metric as a secondary metric to the cell split
+                -- already computed in scripts
+            -- boostrapping by compound (could do for lvl1 too but probably not needed since lvl1 is just baseline)
+                -- can do this afterwards iwth the results
+    -- lvl1:
+        -- lincs is using 305 cl (variants) instead of just the 236 cl
+            -- not rly an issue bc performance is alr so high but consistency... (would need to re-run everything as well)
+        -- eval label-efficiency per class? via training probes on fractions of labelled training data and plot accuracy against fraction
+            -- thus demonstrates performances when labels are scarce
+
+-- MAYBE include:
+    -- rank + reference plate curve determines expression value; thus profile ~ rank non-median-normed within plate
+    -- architecture in mlps held constant; lvl2 emlp, rmlp w/ sweeping only lr and dropout (see above for best layers/widths)
+    -- lvl1 as fixed width layers instead of shrinking; not important but maybe for consistency
+    -- rmlp/rlog on hvg-1024 vs. emlp/elog on hvg-1024 to determine if confounded by gene-set
+     -- ** lincs transformers no-pts are still learning after 200k steps but takes about 4 days
+        -- consider run ning longer such that they're "fully leanred" or just leave as-is for proper comparison?? not sure. maybe later if time.
+    -- post-processing embeddings via subtracting plate DMSO avg or TVN centering
+        -- this removes the plate effects from the embeddings BUT the splits are already accounting for plate, so maybe doesn't matter?
+        -- also would technically need to re-run all of the npts
+    -- pre-training task of plate-matched DMSO delta targets instead of raw expression
+        -- compeltely removes cell line and plate signal and pushes capacity towards drug effect; this may not rly count as virtual cell modelling then
+        -- because its isolating for a really specific effect and task; not generalized
+
+-- LINCS:
+    -- baselines
+        -- done all lvl1
+        -- done all lvl2
+    -- pre-train
+        -- !TO-RUN all pretrain sweeps
+            -- done mlm etf, mlm rtf, erecon etf, erecon rtf
+                -- note: mlm rtf still improving after 40k steps
+            -- done lrecon etf, lerecon rtf sweeps
+                -- RUNNING lrecon finals 
+    -- fine-tune
+
+-- TAHOE:
+    -- PB
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tfs do significantly worse; could do evals on why via:
+                    -- z-score inputs to etf
+                    -- attention or cls instead of mean pooling
+                    -- warmup/weight decay
+        -- pre-train
+            -- done all
+        -- fine-tune
+            -- done random-inits for linear, mlp probes on lvl1, lvl2
+            -- done linear probe, mlp probe on lvl1, lvl2 for all
+                -- raw and z-score pre much the same
+                -- all did pretty bad on lvl2
+            -- !TO-RUN e2e on lvl1, lvl2
+                -- RUNNING e2e finals on lvl1, lvl2
+
+    -- SC
+        -- baselines
+            -- done all lvl1
+            -- done all lvl2
+                -- note: tf very underfitting, however not really sure if its worth it to run for longer
+                    -- since its just considered a baseline, we keep at 80k which is same as mlp
+        -- pre-train
+            -- done all
+                -- notes:
+                    -- could re-run erecon etf for longer; wasn't fully converged yet i think?
+                    -- good mlm run has slightly too high of an lr i think? but not sure if this is not issue due to early stopping/val tho
+        -- fine-tune
+            -- RUNNING random-inits for linear, mlp probes on lvl1, lvl2
+            -- !TO-RUN linear, mlp probes on lvl1, lvl2
+                -- RUNNING linear, mlp sweeps for lvl1, lvl2 (re-sweeping wider) both raw and z-score
+                    -- some are not doing re-sweeps tho if the config didn't land at edges
+                -- RUNNING linear, mlp finals for lvl2
+            -- !TO-RUN e2e on lvl1, lvl2

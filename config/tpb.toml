@@ -544,3 +544,73 @@ weight_decay = 0
 # EDGE: weight_decay max
 lr = 1.3e-05
 weight_decay = 100
+
+# finetune — with pretrain, e2e (Oct 25): sweep winners, head_init 1
+
+[finetune.w_pretrain.etf.erecon.lvl2.e2e]
+# sweep dc1lj7x9 (15 finished runs) best 9xdhbj7t (dc1lj7x9), val 0.0852
+lr = 0.002
+drop_prob = 0.19
+
+[finetune.w_pretrain.etf.lrecon.lvl2.e2e]
+# sweep h8n8zway (15 finished runs) best emerj20u (h8n8zway), val 0.1907
+lr = 0.0026
+drop_prob = 0.04
+
+[finetune.w_pretrain.etf.mlm.lvl2.e2e]
+# sweep ryr2puvh (15 finished runs) best ac4qsfnj (ryr2puvh), val 0.0859
+lr = 0.001
+drop_prob = 0.082
+
+[finetune.w_pretrain.rtf.erecon.lvl2.e2e]
+# sweep 8dkso5cz (15 finished runs) best 8yp7kdlj (8dkso5cz), val 0.1153
+lr = 0.002
+drop_prob = 0.24
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.e2e]
+# sweep kwcnzs2r (15 finished runs) best ie8wb05q (kwcnzs2r), val 0.0181
+lr = 0.00014
+drop_prob = 0.2
+
+[finetune.w_pretrain.rtf.mlm.lvl2.e2e]
+# sweep bdz7k3bk (15 finished runs) best d1fqmomr (bdz7k3bk), val 0.1176
+lr = 0.0016
+drop_prob = 0.084
+
+[finetune.w_pretrain.etf.erecon.lvl1.e2e]
+# sweep hsxum0f7 (5 finished runs) best f2kenlhx (hsxum0f7), val 1.0000
+lr = 0.00031
+drop_prob = 0.18
+
+[finetune.w_pretrain.etf.lrecon.lvl1.e2e]
+# sweep q7tgrm80 (5 finished runs) best i0scu4no (q7tgrm80), val 1.0000
+lr = 0.00046
+drop_prob = 0.16
+
+# [finetune.w_pretrain.etf.mlm.lvl1.e2e]
+# # sweep ikf258pa (5 finished runs) best r475feag (ikf258pa), val 1.0000
+# # EDGE: drop_prob max
+# lr = 0.0007
+# drop_prob = 0.29
+
+[finetune.w_pretrain.rtf.erecon.lvl1.e2e]
+# sweep p5kvitfq (5 finished runs) best 19z8hrd8 (p5kvitfq), val 0.9998
+lr = 0.00098
+drop_prob = 0.27
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.e2e]
+# sweep g40lg7n1 (5 finished runs) best 6rf4ams6 (g40lg7n1), val 0.9991
+lr = 0.0024
+drop_prob = 0.24
+
+[finetune.w_pretrain.rtf.mlm.lvl1.e2e]
+# sweep wy9vziaf (5 finished runs) best 6fegudw6 (wy9vziaf), val 1.0000
+lr = 0.0003
+drop_prob = 0.23
+
+# widened-range re-sweeps (Oct 22): winners pooled over the original, _fill and _wide sweeps
+
+[finetune.w_pretrain.etf.mlm.lvl1.e2e]
+# sweep ikf258pa+0wz3koou (10 finished runs) best r475feag (ikf258pa), val 1.0000
+lr = 0.0007
+drop_prob = 0.29
