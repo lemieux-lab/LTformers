@@ -77,7 +77,9 @@ if fmt != "tahoe_sc"
     data_expr = fmt == "lincs" ? (data isa Matrix{Float32} ? data : Float32.(data.expr)) : Float32.(reduce(hcat, data.expr))
     meta_df = fmt == "lincs" ? data.inst : data
     hvg_idx = nothing
-    MT == "etf" && ((data_expr, hvg_idx) = select_hvg(data_expr, get(config, "n_hvg", 1024)))
+    # MT == "etf" && ((data_expr, hvg_idx) = select_hvg(data_expr, get(config, "n_hvg", 1024)))
+    n_hvg = get(config, "n_hvg", fmt == "lincs" ? 0 : 1024)  # lincs etf: all 978 genes, as w_pretrain/exp_tf.jl
+    MT == "etf" && 0 < n_hvg < size(data_expr, 1) && ((data_expr, hvg_idx) = select_hvg(data_expr, n_hvg))
     top_k = get(config, "top_k", 1024)
     for lvl in ("lvl1", "lvl2")
         c = copy(config); c["level"] = lvl

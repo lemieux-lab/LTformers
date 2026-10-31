@@ -81,20 +81,12 @@ model = RankClassifier(n_genes=n_genes, embed_dim=config["embed_dim"],
                        seq_len=min(top_k, n_genes))
 model = fix_gpu_dropout(cu(model))
 opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
-# # --pool_std 1: fixed z-score of the pooled embeddings before the head (5000 train samples, fixed rng)
-# ps = get(config, "pool_std", nothing)
-# if something(ps, 0) == 1
-#     ps_cols = randperm(MersenneTwister(7), size(X_train, 2))[1:min(5000, size(X_train, 2))]
-#     model = with_pool_std(model, [cu(Int32.(X_train[:, c])) for c in Iterators.partition(ps_cols, config["batch_size"])])
-#     opt = Flux.setup(Optimisers.AdamW(config["lr"]), model)
-# end
 
 # save dir
 dataset_tag = fmt == "lincs" ? "lincs" : joinpath("tahoe", "pb")
 # result folder tag: rtf, + _gdd / _gpl for grouped splits, + _s<seed> (as exp_tf.jl)
 model_tag = config["modeltype"]
 something(get(config, "group_split", nothing), 0) == 1 && (model_tag *= fmt == "lincs" ? "_gpl" : "_gdd")
-# isnothing(ps) || (model_tag *= "_ps$(ps)")
 save_dir = joinpath("results", dataset_tag, "finetune", "no_pretrain", config["level"], model_tag,
                     isnothing(seed) ? timestamp : "$(timestamp)_s$(seed)")
 mkpath(save_dir)

@@ -136,7 +136,6 @@ function resolve_model_dir!(config::Dict;
                            models_toml::String = joinpath(@__DIR__, "../config/pretrained_models.toml"))
     model_dir = get(config, "model_dir", "")
     if model_dir != ""
-        # return config
         return _apply_ckpt!(config)
     end
 
@@ -185,7 +184,6 @@ function resolve_model_dir!(config::Dict;
     end
     config["model_dir"] = dir
     println("resolved model_dir: $dir")
-    # return config
     return _apply_ckpt!(config)
 end
 
@@ -201,7 +199,6 @@ function _apply_ckpt!(config::Dict)
         end
         return config
     end
-    # something(get(config, "ckpt", nothing), "best") == "final" || return config
     config["ckpt"] == "final" || return config
     dir = rstrip(config["model_dir"], '/')
     basename(dir) == "best" || error("--ckpt final needs a model_dir ending in best/, got $dir")
@@ -212,12 +209,12 @@ function _apply_ckpt!(config::Dict)
 end
 
 # w_pretrain result/hp tag: task, + _final for the final/ checkpoint
-# wpt_task_tag(config::Dict) = config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
 # random for the random-init control (--random_init 1)
 wpt_task_tag(config::Dict) = something(get(config, "random_init", nothing), 0) == 1 ? "random" :
     config["task"] * (something(get(config, "ckpt", nothing), "best") == "final" ? "_final" : "")
 # save/cache tag: task tag, + _i<k> for random-init encoder seed k != 0
-wpt_run_tag(config::Dict) = (k = something(get(config, "init_seed", nothing), 0); wpt_task_tag(config) * (k != 0 && wpt_task_tag(config) == "random" ? "_i$k" : ""))
+wpt_run_tag(config::Dict) = (k = something(get(config, "init_seed", nothing), 0); rt = something(get(config, "run_tag", nothing), "");
+    wpt_task_tag(config) * (k != 0 && wpt_task_tag(config) == "random" ? "_i$k" : "") * (isempty(rt) ? "" : "_$rt"))
 
 
 const DATA_PATHS = Dict(

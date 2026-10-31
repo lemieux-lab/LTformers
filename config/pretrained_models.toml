@@ -11,8 +11,10 @@ rtf = "results/lincs/pretrain/mlm/rtf/2026-10-20_14-11/best" # 40k final (wide s
 etf = "results/lincs/pretrain/mlm/etf/2026-10-20_16-09/best" # 40k final with final/ (sweep h1iy0tpf), val 5.830
 
 [lincs.lrecon]
-rtf = "" # pending: sweep 51wa8fzy not learning; see lrecon ablation
-etf = "" # pending: sweep 38otp8c7 done, 40k final not run yet
+# rtf = "" # pending: sweep 51wa8fzy not learning; see lrecon ablation
+# etf = "" # pending: sweep 38otp8c7 done, 40k final not run yet
+rtf = "results/lincs/pretrain/lrecon/rtf/2026-10-28_15-37_j8134121_p149706/final/ema" # 40k final (TPB rtf hps), final teacher; did not leave plateau, val 0.989
+etf = "results/lincs/pretrain/lrecon/etf/2026-10-28_15-37_j8134121_p149486/final/ema" # 40k final (sweep 38otp8c7), final teacher, best val 0.062
 
 [lincs.erecon]
 rtf = "results/lincs/pretrain/erecon/rtf/2026-10-20_14-13/best" # 40k final (wide sweep nylqxuf4), val 3.419

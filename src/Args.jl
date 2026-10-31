@@ -166,6 +166,9 @@ function load_finetune_args()
         "--ckpt"
             help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
             arg_type = String
+        "--run_tag"
+            help = "w_pretrain: suffix for the save/cache tag (<task tag>_<run_tag>), e.g. ablation arms; hp section unchanged"
+            arg_type = String
         "--model_dir"
             help = "path to pretrained model directory (contains model_state.jld2)"
             arg_type = String
@@ -275,7 +278,6 @@ function load_finetune_args()
             help = "w_pretrain emb/e2e: 1 = per-token LayerNorm on encoder outputs before pooling (for lrecon --final_ln 1 checkpoints)"
             arg_type = Int
         "--head_init"
-#             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 0)"
             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 1; 0 = off)"
             arg_type = Int
         "--pool_std"
@@ -333,6 +335,9 @@ function load_sc_finetune_args()
             arg_type = String
         "--ckpt"
             help = "w_pretrain: best (default) or final pretrained checkpoint subdir (final -> <task>_final)"
+            arg_type = String
+        "--run_tag"
+            help = "w_pretrain: suffix for the save/cache tag (<task tag>_<run_tag>), e.g. ablation arms; hp section unchanged"
             arg_type = String
         "--model_dir"
             help = "path to pretrained model directory (contains model_state.jld2)"
@@ -416,7 +421,6 @@ function load_sc_finetune_args()
             help = "w_pretrain emb/e2e: 1 = per-token LayerNorm on encoder outputs before pooling (for lrecon --final_ln 1 checkpoints)"
             arg_type = Int
         "--head_init"
-#             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 0)"
             help = "w_pretrain e2e: 1 = first head layer rescaled to z-scored pooled train embeddings at init (default 1; 0 = off)"
             arg_type = Int
         "--pool_std"

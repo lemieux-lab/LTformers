@@ -659,3 +659,41 @@ drop_prob = 0.41
 # sweep cx6792tl+b85efv92 (27 finished runs) best 86t81fcn (b85efv92), val 0.0133
 lr = 0.034
 drop_prob = 0.44
+
+# finetune — with pretrain, e2e (Oct 30): sweep winners, head_init 1
+[finetune.w_pretrain.etf.erecon.lvl2.e2e]
+# sweep r509niwv (15 finished runs) best 7d1qg73b (r509niwv), val 0.0222
+lr = 0.0029
+drop_prob = 0.28
+
+[finetune.w_pretrain.etf.lrecon.lvl2.e2e]
+# sweep pp1f19ox (15 finished runs) best pd3tir0k (pp1f19ox), val 0.0222
+# EDGE: lr max
+lr = 0.0074
+drop_prob = 0.21
+
+[finetune.w_pretrain.etf.mlm.lvl2.e2e]
+# sweep 9gtud1ve (15 finished runs) best dn0ro1v8 (9gtud1ve), val 0.0222
+lr = 0.002
+drop_prob = 0.13
+
+[finetune.w_pretrain.rtf.erecon.lvl2.e2e]
+# sweep sqmhro1o (11 finished runs) best szu2mq4x (sqmhro1o), val 0.0222
+# EDGE: lr max
+lr = 0.0055
+drop_prob = 0.14
+
+[finetune.w_pretrain.etf.erecon.lvl1.e2e]
+# sweep gy51apzs (5 finished runs) best x03dpvz0 (gy51apzs), val 0.9780
+lr = 0.0015
+drop_prob = 0.037
+
+[finetune.w_pretrain.etf.lrecon.lvl1.e2e]
+# sweep f9u6kd1m (4 finished runs) best jteuo1am (f9u6kd1m), val 0.9334
+lr = 0.0016
+drop_prob = 0.012
+
+[finetune.w_pretrain.etf.mlm.lvl1.e2e]
+# sweep 5bz7ejq8 (5 finished runs) best qwdbh8za (5bz7ejq8), val 0.9268
+lr = 0.0015
+drop_prob = 0.23

@@ -10,10 +10,6 @@ using Extract: get_embeds, get_embeds_lrecon, get_embeds_exp
 export RankClassifier, ExpClassifier
 export RankFTModel, ExpFTModel
 export build_embm, build_e2em
-# export build_pt_model, set_dropout, probe_head, standardize_embeds!
-# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
-# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
-# export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!
 export build_pt_model, set_dropout, probe_head, standardize_embeds!, init_head_from_embeds!, FixedStd, with_pool_std
 
 
@@ -267,7 +263,6 @@ function build_pt_model(config::Dict; n_genes_data::Int, seq_len_data::Int, hvg_
         n_genes_data == n_genes || error("finetune gene vocab $n_genes_data != checkpoint vocab $n_genes ($model_dir)")
     else
         n_genes = seq_len
-        # hvg_path = joinpath(dirname(model_dir), "hvg_indices.jld2")
         # run root is one level up (best/, final/, ema/) or two (final/ema/)
         hvg_path = joinpath(dirname(model_dir), "hvg_indices.jld2")
         isfile(hvg_path) || (hvg_path = joinpath(dirname(dirname(model_dir)), "hvg_indices.jld2"))
@@ -280,12 +275,9 @@ function build_pt_model(config::Dict; n_genes_data::Int, seq_len_data::Int, hvg_
           hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
     # random-init control: fixed init seed, so every run probes the same random encoder
     random_init = something(get(config, "random_init", nothing), 0) == 1
-    # random_init && Random.seed!(0)
     random_init && Random.seed!(something(get(config, "init_seed", nothing), 0))
     pt_model = task == "mlm" ? _pt_ctor(mt, task)(; kw..., n_classes=size(state.classifier.layers[end].weight, 1)) :
                                _pt_ctor(mt, task)(; kw...)
-    # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-    # println("loaded pretrained $mt $task: seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
     if random_init
         println("random-init $mt $task (init seed $(something(get(config, "init_seed", nothing), 0)), checkpoint arch only): seq_len=$seq_len, n_genes=$n_genes ($model_dir)")
     else
@@ -379,77 +371,6 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         return ft_model, Float32.(X_train), Float32.(X_test)
     end
 
-    # # load pretrained arch config
-    # ac = _load_arch_config(config["model_dir"], config)
-    # state = load("$(config["model_dir"])/model_state.jld2")["model_state"]
-
-    # if config["modeltype"] == "etf" && config["task"] == "lrecon"
-        # pt_model = ExpLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds_exp(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds_exp(pt_model, X_test, config["batch_size"])
-
-    # elseif config["modeltype"] == "etf" && config["task"] == "erecon"
-        # pt_model = ExpEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds_exp(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds_exp(pt_model, X_test, config["batch_size"])
-
-    # elseif config["modeltype"] == "etf" && config["task"] == "mlm"
-        # pt_model = ExpModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds_exp(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds_exp(pt_model, X_test, config["batch_size"])
-
-    # elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
-        # pt_model = RankLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds_lrecon(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds_lrecon(pt_model, X_test, config["batch_size"])
-
-    # elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
-        # pt_model = RankEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds_lrecon(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds_lrecon(pt_model, X_test, config["batch_size"])
-
-    # else  # rtf + mlm
-        # pt_model = RankModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # pt_model = fix_gpu_dropout(cu(pt_model))
-        # Flux.testmode!(pt_model)
-        # train_input = get_embeds(pt_model, X_train, config["batch_size"])
-        # test_input = get_embeds(pt_model, X_test, config["batch_size"])
-    # end
-
     # pretrained encoder (dims from checkpoint)
     pt_model, ac = build_pt_model(config; n_genes_data=n_genes, seq_len_data=size(X_train, 1), hvg_idx=hvg_idx)
     pt_model = fix_gpu_dropout(cu(pt_model))
@@ -469,11 +390,6 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
         end
     end
 
-    # ft_model = Flux.Chain(
-        # Flux.Dense(ac["embed_dim"] => config["hidden_dim"], gelu),
-        # Flux.LayerNorm(config["hidden_dim"]),
-        # Flux.Dropout(config["drop_prob"]),
-        # Flux.Dense(config["hidden_dim"] => n_classifications))
     ft_model = probe_head(config, ac["embed_dim"], n_classifications)
     ft_model = fix_gpu_dropout(cu(ft_model))
 
@@ -484,69 +400,6 @@ function build_embm(config::Dict, X_train, X_test, n_genes, n_classifications; X
 end
 
 function build_e2em(config::Dict, n_classifications; n_genes::Int, seq_len::Int=n_genes, hvg_idx=nothing)
-    # # load pretrained arch config
-    # ac = _load_arch_config(config["model_dir"], config)
-    # state = load("$(config["model_dir"])/model_state.jld2")["model_state"]
-
-    # if config["modeltype"] == "etf" && config["task"] == "lrecon"
-        # pt_model = ExpLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = ExpFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-
-    # elseif config["modeltype"] == "etf" && config["task"] == "erecon"
-        # pt_model = ExpEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"])
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = ExpFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-
-    # elseif config["modeltype"] == "etf" && config["task"] == "mlm"
-        # pt_model = ExpModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"])
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = ExpFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-
-    # elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
-        # pt_model = RankLReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = RankFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-
-    # elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
-        # pt_model = RankEReconModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"],
-            # seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = RankFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-
-    # else  # rtf + mlm
-        # pt_model = RankModel(n_genes=n_genes, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
-        # Flux.loadmodel!(pt_model, _clean_state(state, pt_model))
-        # ft_model = RankFTModel(pt_model;
-            # embed_dim=ac["embed_dim"], hidden_dim=config["hidden_dim"],
-            # n_classifications=n_classifications, drop_prob=config["drop_prob"])
-    # end
-
     # pretrained encoder (dims from checkpoint) + classification head
     pt_model, ac = build_pt_model(config; n_genes_data=n_genes, seq_len_data=seq_len, hvg_idx=hvg_idx)
     FT = config["modeltype"] == "etf" ? ExpFTModel : RankFTModel

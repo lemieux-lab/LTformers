@@ -8,15 +8,10 @@ using ProgressBars, CairoMakie, StatsBase, DataFrames
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src"))
 push!(LOAD_PATH, joinpath(@__DIR__, "../../../../src/tahoe"))
 using Models, Train, Log, Plot, Args, Config, ProcessLabels, Preprocess, Extract, FTModels
-# using LoadSC, ProcessSC
-
 using LoadSC, ProcessSC, SCTrain
 
 args = load_sc_finetune_args()
-# config = load_config(args["config"], args)
-
 # emb mode tag: emb (mlp probe) or emb_linear
-# emb_tag = something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb"
 # + _raw for unstandardized embeddings (--emb_std 0)
 emb_std = something(args["emb_std"], 1) == 1
 emb_tag = (something(args["probe"], "mlp") == "linear" ? "emb_linear" : "emb") * (emb_std ? "" : "_raw")
@@ -44,8 +39,6 @@ gpu_info = CUDA.name(device())
 println("SLURM_JOB_ID: ", get(ENV, "SLURM_JOB_ID", "N/A"))
 
 start_time = now()
-# timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", string(getpid()))
-
 # + pid and seed so same-minute runs don't share a save_dir
 timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM") * "_j" * get(ENV, "SLURM_JOB_ID", "0") * "_p" * string(getpid()) *
             (isnothing(get(config, "seed", nothing)) ? "" : "_s$(config["seed"])")
@@ -119,10 +112,6 @@ end
 if is_streaming
     # stream embeddings shard-by-shard, then train MLP
 
-    # # 1) pretrained encoder
-    # ac = FTModels._load_arch_config(config["model_dir"], config)
-    # state = JLD2.load("$(config["model_dir"])/model_state.jld2")["model_state"]
-
     # 1) pretrained encoder (dims from checkpoint)
     pt_model, ac = build_pt_model(config; n_genes_data=n_genes_for_model, seq_len_data=seq_len, hvg_idx=hvg_idx)
 
@@ -134,36 +123,6 @@ if is_streaming
     else
         embed_fn = get_embeds
     end
-
-    # # load pretrained model
-    # if config["modeltype"] == "etf" && config["task"] == "lrecon"
-        # pt_model = ExpLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # elseif config["modeltype"] == "etf" && config["task"] == "erecon"
-        # pt_model = ExpEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # elseif config["modeltype"] == "etf" && config["task"] == "mlm"
-        # pt_model = ExpModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes_for_model,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # elseif config["modeltype"] == "rtf" && config["task"] == "lrecon"
-        # pt_model = RankLReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # elseif config["modeltype"] == "rtf" && config["task"] == "erecon"
-        # pt_model = RankEReconModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_heads=ac["n_heads"],
-            # hidden_dim=ac["hidden_dim"], dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # else
-        # pt_model = RankModel(n_genes=n_genes_for_model, embed_dim=ac["embed_dim"],
-            # n_layers=ac["n_layers"], n_classes=n_genes_for_model,
-            # n_heads=ac["n_heads"], hidden_dim=ac["hidden_dim"],
-            # dropout_prob=ac["drop_prob"], seq_len=seq_len)
-    # end
-    # Flux.loadmodel!(pt_model, FTModels._clean_state(state, pt_model))
 
     pt_model = fix_gpu_dropout(cu(pt_model))
     Flux.testmode!(pt_model)
@@ -259,14 +218,6 @@ if is_streaming
     # mix is already class-balanced: one shuffled pass, as sc_finetune!
     use_oversmpl = false
 
-    # # 3) val embeddings
-    # n_val = d.n_val_cells
-    # val_input = zeros(Float32, embed_dim, n_val)
-    # y_val = zeros(Float32, d.n_classifications, n_val)
-    # println("streaming val embedding extraction: $(n_val) cells...")
-    # col_val = _stream_extract_embeddings!(val_input, y_val, d.val_shard_paths, d.val_shard_map,
-                                           # pt_model, n_val, "val")
-
     # 3) val embeddings: same pretrain-unseen val shards as sc_finetune!
     val_paths, test_paths = sc_eval_paths(d, config)
     n_val = sum(length(d.val_shard_map[sp][1]) for sp in val_paths)
@@ -293,39 +244,12 @@ if is_streaming
     # mix is already class-balanced: one shuffled pass (also for cached embeddings)
     use_oversmpl = false
 
-    # # 4) test embeddings
-    # n_test = d.n_test_cells
-    # test_input = zeros(Float32, embed_dim, n_test)
-    # y_test = zeros(Float32, d.n_classifications, n_test)
-    # println("streaming test embedding extraction: $(n_test) cells...")
-    # col_test = _stream_extract_embeddings!(test_input, y_test, d.test_shard_paths, d.test_shard_map,
-                                            # pt_model, n_test, "test")
-    # if col_test < n_test
-        # test_input = test_input[:, 1:col_test]
-        # y_test = y_test[:, 1:col_test]
-    # end
-
-    # # free pretrained model
-    # pt_model = nothing
-    # GC.gc(true)
-    # CUDA.reclaim()
-
-    # # 5) MLP head
-    # ft_model = Flux.Chain(
-        # Flux.Dense(embed_dim => config["hidden_dim"], gelu),
-        # Flux.LayerNorm(config["hidden_dim"]),
-        # Flux.Dropout(config["drop_prob"]),
-        # Flux.Dense(config["hidden_dim"] => d.n_classifications))
-    # ft_model = fix_gpu_dropout(cu(ft_model))
-    # opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
-
     # 4) test: streamed through encoder + head at eval time (same _eval as sc_finetune!), pt_model kept
     test_input = nothing; y_test = nothing
     GC.gc(true)
     CUDA.reclaim()
 
     # 5) probe head (mlp or linear) on z-scored embeddings
-    # emb_stats = standardize_embeds!(train_input, val_input)
     emb_stats = emb_std ? standardize_embeds!(train_input, val_input) : nothing
     # cached and uncached runs start the head from the same RNG state
     use_cache && (isnothing(seed) ? Random.seed!() : Random.seed!(seed))
@@ -336,31 +260,18 @@ else
     # non-streaming (lvl3)
     X_train = d.X_train
     X_val, X_test = d.X_val, d.X_test
-    # ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
-                                                    # n_genes_for_model, d.n_classifications; X_val=X_val,
-                                                    # seq_len=seq_len)
-    # y_train = d.y_train
-    # y_val = d.y_val
-    # y_test = d.y_test
-    # opt = Flux.setup(Optimisers.AdamW(config["lr"]), ft_model)
-
     ft_model, train_input, val_input, test_input = build_embm(config, X_train, X_test,
                                                     n_genes_for_model, d.n_classifications; X_val=X_val,
                                                     seq_len=seq_len, hvg_idx=hvg_idx)
     y_train = d.y_train
     y_val = d.y_val
     y_test = d.y_test
-    # emb_stats = standardize_embeds!(train_input, val_input, test_input)
     emb_stats = emb_std ? standardize_embeds!(train_input, val_input, test_input) : nothing
     opt = Flux.setup(Optimisers.AdamW(config["lr"], (0.9, 0.999), Float64(something(get(config, "weight_decay", nothing), 0.0))), ft_model)
 end
 
 # save dir
 dataset_tag = joinpath("tahoe", "sc")
-# save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
-                    # config["modeltype"], config["task"], "emb", timestamp)
-# mkpath(save_dir)
-
 save_dir = joinpath("results", dataset_tag, "finetune", "w_pretrain", config["level"],
                     config["modeltype"], wpt_run_tag(config), emb_tag, timestamp)
 mkpath(save_dir)
@@ -368,8 +279,6 @@ isnothing(emb_stats) || jldsave(joinpath(save_dir, "emb_stats.jld2"); mu=emb_sta
 println("save dir: $save_dir")
 
 seed_tag = isnothing(seed) ? "" : "_s$(seed)"
-# wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "emb_sc_$(config["modeltype"])_$(config["level"])$(seed_tag)_$(timestamp)")
-
 wandb = init_wandb(config, wandb_project(config, "FT"; sc=true), "$(config["modeltype"])_$(wpt_run_tag(config))_$(emb_tag)_sc_$(config["level"])$(seed_tag)_$(timestamp)")
 wb = get(config, "wandb_mode", "disabled") != "disabled" ? wandb : nothing
 
@@ -417,9 +326,6 @@ n_total_epochs = if use_max_steps
 else
     config["n_epochs"]
 end
-
-# # test eval for model m
-# function run_test(m)
 
 # streaming test: encoder + head over the test shards, same _eval (well / well_cl / pt-unseen) as sc_finetune!
 test_ga = Dict{Symbol, Any}()
@@ -566,8 +472,6 @@ for epoch in ProgressBar(1:n_total_epochs)
 
     if wb !== nothing
         log_dict = Dict("epoch" => epoch, "train_loss" => train_losses[end],
-                         # "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step)
-
                          "val_loss" => val_losses[end], "val_acc" => val_accs[end], "global_step" => global_step,
                          "best_val_loss" => best_val_loss,  # per-epoch so hyperband early_terminate can see it
                          "best_val_acc" => best_val_acc)    # sweep metric (classification): matches best/ selection
@@ -588,14 +492,9 @@ best_preds, best_trues = if isnothing(best_cpu)
 else
     best_model = fix_gpu_dropout(cu(best_cpu))
     Flux.testmode!(best_model)
-    # _, bp, bt = run_test(best_model)
-
     _, bp, bt = run_test(best_model; which=:best)
     bp, bt
 end
-# best_metrics = test_metrics(best_preds, best_trues, is_regression)
-# final_metrics = test_metrics(all_preds, all_trues, is_regression)
-# isdir(joinpath(save_dir, "best")) && jldsave(joinpath(save_dir, "best", "predstrues.jld2"); all_preds=best_preds, all_trues=best_trues)
 
 # streaming classification: test = pretrain-unseen cells, *_full = all test cells (as sc_finetune!)
 no_agg = (well_acc = NaN, n_wells = 0, wellcl_acc = NaN, n_wellcl = 0)
@@ -665,9 +564,6 @@ if is_regression
 else
     acc = mean(all_preds .== all_trues)
     log_params(config, gpu_info, run_hours, run_minutes, save_dir;
-               # skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
-               # best_epoch=best_epoch, best_val_loss=best_val_loss, best_val_acc=best_val_acc)
-
                skip=finetune_skip, accuracy=acc, best_accuracy=best_metrics.accuracy, final_accuracy=final_metrics.accuracy, total_steps=global_step,
                best_well_acc=best_agg.well_acc, best_wellcl_acc=best_agg.wellcl_acc,
                split_tag=split_tag, best_accuracy_fullgroup=(isempty(best_preds_full) ? NaN : mean(best_preds_full .== best_trues_full)),
