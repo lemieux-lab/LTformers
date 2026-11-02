@@ -663,19 +663,28 @@ drop_prob = 0.44
 # finetune — with pretrain, e2e (Oct 30): sweep winners, head_init 1
 [finetune.w_pretrain.etf.erecon.lvl2.e2e]
 # sweep r509niwv (15 finished runs) best 7d1qg73b (r509niwv), val 0.0222
-lr = 0.0029
-drop_prob = 0.28
+# lr = 0.0029
+# drop_prob = 0.28
+# TSC failed-run rule: best val among runs whose train loss got >=0.1 below the class-prior plateau (lvl2 cutoff 5.78): th9hqxqj, val 0.0167
+lr = 6.3e-05
+drop_prob = 0.19
 
 [finetune.w_pretrain.etf.lrecon.lvl2.e2e]
 # sweep pp1f19ox (15 finished runs) best pd3tir0k (pp1f19ox), val 0.0222
 # EDGE: lr max
-lr = 0.0074
-drop_prob = 0.21
+# lr = 0.0074
+# drop_prob = 0.21
+# TSC failed-run rule: best val among runs whose train loss got >=0.1 below the class-prior plateau (lvl2 cutoff 5.78): 0fh3mjzp, val 0.0099
+lr = 0.00022
+drop_prob = 0.16
 
 [finetune.w_pretrain.etf.mlm.lvl2.e2e]
 # sweep 9gtud1ve (15 finished runs) best dn0ro1v8 (9gtud1ve), val 0.0222
-lr = 0.002
-drop_prob = 0.13
+# lr = 0.002
+# drop_prob = 0.13
+# TSC failed-run rule: best val among runs whose train loss got >=0.1 below the class-prior plateau (lvl2 cutoff 5.78): 6u41tett, val 0.0142
+lr = 0.00021
+drop_prob = 0.12
 
 [finetune.w_pretrain.rtf.erecon.lvl2.e2e]
 # sweep sqmhro1o (11 finished runs) best szu2mq4x (sqmhro1o), val 0.0222
@@ -697,3 +706,34 @@ drop_prob = 0.012
 # sweep 5bz7ejq8 (5 finished runs) best qwdbh8za (5bz7ejq8), val 0.9268
 lr = 0.0015
 drop_prob = 0.23
+
+[finetune.w_pretrain.rtf.mlm.lvl2.e2e]
+# sweep nhz4eknf (14 finished runs) best ak8xlby2 (nhz4eknf), val 0.0247
+# EDGE: lr max
+# lr = 0.0088
+# drop_prob = 0.14
+# TSC failed-run rule: best val among runs whose train loss got >=0.1 below the class-prior plateau (lvl2 cutoff 5.78): n61h6xcv, val 0.0153
+lr = 0.00088
+drop_prob = 0.021
+
+[finetune.w_pretrain.rtf.erecon.lvl1.e2e]
+# sweep omjpvvmz (4 finished runs) best qid4pmt3 (omjpvvmz), val 0.8687
+lr = 0.00054
+drop_prob = 0.15
+
+[finetune.w_pretrain.rtf.mlm.lvl1.e2e]
+# sweep 641wxjwz (2 finished runs) best ax5l6oxk (641wxjwz), val 0.9710
+# EDGE: lr max
+lr = 0.0088
+drop_prob = 0.2
+
+[finetune.w_pretrain.rtf.lrecon.lvl2.e2e]
+# sweep o3bdpokg (15 finished runs) best 3zk16xou (o3bdpokg), val 0.0247
+# EDGE: lr max
+lr = 0.0062
+drop_prob = 0.18
+
+[finetune.w_pretrain.rtf.lrecon.lvl1.e2e]
+# sweep rxajoi44 (5 finished runs) best 6iucv34a (rxajoi44), val 0.0636
+lr = 7e-05
+drop_prob = 0.16
